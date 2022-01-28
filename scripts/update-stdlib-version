@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# thanos/stdlib is a dependency of both thanos itself and applications compiled
+# with thanos. Building the thanos main module requires the stdlib require
+# directive to be up to date with the latest commit to that directory, but at
+# present the main module cannot have a replace directive. Thus, the replace
+# directive that ensures local development references the local copy of the
+# repository lives in go.work, and we use a post-commit hook to ensure we
+# always update go.mod whenever we make a commit updating files in stdlib.
+# There is probably a better way of doing this, and if not hopefully there will
+# be in the near future.
+version_suffix=`TZ=UTC git --no-pager log --quiet   --abbrev=12   --date='format-local:%Y%m%d%H%M%S'   --format="%cd-%h" ./stdlib | head -n 1`
+sed "s/stdlib v0.0.0-.*/stdlib v0.0.0-$version_suffix/" go.mod > go.mod.tmp
+mv go.mod.tmp go.mod
+git add go.mod
+echo "Must commit updated go.mod"
