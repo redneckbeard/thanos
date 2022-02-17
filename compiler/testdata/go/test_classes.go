@@ -10,16 +10,16 @@ type Vehicle struct {
 func NewVehicle(starting_miles int) *Vehicle {
 	return &Vehicle{Starting_miles: starting_miles, no_reader: "unexported"}
 }
-func (v *Vehicle) drive(x int) int {
-	v.starting_miles += x
-	return v.starting_miles
+func (v *Vehicle) Drive(x int) int {
+	v.Starting_miles += x
+	return v.Starting_miles
+}
+func (v *Vehicle) Mileage() string {
+	v.log()
+	return fmt.Sprintf("%d miles", v.Starting_miles)
 }
 func (v *Vehicle) log() {
 	fmt.Println("log was called")
-}
-func (v *Vehicle) mileage() string {
-	v.log()
-	return fmt.Sprintf("%d miles", v.starting_miles)
 }
 
 type Car struct {
@@ -30,22 +30,22 @@ type Car struct {
 func NewCar(starting_miles int) *Car {
 	return &Car{Starting_miles: starting_miles, no_reader: "unexported"}
 }
-func (c *Car) log() {
+func (c *Car) Log() {
 	fmt.Println("it's a different method!")
 }
-func (c *Car) drive(x int) int {
-	c.starting_miles += x
-	return c.starting_miles
+func (c *Car) Drive(x int) int {
+	c.Starting_miles += x
+	return c.Starting_miles
 }
-func (c *Car) mileage() string {
-	c.log()
-	return fmt.Sprintf("%d miles", c.starting_miles)
+func (c *Car) Mileage() string {
+	c.Log()
+	return fmt.Sprintf("%d miles", c.Starting_miles)
 }
 func main() {
 	mapped := []string{}
 	for _, car := range []*Car{NewCar(10), NewCar(20), NewCar(30)} {
-		car.drive(100)
-		mapped = append(mapped, fmt.Sprintf("%s, started at %d", car.mileage(), car.Starting_miles))
+		car.Drive(100)
+		mapped = append(mapped, fmt.Sprintf("%s, started at %d", car.Mileage(), car.Starting_miles))
 	}
 	cars := mapped
 	fmt.Println(cars)

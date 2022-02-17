@@ -59,6 +59,8 @@ var tokenNames = map[int]string{
 	PIPE:        "PIPE",
 	PLUS:        "PLUS",
 	POW:         "POW",
+	PRIVATE:     "PRIVATE",
+	PROTECTED:   "PROTECTED",
 	QMARK:       "QMARK",
 	RBRACE:      "RBRACE",
 	REGEXBEG:    "REGEXBEG",

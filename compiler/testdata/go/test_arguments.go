@@ -2,25 +2,25 @@ package main
 
 import "fmt"
 
-func pos_and_kw(foo string, bar bool) {
+func Pos_and_kw(foo string, bar bool) {
 	if bar {
 		fmt.Println(foo)
 	}
 }
-func all_kw(foo string, bar bool) {
+func All_kw(foo string, bar bool) {
 	if bar {
 		fmt.Println(foo)
 	}
 }
-func defaults(foo, bar string) string {
+func Defaults(foo, bar string) string {
 	return fmt.Sprintf("foo: %s, bar: %s", foo, bar)
 }
 func main() {
-	pos_and_kw("x", true)
-	pos_and_kw("x", false)
-	all_kw("y", false)
-	all_kw("z", false)
-	defaults("x", "y")
-	defaults("z", "y")
-	defaults("z", "a")
+	Pos_and_kw("x", true)
+	Pos_and_kw("x", false)
+	All_kw("y", false)
+	All_kw("z", false)
+	Defaults("x", "y")
+	Defaults("z", "y")
+	Defaults("z", "a")
 }

@@ -10,17 +10,20 @@ class Vehicle
     @starting_miles += x
   end
 
-  def log
-    puts "log was called"
-  end
-
   def mileage
     log
     "#{@starting_miles} miles"
   end
+
+  private
+
+  def log
+    puts "log was called"
+  end
 end
 
 class Car < Vehicle
+  # overriding a private method is fine and on the child class is then public
   def log
     puts "it's a different method!"
   end

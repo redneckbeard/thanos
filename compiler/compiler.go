@@ -164,9 +164,14 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) *ast.FuncDecl
 	}
 
 	decl := &ast.FuncDecl{
-		Name: g.it.Get(m.Name),
 		Type: signature,
 		Body: g.CompileBlockStmt(m.Body.Statements),
+	}
+
+	if m.Private {
+		decl.Name = g.it.Get(m.Name)
+	} else {
+		decl.Name = g.it.Get(strings.Title(m.Name))
 	}
 
 	if c != nil {
@@ -668,16 +673,21 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 				}
 			}
 		}
-		return bst.Call(nil, n.MethodName, args...)
+		//TODO take into account private/protected
+		return bst.Call(nil, strings.Title(n.MethodName), args...)
 	case *parser.IdentNode:
 		if n.MethodCall != nil {
 			return g.CompileExpr(n.MethodCall)
 		}
 		return g.it.Get(n.Val)
 	case *parser.IVarNode:
+		ivar := n.NormalizedVal()
+		if n.IVar().Readable {
+			ivar = strings.Title(ivar)
+		}
 		return &ast.SelectorExpr{
 			X:   g.currentRcvr,
-			Sel: g.it.Get(n.NormalizedVal()),
+			Sel: g.it.Get(ivar),
 		}
 	case *parser.BooleanNode:
 		return g.it.Get(n.Val)

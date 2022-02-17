@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-func cond_return(a, b int) int {
+func Cond_return(a, b int) int {
 	if a < 0 && b < 0 {
 		return 0
 	} else {
@@ -13,7 +13,7 @@ func cond_return(a, b int) int {
 		}
 	}
 }
-func cond_assignment(a, b int, c bool) bool {
+func Cond_assignment(a, b int, c bool) bool {
 	var foo bool
 	if a == b {
 		foo = true
@@ -22,24 +22,24 @@ func cond_assignment(a, b int, c bool) bool {
 	}
 	return foo || c
 }
-func cond_invoke() int {
+func Cond_invoke() int {
 	fmt.Println("it's true")
 	return 10
 }
-func tern(x, y, z int) int {
+func Tern(x, y, z int) int {
 	if x == 10 {
 		return y
 	} else {
 		return z
 	}
 }
-func length_if_array(arr []string) int {
+func Length_if_array(arr []string) int {
 	return len(arr)
 }
-func puts_if_not_symbol() {
+func Puts_if_not_symbol() {
 	fmt.Println("isn't a symbol")
 }
-func switch_on_int_val(x int) string {
+func Switch_on_int_val(x int) string {
 	switch x {
 	case 0:
 		return "none"
@@ -51,7 +51,7 @@ func switch_on_int_val(x int) string {
 		return "many"
 	}
 }
-func switch_on_int_with_range(x int) string {
+func Switch_on_int_with_range(x int) string {
 	switch {
 	case x == 0:
 		return "none"
@@ -66,11 +66,11 @@ func switch_on_int_with_range(x int) string {
 	}
 }
 func main() {
-	baz := cond_return(2, 4)
-	quux := cond_assignment(1, 3, false)
-	zoo := cond_invoke()
-	last := tern(10, 20, 30)
-	length_if_array([]string{"foo", "bar", "baz"})
-	switch_on_int_val(5)
-	switch_on_int_with_range(5)
+	baz := Cond_return(2, 4)
+	quux := Cond_assignment(1, 3, false)
+	zoo := Cond_invoke()
+	last := Tern(10, 20, 30)
+	Length_if_array([]string{"foo", "bar", "baz"})
+	Switch_on_int_val(5)
+	Switch_on_int_with_range(5)
 }

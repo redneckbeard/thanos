@@ -35,7 +35,7 @@ Error: %s`, program, err)
 	defer os.Remove(goTmp.Name())
 	goTmp.WriteString(translated)
 
-	cmd = exec.Command("go1.18beta1", "run", goTmp.Name())
+	cmd = exec.Command("go", "run", goTmp.Name())
 	out.Reset()
 	cmd.Stdout = &out
 	var errBuf bytes.Buffer

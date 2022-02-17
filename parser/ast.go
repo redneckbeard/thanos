@@ -65,15 +65,16 @@ var globalMethodSet *MethodSet
 
 type Program struct {
 	*FSM
-	Objects         []Node
-	Statements      []Node
-	Classes         []*Class
-	MethodSets      []*MethodSet
-	Errors          []error
-	ExplicitReturns []*ReturnNode
-	stringStack     []*StringNode
-	Comments        map[int]Comment
-	currentClass    *Class
+	Objects          []Node
+	Statements       []Node
+	Classes          []*Class
+	MethodSets       []*MethodSet
+	Errors           []error
+	ExplicitReturns  []*ReturnNode
+	stringStack      []*StringNode
+	Comments         map[int]Comment
+	currentClass     *Class
+	inPrivateMethods bool
 }
 
 func NewProgram() *Program {
@@ -142,6 +143,7 @@ func (p *Program) PopClass() *Class {
 	p.MethodSets = p.MethodSets[:len(p.MethodSets)-1]
 	p.currentClass = nil
 	p.Classes = append(p.Classes, class)
+	p.inPrivateMethods = false
 	t := class.BuildType()
 	classMethodSets[t.Instance.(types.Type)] = class.MethodSet
 	p.PopState()
@@ -824,6 +826,7 @@ type Method struct {
 	Program  *Program
 	Block    *BlockParam
 	lineNo   int
+	Private  bool
 }
 
 func NewMethod(name string, p *Program) *Method {
@@ -915,8 +918,8 @@ func (m *Method) Analyze(ms *MethodSet) error {
 		return err
 	}
 	for _, c := range ms.Calls[m.Name] {
+		c.Method = m
 		if c.Type() == nil {
-			c.Method = m
 			c.SetType(m.ReturnType())
 		}
 	}
@@ -1622,4 +1625,17 @@ func (n *WhenNode) LineNo() int          { return n.lineNo }
 
 func (n *WhenNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	return GetType(n.Statements, locals, class)
+}
+
+type NoopNode struct {
+	lineNo int
+}
+
+func (n *NoopNode) String() string       { return "nil" }
+func (n *NoopNode) Type() types.Type     { return types.NilType }
+func (n *NoopNode) SetType(t types.Type) {}
+func (n *NoopNode) LineNo() int          { return n.lineNo }
+
+func (n *NoopNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	return types.NilType, nil
 }

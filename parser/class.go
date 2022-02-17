@@ -86,6 +86,7 @@ type Class struct {
 	Body             Body
 	ivars            map[string]*IVar
 	ivarOrder        []string
+	Private          bool
 }
 
 func (cls *Class) String() string {
@@ -138,8 +139,12 @@ func (cls *Class) BuildType() *types.Class {
 
 				//blockArgs    func(Type, []Type) []Type
 				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					name := m.Name
+					if !m.Private {
+						name = strings.Title(m.Name)
+					}
 					return types.Transform{
-						Expr: bst.Call(rcvr.Expr, m.Name, types.UnwrapTypeExprs(args)...),
+						Expr: bst.Call(rcvr.Expr, name, types.UnwrapTypeExprs(args)...),
 					}
 				},
 			}

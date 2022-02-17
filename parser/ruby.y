@@ -36,7 +36,7 @@ func root(yylex yyLexer) *Program {
 %token <str> FLOAT 
 %token <str> TRUE FALSE
 %token <str> CLASS MODULE DEF END IF UNLESS BEGIN RESCUE THEN ELSE WHILE RETURN YIELD SELF CONSTANT 
-%token <str> ENSURE ELSIF CASE WHEN UNTIL FOR BREAK NEXT SUPER ALIAS DO 
+%token <str> ENSURE ELSIF CASE WHEN UNTIL FOR BREAK NEXT SUPER ALIAS DO PRIVATE PROTECTED
 
 %token <str> IVAR CVAR GVAR METHODIDENT IDENT COMMENT LABEL
 
@@ -46,7 +46,7 @@ func root(yylex yyLexer) *Program {
 %token <str> SCOPE
 
 
-%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass
+%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private
 %type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp 
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node
 %type <node_list> compstmt stmts program mlhs mlhs_basic mlhs_head 
@@ -142,6 +142,11 @@ stmt:
   }
 //| lhs tEQL mrhs
 //| mlhs tEQL mrhs_arg
+| private
+  {
+    root(yylex).inPrivateMethods = true
+    $$ = &NoopNode{}
+  }
 | expr 
 
 command_asgn: 
@@ -900,6 +905,7 @@ method_signature:
   DEF fname f_arglist
   {
     method := NewMethod($2, root(yylex))
+    method.Private = root(yylex).inPrivateMethods
     method.lineNo = currentLineNo
 
     for _, p := range $3 {
@@ -1218,3 +1224,7 @@ terms:
 none: { $$ = nil }
 
 op_asgn: MODASSIGN | MULASSIGN | ADDASSIGN | SUBASSIGN | DIVASSIGN
+
+private:
+  PRIVATE
+| PROTECTED
