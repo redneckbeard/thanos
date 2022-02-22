@@ -1,6 +1,5 @@
 gauntlet("match") do
-  candidates = ["football", "goosefoot", "tomfoolery"]
-  candidates.each do |cand|
+  ["football", "goosefoot", "tomfoolery"].each do |cand|
     puts cand.match(/foo(?<tail>.+)/)["tail"]
   end
 end

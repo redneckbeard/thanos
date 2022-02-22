@@ -29,11 +29,9 @@ class Car < Vehicle
   end
 end
 
-cars = [Car.new(10), Car.new(20), Car.new(30)].map do |car|
+puts [Car.new(10), Car.new(20), Car.new(30)].map do |car|
   if car.instance_of?(Car) # only here to prove inheritance from Object
     car.drive(100)
   end
   "#{car.mileage}, started at #{car.starting_miles}"
 end
-
-puts cars

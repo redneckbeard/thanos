@@ -77,7 +77,7 @@ end
 
 baz = cond_return(2, 4)
 quux = cond_assignment(1, 3, false)
-zoo = cond_invoke()
+zoo = cond_invoke
 last = tern(10, 20, 30)
 length_if_array(["foo", "bar", "baz"])
 switch_on_int_val(5)

@@ -7,11 +7,11 @@ import (
 func TestLexer(t *testing.T) {
 	input := `ActiveRecord::Base : :foo $global 34 55.5 == => =
   += -= *= x /= %= ! * x / % & && | ||
-  < > <= >= << <=> ,;.()+{}-[]?
+  < > <= >= << <=> ,;.)+{}-]?
   definitely def self end if then else unless true false 
   return nil module class do yield begin rescue while
   ensure elsif case when until for break next super alias 
-  @foo @@bar != ** =~ !~ >> :baz? mutate! under_score | -10 key:
+  @foo @@bar != ** =~ !~ >> :baz? mutate!( under_score[ | -10 key: [ (
   `
 
 	tests := []struct {
@@ -55,13 +55,11 @@ func TestLexer(t *testing.T) {
 		{COMMA, ","},
 		{SEMICOLON, ";"},
 		{DOT, "."},
-		{LPAREN, "("},
 		{RPAREN, ")"},
 		{PLUS, "+"},
 		{LBRACE, "{"},
 		{RBRACE, "}"},
 		{MINUS, "-"},
-		{LBRACKET, "["},
 		{RBRACKET, "]"},
 		{QMARK, "?"},
 		{NEWLINE, "\n"},
@@ -106,11 +104,15 @@ func TestLexer(t *testing.T) {
 		{RSHIFT, ">>"},
 		{SYMBOL, ":baz?"},
 		{METHODIDENT, "mutate!"},
+		{LPAREN, "("},
 		{IDENT, "under_score"},
+		{LBRACKET, "["},
 		{PIPE, "|"},
 		{UNARY_NUM, "-"},
 		{INT, "10"},
 		{LABEL, "key:"},
+		{LBRACKETSTART, "["},
+		{LPARENSTART, "("},
 	}
 
 	l := NewLexer([]byte(input))
@@ -238,6 +240,36 @@ func TestStatefulLexing(t *testing.T) {
 			[]int{UNARY_NUM, FLOAT, DOT, METHODIDENT},
 			[]string{"-", "5.0", ".", "positive?"},
 		},
+		{
+			`puts []`,
+			[]int{IDENT, LBRACKETSTART, RBRACKET},
+			[]string{"puts", "[", "]"},
+		},
+		{
+			`puts([])`,
+			[]int{IDENT, LPAREN, LBRACKETSTART, RBRACKET, RPAREN},
+			[]string{"puts", "(", "[", "]", ")"},
+		},
+		{
+			`[1]`,
+			[]int{LBRACKETSTART, INT, RBRACKET},
+			[]string{"[", "1", "]"},
+		},
+		{
+			`(x)`,
+			[]int{LPARENSTART, IDENT, RPAREN},
+			[]string{"(", "x", ")"},
+		},
+		{
+			`puts (x)`,
+			[]int{IDENT, LPARENSTART, IDENT, RPAREN},
+			[]string{"puts", "(", "x", ")"},
+		},
+		{
+			`puts(x)`,
+			[]int{IDENT, LPAREN, IDENT, RPAREN},
+			[]string{"puts", "(", "x", ")"},
+		},
 	}
 
 	for i, tt := range tests {
@@ -248,13 +280,15 @@ func TestStatefulLexing(t *testing.T) {
 				token := <-l.stream
 
 				if token.Type != tt.tokens[j] {
-					t.Fatalf("tests[%d] - token %d type wrong. expected=%q, got=%q",
+					t.Errorf("tests[%d] - token %d type wrong. expected=%q, got=%q",
 						i+1, j, tokenNames[tt.tokens[j]], tokenNames[token.Type])
+					break
 				}
 
 				if token.Literal != tt.literals[j] {
-					t.Fatalf("tests[%d] - token %d literal wrong. expected=%q, got=%q",
+					t.Errorf("tests[%d] - token %d literal wrong. expected=%q, got=%q",
 						i+1, j, tt.literals[j], token.Literal)
+					break
 				}
 			}
 		}

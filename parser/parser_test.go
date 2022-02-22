@@ -101,6 +101,8 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		{`5.even?`, `(5.even?())`},
 		{`5.2.positive?`, `(5.2.positive?())`},
 		{`-5.2.positive?`, `(-5.2.positive?())`},
+		{`puts []`, `(Kernel.puts([]))`},
+		{`puts (x + y) / 4`, `(Kernel.puts(((x + y) / 4)))`},
 	}
 
 	for i, tt := range tests {

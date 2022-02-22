@@ -47,6 +47,5 @@ func main() {
 		car.Drive(100)
 		mapped = append(mapped, fmt.Sprintf("%s, started at %d", car.Mileage(), car.Starting_miles))
 	}
-	cars := mapped
-	fmt.Println(cars)
+	fmt.Println(mapped)
 }

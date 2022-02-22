@@ -42,7 +42,7 @@ func root(yylex yyLexer) *Program {
 
 %token <str> DOT LBRACE RBRACE NEWLINE COMMA
 %token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND
-%token <str> SEMICOLON LBRACKET RBRACKET LPAREN RPAREN HASHROCKET
+%token <str> SEMICOLON LBRACKET LBRACKETSTART RBRACKET LPAREN LPARENSTART RPAREN HASHROCKET
 %token <str> SCOPE
 
 
@@ -561,12 +561,15 @@ primary:
 // backref
 // | tFID
 // | kBEGIN
-// | tLPAREN_ARG stmt // includes some sort of lexer manipulation
+| LPARENSTART stmt rparen
+  {
+    $$ = $2
+  }
 // | tLPAREN_ARG // includes some sort of lexer manipulation
 // | tLPAREN compstmt tRPAREN
 // | primary_value tCOLON2 tCONSTANT
 // | tCOLON3 tCONSTANT
-| LBRACKET aref_args RBRACKET
+| LBRACKETSTART aref_args RBRACKET
   {
     $$ = &ArrayNode{Args: $2, lineNo: currentLineNo}
   }

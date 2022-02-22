@@ -1,5 +1,5 @@
 def hello(name)
-  puts("debug message")
+  puts "debug message"
   "Hello, " + name
 end
 
@@ -9,7 +9,7 @@ def hello_interp(name, age)
                 else
                   "younger"
                 end
-  puts("#{name} is #{comparative} than me, age #{age}")
+  puts "#{name} is #{comparative} than me, age #{age}"
 end
 
 def matches_foo(foolike)

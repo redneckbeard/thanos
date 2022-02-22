@@ -138,14 +138,16 @@ type Lexer struct {
 	blockDepth      int
 	lastParsedToken Token
 	gauntlet        bool
+	spaceConsumed   bool
 }
 
 func NewLexer(buf []byte) *Lexer {
 	l := &Lexer{
-		Buffer:  bytes.NewBuffer(buf),
-		lineNo:  1,
-		stream:  make(chan Token),
-		Program: NewProgram(),
+		Buffer:        bytes.NewBuffer(buf),
+		lineNo:        1,
+		stream:        make(chan Token),
+		Program:       NewProgram(),
+		spaceConsumed: true,
 	}
 	go l.Tokenize()
 	return l
@@ -218,6 +220,7 @@ func (l *Lexer) Emit(t int) {
 	l.stream <- tok
 	l.lastToken = t
 	l.ResetBuffer()
+	l.spaceConsumed = false
 }
 
 func (l *Lexer) AtExprStart() bool {
@@ -271,6 +274,7 @@ func (l *Lexer) lexWhitespace() error {
 		}
 		l.ResetBuffer()
 	}
+	l.spaceConsumed = true
 	return err
 }
 
@@ -385,12 +389,26 @@ func (l *Lexer) lexPunct() error {
 		tok, currDefined := validPuncts[string(l.read)]
 		_, nextDefined := validPuncts[nextPunct]
 		if currDefined && !nextDefined {
-			if tok == PLUS || tok == MINUS {
+			switch tok {
+			case PLUS, MINUS:
 				if l.AtExprStart() {
 					l.Emit(UNARY_NUM)
 					return err
 				}
+			case LPAREN, LBRACKET:
+				if l.spaceConsumed {
+					l.Emit(exprStartTokens[tok])
+					return err
+				}
+				switch l.lastToken {
+				case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT:
+				default:
+					l.Emit(exprStartTokens[tok])
+					return err
+				}
+
 			}
+
 			l.Emit(tok)
 			return nil
 		}
@@ -404,11 +422,24 @@ func (l *Lexer) lexPunct() error {
 		return err
 	}
 	validTok := validPuncts[string(l.read)]
-	if validTok == PLUS || validTok == MINUS {
+	switch validTok {
+	case PLUS, MINUS:
 		if l.AtExprStart() {
 			l.Emit(UNARY_NUM)
 			return err
 		}
+	case LPAREN, LBRACKET:
+		if l.spaceConsumed {
+			l.Emit(exprStartTokens[validTok])
+			return err
+		}
+		switch l.lastToken {
+		case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT:
+		default:
+			l.Emit(exprStartTokens[validTok])
+			return err
+		}
+
 	}
 	l.Emit(validTok)
 	return err

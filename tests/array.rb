@@ -1,6 +1,6 @@
 gauntlet("join") do
-  puts([1, 2, 3].join(" + "))
-  puts(["foo", "bar", "baz"].join(" and "))
+  puts [1, 2, 3].join(" + ")
+  puts ["foo", "bar", "baz"].join(" and ")
 end
 
 gauntlet("take") do
@@ -93,8 +93,7 @@ gauntlet("include?") do
 end
 
 gauntlet("Array#-") do
-  set = [1, 2, 3, 4] - [2, 3] # this should be ([] - []).each but fails because of a parser bug
-  set.each do |i|
+  ([1, 2, 3, 4] - [2, 3]).each do |i|
     puts i
   end
 end
