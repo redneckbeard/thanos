@@ -147,6 +147,7 @@ func (p *Program) PopClass() *Class {
 	t := class.BuildType()
 	classMethodSets[t.Instance.(types.Type)] = class.MethodSet
 	p.PopState()
+	p.ScopeChain.Set(class.Name(), class)
 	return class
 }
 
@@ -293,7 +294,7 @@ func GetType(n Node, scope ScopeChain, class *Class) (t types.Type, err error) {
 	t = n.Type()
 	if t == nil {
 		if ident, ok := n.(*IdentNode); ok {
-			if loc, found := scope.Get(ident.Val); found {
+			if loc := scope.ResolveVar(ident.Val); loc != BadLocal {
 				ident.SetType(loc.Type())
 			} else if m, ok := globalMethodSet.Methods[ident.Val]; ok {
 				if err := m.Analyze(globalMethodSet); err != nil {
@@ -399,9 +400,10 @@ func (n *GVarNode) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 }
 
 type ConstantNode struct {
-	Val    string
-	_type  types.Type
-	lineNo int
+	Val       string
+	Namespace string
+	_type     types.Type
+	lineNo    int
 }
 
 func (n *ConstantNode) String() string       { return n.Val }
@@ -410,7 +412,14 @@ func (n *ConstantNode) SetType(t types.Type) { n._type = t }
 func (n *ConstantNode) LineNo() int          { return n.lineNo }
 
 func (n *ConstantNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
-	return types.ClassRegistry.Get(n.Val)
+	if local := locals.ResolveVar(n.Val); local == BadLocal {
+		return types.ClassRegistry.Get(n.Val)
+	} else {
+		if constant, ok := local.(*Constant); ok {
+			n.Namespace = constant.Class.Name()
+		}
+		return local.Type(), nil
+	}
 }
 
 type NilNode struct {
@@ -559,6 +568,8 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			localName = lhs.Composite.(*IdentNode).Val
 		case *IVarNode:
 			GetType(lhs, scope, class)
+		case *ConstantNode:
+			localName = lhs.Val
 		default:
 			return nil, NewParseError(lhs, "%s not yet supported in LHS of assignments", lhs)
 		}
@@ -574,28 +585,34 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 		if err != nil {
 			return nil, err
 		}
-		if ivar, ok := left.(*IVarNode); ok {
-			ivar.SetType(assignedType)
+		switch lft := left.(type) {
+		case *IVarNode:
+			lft.SetType(assignedType)
 			n.Reassignment = true
-		} else if local, found := scope.Get(localName); !found {
+		case *ConstantNode:
+			lft.SetType(assignedType)
 			scope.Set(localName, &RubyLocal{_type: assignedType})
-		} else {
-			if local.Type() == nil {
-				loc := local.(*RubyLocal)
-				loc.SetType(assignedType)
-				for _, c := range loc.Calls {
-					GetType(c, scope, class)
-				}
+		default:
+			if local, found := scope.Get(localName); !found {
+				scope.Set(localName, &RubyLocal{_type: assignedType})
 			} else {
-				n.Reassignment = true
-			}
-			if local.Type() != assignedType {
-				if arr, ok := local.Type().(types.Array); ok {
-					if arr.Element != assignedType {
-						return nil, NewParseError(n, "Attempted to assign %s member to %s", assignedType, arr)
+				if local.Type() == nil {
+					loc := local.(*RubyLocal)
+					loc.SetType(assignedType)
+					for _, c := range loc.Calls {
+						GetType(c, scope, class)
 					}
 				} else {
-					return nil, NewParseError(n, "tried assigning type %s to local %s in scope %s but had previously assigned type %s", assignedType, localName, scope.Name(), scope.MustGet(localName))
+					n.Reassignment = true
+				}
+				if local.Type() != assignedType {
+					if arr, ok := local.Type().(types.Array); ok {
+						if arr.Element != assignedType {
+							return nil, NewParseError(n, "Attempted to assign %s member to %s", assignedType, arr)
+						}
+					} else {
+						return nil, NewParseError(n, "tried assigning type %s to local %s in scope %s but had previously assigned type %s", assignedType, localName, scope.Name(), scope.MustGet(localName))
+					}
 				}
 			}
 		}
@@ -862,6 +879,14 @@ func (n *Method) LineNo() int { return n.lineNo }
 
 func (m *Method) ReturnType() types.Type {
 	return m.Body.ReturnType
+}
+
+func (m *Method) GoName() string {
+	name := strings.TrimRight(m.Name, "?!")
+	if !m.Private {
+		name = strings.Title(name)
+	}
+	return name
 }
 
 func (m *Method) AddParam(p *Param) error {

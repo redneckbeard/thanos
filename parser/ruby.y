@@ -113,6 +113,10 @@ stmts:
   }
 | stmt
   {
+    if root(yylex).CurrentState() == InClassBody {
+      root(yylex).currentClass.AddStatement($1) 
+      $$ = []Node{}
+    }
     $$ = []Node{$1}
   }
 | stmts terms stmt
@@ -152,6 +156,7 @@ stmt:
 command_asgn: 
   lhs ASSIGN command_rhs
   {
+   
     $$ = &AssignmentNode{Left: []Node{$1}, Right: $3, lineNo: currentLineNo}
   }
 | var_lhs op_asgn command_rhs
@@ -290,7 +295,7 @@ cpath: //SCOPE Constant
   CONSTANT
   {
     root(yylex).PushClass($1, currentLineNo)
-    $$ = ""
+    $$ = $1
   }
 //| primary_value SCOPE cname
 
@@ -567,7 +572,10 @@ primary:
   }
 // | tLPAREN_ARG // includes some sort of lexer manipulation
 // | tLPAREN compstmt tRPAREN
-// | primary_value tCOLON2 tCONSTANT
+| primary_value SCOPE CONSTANT
+  {
+    $$ = &ScopeAccessNode{Receiver: $1, Constant: $3, lineNo: currentLineNo}
+  }
 // | tCOLON3 tCONSTANT
 | LBRACKETSTART aref_args RBRACKET
   {

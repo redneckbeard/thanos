@@ -103,6 +103,8 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		{`-5.2.positive?`, `(-5.2.positive?())`},
 		{`puts []`, `(Kernel.puts([]))`},
 		{`puts (x + y) / 4`, `(Kernel.puts(((x + y) / 4)))`},
+		{`Pi = 3.14`, `(Pi = 3.14)`},
+		{`Math::Pi`, `(Math::Pi)`},
 	}
 
 	for i, tt := range tests {
@@ -338,6 +340,18 @@ foo("quux")`,
 			argumentTypes: map[string]types.Type{"bar": types.IntType, "positive": types.BoolType},
 			ReturnType:    types.IntType,
 		},
+		{
+			input: `
+			Pi = 3.14
+
+			def foo(radius)
+			  Pi * radius ** 2
+			end
+			foo(4)
+			`,
+			argumentTypes: map[string]types.Type{"radius": types.IntType},
+			ReturnType:    types.FloatType,
+		},
 	}
 
 	for i, tt := range tests {
@@ -554,6 +568,52 @@ func TestInstanceMethodParamInferenceHappyPath(t *testing.T) {
 			},
 			returnTypes: []types.Type{types.IntType, types.StringType},
 		},
+		{
+			input: `
+			class Foo
+			  BAR = 100
+				
+			  def bar
+				  BAR
+			  end
+
+				def baz
+				  bar * 2.0
+				end
+			end
+
+      foo = Foo.new(10).baz
+			`,
+			argumentTypes: []map[string]types.Type{
+				map[string]types.Type{},
+				map[string]types.Type{},
+			},
+			returnTypes: []types.Type{types.IntType, types.FloatType},
+		},
+		{
+			input: `
+			class Foo
+			  def bar
+					Bar::BAZ
+			  end
+
+				def baz
+				  bar * 2.0
+				end
+			end
+
+			class Bar
+			  BAZ = 100
+			end
+
+      foo = Foo.new(10).baz
+			`,
+			argumentTypes: []map[string]types.Type{
+				map[string]types.Type{},
+				map[string]types.Type{},
+			},
+			returnTypes: []types.Type{types.IntType, types.FloatType},
+		},
 	}
 
 	for i, tt := range tests {
@@ -659,6 +719,18 @@ func TestMethodParamInferenceErrors(t *testing.T) {
 				end
 			end
 			foo([1,2,3,4,5], true)`, "line 5: Case statement branches return conflicting types StringType and IntType"},
+		{`def foo(bar, baz)
+			  Math::PI * bar * baz
+			end
+			foo(2, 2.5)`, "line 2: No such class 'Math'"},
+		{`class Math
+		    E = 2.718
+		  end
+
+		  def foo(bar, baz)
+			  Math::PI * bar * baz
+			end
+			foo(2, 2.5)`, "line 6: Class 'Math' has no constant 'PI'"},
 	}
 
 	for i, tt := range tests {

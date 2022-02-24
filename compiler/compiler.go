@@ -32,7 +32,8 @@ type GoProgram struct {
 	Imports      map[string]bool
 	CurrentLhs   []parser.Node
 	BlockStack   []*ast.BlockStmt
-	GlobalDecls  []*ast.ValueSpec
+	GlobalVars   []*ast.ValueSpec
+	Constants    []*ast.ValueSpec
 	TrackerStack []bst.IdentTracker
 	it           bst.IdentTracker
 	currentRcvr  *ast.Ident
@@ -101,7 +102,14 @@ func Compile(p *parser.Program) (string, error) {
 		})
 	}
 
-	for _, spec := range g.GlobalDecls {
+	for _, spec := range g.Constants {
+		topDecls = append(topDecls, &ast.GenDecl{
+			Tok:   token.CONST,
+			Specs: []ast.Spec{spec},
+		})
+	}
+
+	for _, spec := range g.GlobalVars {
 		topDecls = append(topDecls, &ast.GenDecl{
 			Tok:   token.VAR,
 			Specs: []ast.Spec{spec},
@@ -166,12 +174,7 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) *ast.FuncDecl
 	decl := &ast.FuncDecl{
 		Type: signature,
 		Body: g.CompileBlockStmt(m.Body.Statements),
-	}
-
-	if m.Private {
-		decl.Name = g.it.Get(m.Name)
-	} else {
-		decl.Name = g.it.Get(strings.Title(m.Name))
+		Name: g.it.Get(m.GoName()),
 	}
 
 	if c != nil {
@@ -228,6 +231,9 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 			Names: []*ast.Ident{g.it.Get(name)},
 			Type:  g.it.Get(t.Type().GoType()),
 		})
+	}
+	for _, constant := range c.Constants {
+		g.addConstant(g.it.Get(c.Name()+constant.Name), g.CompileExpr(constant.Val))
 	}
 	decls = append(decls, &ast.GenDecl{
 		Tok: token.TYPE,
@@ -413,6 +419,12 @@ func (g *GoProgram) CompileBlockStmt(node parser.Node) *ast.BlockStmt {
 func (g *GoProgram) CompileStmt(node parser.Node) {
 	switch n := node.(type) {
 	case *parser.AssignmentNode:
+		if len(n.Left) == 1 {
+			if constant, ok := n.Left[0].(*parser.ConstantNode); ok {
+				g.addConstant(g.it.Get(constant.Namespace+constant.Val), g.CompileExpr(n.Right))
+				return
+			}
+		}
 		g.CompileAssignmentNode(n)
 	case *parser.ReturnNode:
 		if !n.Type().IsMultiple() {
@@ -758,6 +770,10 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		}
 	case *parser.SelfNode:
 		return g.currentRcvr
+	case *parser.ConstantNode:
+		return g.it.Get(n.Namespace + n.Val)
+	case *parser.ScopeAccessNode:
+		return g.it.Get(n.ReceiverName() + n.Constant)
 	default:
 		return &ast.BadExpr{}
 	}
@@ -909,7 +925,7 @@ func (g *GoProgram) CompileStringNode(node *parser.StringNode) ast.Expr {
 		if len(node.Interps) == 0 {
 			// Ideally, people aren't regenerating regexes based on user input, so we can compile them at init time
 			patt = globalIdents.New("patt")
-			g.addGlobalDecl(patt, nil, bst.Call("regexp", "MustCompile", str))
+			g.addGlobalVar(patt, nil, bst.Call("regexp", "MustCompile", str))
 		} else {
 			// ...but if not, just do it inline and swallow the error for now
 			patt = g.it.New("patt")
@@ -1004,10 +1020,17 @@ func (g *GoProgram) retTypeField(t types.Type) *ast.Field {
 	return &ast.Field{Type: retType}
 }
 
-func (g *GoProgram) addGlobalDecl(name *ast.Ident, typeExpr ast.Expr, val ast.Expr) {
-	g.GlobalDecls = append(g.GlobalDecls, &ast.ValueSpec{
+func (g *GoProgram) addGlobalVar(name *ast.Ident, typeExpr ast.Expr, val ast.Expr) {
+	g.GlobalVars = append(g.GlobalVars, &ast.ValueSpec{
 		Names:  []*ast.Ident{name},
 		Type:   typeExpr,
+		Values: []ast.Expr{val},
+	})
+}
+
+func (g *GoProgram) addConstant(name *ast.Ident, val ast.Expr) {
+	g.Constants = append(g.Constants, &ast.ValueSpec{
+		Names:  []*ast.Ident{name},
 		Values: []ast.Expr{val},
 	})
 }

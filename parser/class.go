@@ -77,6 +77,17 @@ func (ivar *IVar) Type() types.Type {
 	return ivar._type
 }
 
+type Constant struct {
+	Name  string
+	Val   Node
+	Class *Class
+	_type types.Type
+}
+
+func (constant *Constant) Type() types.Type {
+	return constant._type
+}
+
 type Class struct {
 	name, Superclass string
 	Statements       Statements
@@ -86,6 +97,7 @@ type Class struct {
 	Body             Body
 	ivars            map[string]*IVar
 	ivarOrder        []string
+	Constants        []*Constant
 	Private          bool
 }
 
@@ -139,12 +151,8 @@ func (cls *Class) BuildType() *types.Class {
 
 				//blockArgs    func(Type, []Type) []Type
 				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-					name := m.Name
-					if !m.Private {
-						name = strings.Title(m.Name)
-					}
 					return types.Transform{
-						Expr: bst.Call(rcvr.Expr, name, types.UnwrapTypeExprs(args)...),
+						Expr: bst.Call(rcvr.Expr, m.GoName(), types.UnwrapTypeExprs(args)...),
 					}
 				},
 			}
@@ -178,14 +186,27 @@ func (cls *Class) BuildType() *types.Class {
 	}
 
 	for _, stmt := range cls.Statements {
-		if c, ok := stmt.(*MethodCall); ok {
-			switch c.MethodName {
+		switch node := stmt.(type) {
+		case *MethodCall:
+			switch node.MethodName {
 			case "attr_reader":
-				cls.AddIVars(c.Args, true, false)
+				cls.AddIVars(node.Args, true, false)
 			case "attr_writer":
-				cls.AddIVars(c.Args, false, true)
+				cls.AddIVars(node.Args, false, true)
 			case "attr_accessor":
-				cls.AddIVars(c.Args, true, true)
+				cls.AddIVars(node.Args, true, true)
+			}
+		case *AssignmentNode:
+			if c, ok := node.Left[0].(*ConstantNode); ok {
+				constant := &Constant{Name: c.Val}
+				switch rhs := node.Right.(type) {
+				//TODO exhaustively search to determine that type is ultimately literal
+				case *IntNode, *SymbolNode, *Float64Node, *StringNode, *BooleanNode:
+					constant._type = rhs.Type()
+					constant.Val = rhs
+				}
+				constant.Class = cls
+				cls.Constants = append(cls.Constants, constant)
 			}
 		}
 	}
@@ -218,7 +239,13 @@ func (cls *Class) Get(name string) (Local, bool) {
 			MethodName: m.Name,
 			_type:      m.ReturnType(),
 		}
+		GetType(call, ScopeChain{cls}, cls)
 		return call, true
+	}
+	for _, constant := range cls.Constants {
+		if constant.Name == name {
+			return constant, true
+		}
 	}
 	return BadLocal, false
 }
@@ -294,4 +321,51 @@ func (cls *Class) IVars(skip map[string]bool) []*IVar {
 		ivars = append(ivars, cls.Parent().IVars(skip)...)
 	}
 	return ivars
+}
+
+func (cls *Class) ConstGet(name string) (*Constant, error) {
+	for _, constant := range cls.Constants {
+		if constant.Name == name {
+			return constant, nil
+		}
+	}
+	return nil, fmt.Errorf("Class '%s' has no constant '%s'", cls.Name(), name)
+}
+
+type ScopeAccessNode struct {
+	Receiver Node
+	Constant string
+	_type    types.Type
+	lineNo   int
+}
+
+func (n *ScopeAccessNode) String() string {
+	return fmt.Sprintf("(%s::%s)", n.ReceiverName(), n.Constant)
+}
+func (n *ScopeAccessNode) Type() types.Type     { return n._type }
+func (n *ScopeAccessNode) SetType(t types.Type) { n._type = t }
+func (n *ScopeAccessNode) LineNo() int          { return n.lineNo }
+
+func (n *ScopeAccessNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	cls := locals.ResolveVar(n.ReceiverName())
+	if cls == BadLocal {
+		return nil, NewParseError(n, "No such class '%s'", n.ReceiverName())
+	}
+	if constant, err := cls.(*Class).ConstGet(n.Constant); err != nil {
+		return nil, NewParseError(n, err.Error())
+	} else {
+		return constant.Type(), nil
+	}
+}
+
+func (n *ScopeAccessNode) ReceiverName() string {
+	switch node := n.Receiver.(type) {
+	case *ConstantNode:
+		return node.Val
+	case *IdentNode:
+		return node.Val
+	default:
+		panic(NewParseError(n, "Scope operator (::) used on type other than a possible class/module. While technically valid Ruby, nobody really does this and the grammar shouldn't allow it."))
+
+	}
 }
