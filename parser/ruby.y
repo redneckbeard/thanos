@@ -35,8 +35,8 @@ func root(yylex yyLexer) *Program {
 %token <str> INT 
 %token <str> FLOAT 
 %token <str> TRUE FALSE
-%token <str> CLASS MODULE DEF END IF UNLESS BEGIN RESCUE THEN ELSE WHILE RETURN YIELD SELF CONSTANT 
-%token <str> ENSURE ELSIF CASE WHEN UNTIL FOR BREAK NEXT SUPER ALIAS DO PRIVATE PROTECTED
+%token <str> CLASS MODULE DEF END IF IF_MOD UNLESS UNLESS_MOD BEGIN RESCUE RESCUE_MOD THEN ELSE WHILE WHILE_MOD RETURN YIELD SELF CONSTANT 
+%token <str> ENSURE ELSIF CASE WHEN UNTIL UNTIL_MOD FOR BREAK NEXT SUPER ALIAS DO PRIVATE PROTECTED
 
 %token <str> IVAR CVAR GVAR METHODIDENT IDENT COMMENT LABEL
 
@@ -46,8 +46,8 @@ func root(yylex yyLexer) *Program {
 %token <str> SCOPE
 
 
-%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private
-%type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp 
+%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do
+%type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp, expr_value_do
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node
 %type <node_list> compstmt stmts program mlhs mlhs_basic mlhs_head 
 %type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args
@@ -134,12 +134,24 @@ stmt:
 //| kALIAS tGVAR tGVAR
 //| kALIAS tGVAR tBACK_REF
 //| kALIAS tGVAR tNTH_REF
-//| stmt kIF_MOD expr_value
-//| stmt kUNLESS_MOD expr_value
-//| stmt kWHILE_MOD expr_value
-//| stmt kUNTIL_MOD expr_value
-//| stmt kRESCUE_MOD stmt
-  command_asgn
+  stmt IF_MOD expr_value
+  {
+    $$ = &Condition{Condition: $3, True: Statements{$1}, lineNo: currentLineNo}
+  }
+| stmt UNLESS_MOD expr_value
+  {
+    $$ = &Condition{Condition: &NotExpressionNode{Arg: $3, lineNo: currentLineNo}, True: Statements{$1}, lineNo: currentLineNo}
+  }
+| stmt WHILE_MOD expr_value
+  {
+    $$ = &WhileNode{Condition: $3, Body: Statements{$1}, lineNo: currentLineNo}
+  }
+| stmt UNTIL_MOD expr_value
+  {
+    $$ = &WhileNode{Condition: &NotExpressionNode{Arg: $3, lineNo: currentLineNo}, Body: Statements{$1}, lineNo: currentLineNo}
+  }
+//| stmt RESCUE_MOD stmt
+| command_asgn
 | mlhs ASSIGN command_call
   {
     $$ = &AssignmentNode{Left: $1, Right: $3, lineNo: currentLineNo}
@@ -183,7 +195,11 @@ expr:
 
 expr_value: expr
 
-//expr_value_do:
+expr_value_do:
+  expr_value do
+  {
+    $$ = $1
+  }
 
 command_call: 
   command
@@ -608,8 +624,14 @@ primary:
   {
     $$ = &Condition{Condition: &NotExpressionNode{Arg: $2, lineNo: currentLineNo}, True: $4, False: $5, lineNo: currentLineNo}
   }
-//| kWHILE expr_value_do compstmt kEND
-//| kUNTIL expr_value_do compstmt kEND
+| WHILE expr_value_do compstmt END
+  {
+    $$ = &WhileNode{Condition: $2, Body: $3, lineNo: $2.LineNo()}
+  }
+| UNTIL expr_value_do compstmt END
+  {
+    $$ = &WhileNode{Condition: &NotExpressionNode{Arg: $2, lineNo: $2.LineNo()}, Body: $3, lineNo: $2.LineNo()}
+  }
 | CASE expr_value opt_terms case_body END
   {
     $$ = &CaseNode{Value: $2, Whens: $4, lineNo: currentLineNo}
@@ -655,8 +677,13 @@ then:
     $$ = $2
   }
 
-//do: term
-//| kDO_COND
+do: 
+  term
+// in the parser gem, this is a separate DO_COND token, which is necessary for
+// complex conditions. It also requires tracking the end of the condition in
+// the lexer. For simple cases, the Right Way isn't needed, but eventually it
+// should get cleaned up because it does result in a conflict in the grammar.
+| DO 
 
 if_tail: 
   opt_else

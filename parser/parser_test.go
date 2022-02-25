@@ -105,6 +105,15 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		{`puts (x + y) / 4`, `(Kernel.puts(((x + y) / 4)))`},
 		{`Pi = 3.14`, `(Pi = 3.14)`},
 		{`Math::Pi`, `(Math::Pi)`},
+		{`while x > 2
+		x -= 1
+		end`, `(while (x > 2) ((x = (x - 1))))`},
+		{`while x > 2 do
+		x -= 1
+		end`, `(while (x > 2) ((x = (x - 1))))`},
+		{`until x > 2 do
+		x += 1
+		end`, `(while !(x > 2) ((x = (x + 1))))`},
 	}
 
 	for i, tt := range tests {

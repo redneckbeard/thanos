@@ -90,3 +90,11 @@ var exprStartTokens = map[int]int{
 	LPAREN:   LPARENSTART,
 	LBRACKET: LBRACKETSTART,
 }
+
+var keywordModifierTokens = map[int]int{
+	IF:     IF_MOD,
+	UNLESS: UNLESS_MOD,
+	WHILE:  WHILE_MOD,
+	UNTIL:  UNTIL_MOD,
+	RESCUE: RESCUE_MOD,
+}

@@ -539,6 +539,11 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 				X: g.CompileExpr(n),
 			})
 		}
+	case *parser.WhileNode:
+		g.appendToCurrentBlock(&ast.ForStmt{
+			Cond: g.CompileExpr(n.Condition),
+			Body: g.CompileBlockStmt(n.Body),
+		})
 	default:
 		expr := g.CompileExpr(n)
 		// A single ident being returned here means we've prepended statements and

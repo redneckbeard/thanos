@@ -1,4 +1,5 @@
 def cond_return(a, b)
+  return a * b if a == 47
   if a < 0 && b < 0
     0
   elsif a >= b
@@ -27,6 +28,7 @@ def cond_invoke
 end
 
 def tern(x, y, z)
+  return 99 unless z < 50
   x == 10 ? y : z
 end
 

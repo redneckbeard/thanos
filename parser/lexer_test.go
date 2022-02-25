@@ -5,10 +5,10 @@ import (
 )
 
 func TestLexer(t *testing.T) {
-	input := `ActiveRecord::Base : :foo $global 34 55.5 == => =
+	input := `ActiveRecord::Base : :foo $global 34 55.5 == => = if 
   += -= *= x /= %= ! * x / % & && | ||
   < > <= >= << <=> ,;.)+{}-]?
-  definitely def self end if then else unless true false 
+  definitely def self end then else unless true false 
   return nil module class do yield begin rescue while
   ensure elsif case when until for break next super alias 
   @foo @@bar != ** =~ !~ >> :baz? mutate!( under_score[ | -10 key: [ (
@@ -29,6 +29,7 @@ func TestLexer(t *testing.T) {
 		{EQ, "=="},
 		{HASHROCKET, "=>"},
 		{ASSIGN, "="},
+		{IF, "if"},
 		{NEWLINE, "\n"},
 		{ADDASSIGN, "+="},
 		{SUBASSIGN, "-="},
@@ -67,7 +68,6 @@ func TestLexer(t *testing.T) {
 		{DEF, "def"},
 		{SELF, "self"},
 		{END, "end"},
-		{IF, "if"},
 		{THEN, "then"},
 		{ELSE, "else"},
 		{UNLESS, "unless"},
@@ -269,6 +269,11 @@ func TestStatefulLexing(t *testing.T) {
 			`puts(x)`,
 			[]int{IDENT, LPAREN, IDENT, RPAREN},
 			[]string{"puts", "(", "x", ")"},
+		},
+		{
+			`return x if bar`,
+			[]int{RETURN, IDENT, IF_MOD, IDENT},
+			[]string{"return", "x", "if", "bar"},
 		},
 	}
 

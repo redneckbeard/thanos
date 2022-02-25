@@ -1664,3 +1664,20 @@ func (n *NoopNode) LineNo() int          { return n.lineNo }
 func (n *NoopNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	return types.NilType, nil
 }
+
+type WhileNode struct {
+	Condition Node
+	Body      Statements
+	lineNo    int
+}
+
+func (n *WhileNode) String() string {
+	return fmt.Sprintf("(while %s (%s))", n.Condition, n.Body)
+}
+func (n *WhileNode) Type() types.Type     { return n.Body.Type() }
+func (n *WhileNode) SetType(t types.Type) {}
+func (n *WhileNode) LineNo() int          { return n.lineNo }
+
+func (n *WhileNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	return types.NilType, nil
+}

@@ -3,6 +3,9 @@ package main
 import "fmt"
 
 func Cond_return(a, b int) int {
+	if a == 47 {
+		return a * b
+	}
 	if a < 0 && b < 0 {
 		return 0
 	} else {
@@ -27,6 +30,9 @@ func Cond_invoke() int {
 	return 10
 }
 func Tern(x, y, z int) int {
+	if !(z < 50) {
+		return 99
+	}
 	if x == 10 {
 		return y
 	} else {

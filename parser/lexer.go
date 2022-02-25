@@ -496,12 +496,18 @@ func (l *Lexer) lexWord() error {
 			}
 		}
 	} else {
+		switch string(l.read) {
+		case "if", "unless", "while", "until", "rescue":
+			if !l.AtExprStart() {
+				l.Emit(keywordModifierTokens[p])
+				break
+			}
+			fallthrough
 		// Hack to support rspec-lite syntax for tests. Goal is to capture the
 		// raw source of the block argument to the method call. Current design
 		// of the lexer means that putting this hack in the parser has to
 		// contend with concurrency so it's easy to manage all the state here
 		// and just include that string in the token wrapper.
-		switch string(l.read) {
 		case "gauntlet":
 			l.gauntlet = true
 			l.Emit(p)
