@@ -603,6 +603,18 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 	var assignFunc bst.AssignFunc
 	if node.OpAssignment {
 		infix := node.Right.(*parser.InfixExpressionNode)
+		if intNode, ok := infix.Right.(*parser.IntNode); ok && intNode.Val == "1" && (infix.Operator == "+" || infix.Operator == "-") {
+			op := token.INC
+			if infix.Operator == "-" {
+				op = token.DEC
+			}
+			g.appendToCurrentBlock(&ast.IncDecStmt{
+				X:   g.CompileExpr(node.Left[0]),
+				Tok: op,
+			})
+			return
+
+		}
 		assignFunc = bst.OpAssign(infix.Operator)
 		node = node.Clone()
 		node.Right = infix.Right
@@ -774,6 +786,16 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		return g.it.Get(n.Namespace + n.Val)
 	case *parser.ScopeAccessNode:
 		return g.it.Get(n.ReceiverName() + n.Constant)
+	case *parser.NotExpressionNode:
+		if arg, ok := n.Arg.(*parser.InfixExpressionNode); ok && arg.Operator == "==" {
+			eq := g.CompileExpr(arg).(*ast.BinaryExpr)
+			eq.Op = token.NEQ
+			return eq
+		}
+		return &ast.UnaryExpr{
+			Op: token.NOT,
+			X:  g.CompileExpr(n.Arg),
+		}
 	default:
 		return &ast.BadExpr{}
 	}
