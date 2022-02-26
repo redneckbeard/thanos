@@ -711,37 +711,32 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 		}
 	}
 	//TODO should be consolidated with AnalyzeArguments/AnalyzeMethodSet
-	if classMethodSets[receiverType] != nil {
-		ms := classMethodSets[receiverType]
-		if method, userDefined := ms.Methods[c.MethodName]; userDefined {
-			for i, t := range argTypes {
-				param, _ := method.GetParam(i)
-				param._type = t
-				method.Scope.Set(param.Name, &RubyLocal{_type: param.Type()})
-			}
-			if err := method.Body.InferReturnType(method.Scope, ms.Class); err != nil {
-				return nil, err
-			}
-			c.Method = method
+	var method *Method
+
+	if ms, ok := classMethodSets[receiverType]; ok {
+		if m, userDefined := ms.Methods[c.MethodName]; userDefined {
+			method = m
 		}
 	} else if c.Receiver == nil {
-		method := globalMethodSet.Methods[c.MethodName]
-		if method != nil {
-			c.Method = method
-			for i, t := range argTypes {
-				param, _ := method.GetParam(i)
-				param._type = t
-				method.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
-			}
-			if err := method.Body.InferReturnType(method.Scope, nil); err != nil {
-				return nil, err
-			} else {
-				return method.ReturnType(), nil
-			}
-		} else {
-			return nil, NewParseError(c, "Attempted to call undefined method '%s'", c.MethodName)
-		}
+		method = globalMethodSet.Methods[c.MethodName]
 	}
+
+	if method != nil {
+		c.Method = method
+		for i, t := range argTypes {
+			param, _ := method.GetParam(i)
+			param._type = t
+			method.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
+		}
+		if err := method.Body.InferReturnType(method.Scope, nil); err != nil {
+			return nil, err
+		} else {
+			return method.ReturnType(), nil
+		}
+	} else if c.Receiver == nil {
+		return nil, NewParseError(c, "Attempted to call undefined method '%s'", c.MethodName)
+	}
+
 	var blockRetType types.Type
 	if c.Block != nil {
 		blockScope := NewScope("block")
