@@ -114,6 +114,17 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		{`until x > 2 do
 		x += 1
 		end`, `(while !(x > 2) ((x = (x + 1))))`},
+
+		// none of these tests will have exactly correct output, because the
+		// `return` will not get applied until full analysis is complete, which
+		// can't happen without a method call with a block. They are here to prove
+		// that `yield` gets collapsed into the same AST structure as an explicit
+		// block.
+		{`def foo(&blk); blk.call("foo"); end`, `(def foo(&blk); (blk.call("foo")); end)`},
+		{`def foo; yield("foo"); end`, `(def foo(&blk); (blk.call("foo")); end)`},
+		{`def foo; yield "foo"; end`, `(def foo(&blk); (blk.call("foo")); end)`},
+		{`def foo; yield(); end`, `(def foo(&blk); (blk.call()); end)`},
+		{`def foo; yield; end`, `(def foo(&blk); (blk.call()); end)`},
 	}
 
 	for i, tt := range tests {
@@ -660,6 +671,79 @@ func TestInstanceMethodParamInferenceHappyPath(t *testing.T) {
 	}
 }
 
+func TestBlockParamInferenceHappyPath(t *testing.T) {
+	tests := []struct {
+		input              string
+		blockArgumentTypes map[string]types.Type
+		blockReturnType    types.Type
+		ReturnType         types.Type
+	}{
+		{
+			input: `def foo(&blk)
+							 blk.call(10)
+						 end
+						 foo() do |x| 
+						   square = x * x
+							 "#{square}"
+						 end`,
+			blockArgumentTypes: map[string]types.Type{"x": types.IntType},
+			blockReturnType:    types.StringType,
+			ReturnType:         types.StringType,
+		},
+		{
+			input: `def foo(x, y, &blk)
+							 x * blk.call(y)
+						 end
+						 foo(7, 8) do |b| 
+						   b / 10.0
+						 end`,
+			blockArgumentTypes: map[string]types.Type{"b": types.IntType},
+			blockReturnType:    types.FloatType,
+			ReturnType:         types.FloatType,
+		},
+	}
+
+	for i, tt := range tests {
+		func(i int, tt struct {
+			input              string
+			blockArgumentTypes map[string]types.Type
+			blockReturnType    types.Type
+			ReturnType         types.Type
+		}) {
+			defer func() {
+				if v := recover(); v != nil {
+					t.Errorf("[Test case %d] Encountered panic in processing `%s`:\n%s", i+i, tt.input, debug.Stack())
+				}
+			}()
+			if caseNum == 0 || caseNum == i+1 {
+				program, err := ParseString(tt.input)
+				if err != nil {
+					t.Fatalf("[Test Case %d] %s", i+1, err)
+				}
+				method, ok := program.GetMethod("foo")
+				if !ok {
+					t.Fatalf("Could not find method '%s'", "foo")
+				}
+				for j := 0; j < len(tt.blockArgumentTypes); j++ {
+					param, _ := method.Block.GetParam(j)
+					if param != method.Block.GetParamByName(param.Name) {
+						t.Errorf("[Test Case %d] positional vs optional arg access differs for parameter '%s'", i+1, param.Name)
+						break
+					}
+					expectedType := tt.blockArgumentTypes[param.Name]
+					if param.Type() != expectedType {
+						t.Errorf("[Test Case %d] type inference failed for parameter '%s': expected %s, but got %s", i+1, param.Name, expectedType, param.Type())
+						break
+					}
+				}
+				if !method.ReturnType().Equals(tt.ReturnType) {
+					t.Errorf("[Test Case %d] type inference failed for return type for method '%s': expected %s, got %s", i+1, method.Name, tt.ReturnType, method.ReturnType())
+				}
+			}
+		}(i, tt)
+	}
+}
+
 //TODO need a test that locals are not reassigned with a new type
 
 func TestMethodParamInferenceErrors(t *testing.T) {
@@ -670,7 +754,7 @@ func TestMethodParamInferenceErrors(t *testing.T) {
 		{`def foo(bar, bar)
 		    bar + baz
 		  end
-			foo(1, 2)`, "line 1: parameter 'bar' declared twice for method 'foo'"},
+			foo(1, 2)`, "line 1: parameter 'bar' declared twice"},
 		{`def foo(bar, baz)
 		    bar + baz
 			end

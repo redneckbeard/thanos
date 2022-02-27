@@ -74,6 +74,7 @@ type Program struct {
 	stringStack      []*StringNode
 	Comments         map[int]Comment
 	currentClass     *Class
+	currentMethod    *Method
 	inPrivateMethods bool
 }
 
@@ -168,7 +169,7 @@ func (p *Program) AddMethod(m *Method) {
 	ms := p.CurrentMethodSet()
 	ms.Methods[m.Name] = m
 	ms.Order = append(ms.Order, m.Name)
-
+	p.currentMethod = nil
 }
 
 func (p *Program) GetMethod(name string) (*Method, bool) {
@@ -685,6 +686,33 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 		if ms, ok := classMethodSets[t]; ok {
 			ms.AddCall(c)
 		}
+	case *types.Proc:
+		if c.MethodName == "call" {
+			localName := c.Receiver.(*IdentNode).Val
+			if local := scope.ResolveVar(localName); local != BadLocal {
+				blk := local.(*Block)
+				for i, arg := range c.Args {
+					if t, err := GetType(arg, scope, class); err != nil {
+						return nil, err
+					} else {
+						p, err := blk.GetParam(i)
+						if err != nil {
+							return nil, NewParseError(c, err.Error())
+						}
+						p._type = t
+						method := blk.Method
+						method.Block.AddParam(p)
+						blk.Scope.Set(p.Name, &RubyLocal{_type: t})
+					}
+				}
+				err := blk.Body.InferReturnType(blk.Scope, nil)
+				if err != nil {
+					return nil, err
+				}
+				blk.Method.Block.ReturnType = blk.Body.ReturnType
+				return blk.Body.ReturnType, nil
+			}
+		}
 	}
 	if c.Receiver != nil {
 		if receiverType == nil {
@@ -710,7 +738,7 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			argTypes = append(argTypes, t)
 		}
 	}
-	//TODO should be consolidated with AnalyzeArguments/AnalyzeMethodSet
+
 	var method *Method
 
 	if ms, ok := classMethodSets[receiverType]; ok {
@@ -721,13 +749,30 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 		method = globalMethodSet.Methods[c.MethodName]
 	}
 
+	var blockRetType types.Type
+	/*
+		TODO if a block is given, which we should be able to determine right now, we
+		can't plow straight through `InferReturnType`. Instead, we need to:
+
+		* run InferReturnType down `blk.call` so that we can determine the types of the arguments to the block
+		* set those types on the block (which means having it available)
+		* using the types obtained for the block args, get the return type for the block
+		* resume inference where we left off at bullet #1
+	*/
 	if method != nil {
+		//TODO should be consolidated with AnalyzeArguments/AnalyzeMethodSet
 		c.Method = method
 		for i, t := range argTypes {
 			param, _ := method.GetParam(i)
 			param._type = t
 			method.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
 		}
+		if c.Block != nil {
+			c.Block.Scope = scope.Extend(NewScope("block"))
+			c.Block.Method = method
+			method.Locals.Set(method.Block.Name, c.Block)
+		}
+		// set block in scope here
 		if err := method.Body.InferReturnType(method.Scope, nil); err != nil {
 			return nil, err
 		} else {
@@ -735,21 +780,22 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 		}
 	} else if c.Receiver == nil {
 		return nil, NewParseError(c, "Attempted to call undefined method '%s'", c.MethodName)
+	} else {
+		// This is all a special case for thanos-defined methods
+		if c.Block != nil {
+			blockScope := NewScope("block")
+			blockArgTypes := receiverType.BlockArgTypes(c.MethodName, argTypes)
+			for i, p := range c.Block.Params {
+				blockScope.Set(p.Name, &RubyLocal{_type: blockArgTypes[i]})
+			}
+			err := c.Block.Body.InferReturnType(scope.Extend(blockScope), nil)
+			if err != nil {
+				return nil, err
+			}
+			blockRetType = c.Block.Body.ReturnType
+		}
 	}
 
-	var blockRetType types.Type
-	if c.Block != nil {
-		blockScope := NewScope("block")
-		blockArgTypes := receiverType.BlockArgTypes(c.MethodName, argTypes)
-		for i, p := range c.Block.Params {
-			blockScope.Set(p.Name, &RubyLocal{_type: blockArgTypes[i]})
-		}
-		err := c.Block.Body.InferReturnType(scope.Extend(blockScope), nil)
-		if err != nil {
-			return nil, err
-		}
-		blockRetType = c.Block.Body.ReturnType
-	}
 	if t, err := receiverType.MethodReturnType(c.MethodName, blockRetType, argTypes); err != nil {
 		return nil, NewParseError(c, err.Error())
 	} else {
@@ -792,6 +838,15 @@ func (c *MethodCall) PositionalArgs() ArgsNode {
 	return positional
 }
 
+func (c *MethodCall) SetBlock(blk *Block) {
+	c.Block = blk
+	if c.Method != nil {
+		for _, p := range blk.Params {
+			c.Method.Block.AddParam(p)
+		}
+	}
+}
+
 type ArgsNode []Node
 
 func (n ArgsNode) String() string {
@@ -821,41 +876,86 @@ func (n ArgsNode) FindByName(name string) (Node, error) {
 	return nil, fmt.Errorf("No argument named '%s' found", name)
 }
 
+type ParamList struct {
+	Params   []*Param
+	ParamMap map[string]*Param
+}
+
+func NewParamList() *ParamList {
+	return &ParamList{ParamMap: make(map[string]*Param)}
+}
+
+func (list *ParamList) AddParam(p *Param) error {
+	if _, found := list.ParamMap[p.Name]; found {
+		return fmt.Errorf("parameter '%s' declared twice", p.Name)
+	}
+	list.Params = append(list.Params, p)
+	list.ParamMap[p.Name] = p
+	p.Position = len(list.Params) - 1
+	return nil
+}
+
+func (list *ParamList) GetParam(i int) (*Param, error) {
+	if i < len(list.Params) {
+		return list.Params[i], nil
+	}
+	return nil, errors.New("out of bounds")
+}
+
+func (list *ParamList) PositionalParams() []*Param {
+	params := []*Param{}
+	for i := 0; ; i++ {
+		p, err := list.GetParam(i)
+		if err != nil || p.Kind != Positional {
+			break
+		}
+		params = append(params, p)
+	}
+	return params
+}
+
+func (list *ParamList) GetParamByName(s string) *Param {
+	return list.ParamMap[s]
+}
+
 type BlockParam struct {
 	Name       string
-	Params     []*Param
 	ReturnType types.Type
+	*ParamList
 }
 
 type Method struct {
 	Receiver Node
 	Name     string
 	Body     *Body
-	Params   []*Param
-	ParamMap map[string]*Param
-	Locals   *SimpleScope
-	Scope    ScopeChain
-	Program  *Program
-	Block    *BlockParam
-	lineNo   int
-	Private  bool
+	*ParamList
+	Locals  *SimpleScope
+	Scope   ScopeChain
+	Program *Program
+	Block   *BlockParam
+	lineNo  int
+	Private bool
 }
 
 func NewMethod(name string, p *Program) *Method {
 	locals := NewScope(name)
-	return &Method{
-		Name:     name,
-		ParamMap: make(map[string]*Param),
-		Locals:   locals,
-		Scope:    p.ScopeChain.Extend(locals),
-		Program:  p,
+	p.currentMethod = &Method{
+		Name:      name,
+		ParamList: NewParamList(),
+		Locals:    locals,
+		Scope:     p.ScopeChain.Extend(locals),
+		Program:   p,
 	}
+	return p.currentMethod
 }
 
 func (n *Method) String() string {
 	strs := []string{}
 	for _, p := range n.Params {
 		strs = append(strs, p.Name)
+	}
+	if n.Block != nil {
+		strs = append(strs, "&"+n.Block.Name)
 	}
 
 	if n.Receiver != nil {
@@ -885,37 +985,16 @@ func (m *Method) GoName() string {
 }
 
 func (m *Method) AddParam(p *Param) error {
-	if _, found := m.ParamMap[p.Name]; found {
-		m.Program.AddParseError(m, "parameter '%s' declared twice for method '%s'", p.Name, m.Name)
+	if p.Kind == ExplicitBlock {
+		m.Block = &BlockParam{Name: p.Name, ParamList: NewParamList()}
+		return nil
 	}
-	m.Params = append(m.Params, p)
-	m.ParamMap[p.Name] = p
-	p.Position = len(m.Params) - 1
+	err := m.ParamList.AddParam(p)
+	if err != nil {
+		return NewParseError(m, err.Error())
+	}
 	m.Locals.Set(p.Name, &RubyLocal{})
 	return nil
-}
-
-func (m *Method) GetParam(i int) (*Param, error) {
-	if i < len(m.Params) {
-		return m.Params[i], nil
-	}
-	return nil, errors.New("out of bounds")
-}
-
-func (m *Method) PositionalParams() []*Param {
-	params := []*Param{}
-	for i := 0; ; i++ {
-		p, err := m.GetParam(i)
-		if err != nil || p.Kind != Positional {
-			break
-		}
-		params = append(params, p)
-	}
-	return params
-}
-
-func (m *Method) GetParamByName(s string) *Param {
-	return m.ParamMap[s]
 }
 
 func (m *Method) Analyze(ms *MethodSet) error {
@@ -1177,6 +1256,7 @@ const (
 	Positional ParamKind = iota
 	Named
 	Keyword
+	ExplicitBlock
 )
 
 type Param struct {
@@ -1316,8 +1396,10 @@ func (n *BracketAccessNode) TargetType(locals ScopeChain, class *Class) (types.T
 }
 
 type Block struct {
-	Params []*Param
 	Body   *Body
+	Scope  ScopeChain
+	Method *Method
+	*ParamList
 }
 
 func (b *Block) String() string {
@@ -1327,6 +1409,10 @@ func (b *Block) String() string {
 	}
 
 	return fmt.Sprintf("(|%s| %s)", strings.Join(strs, ", "), b.Body)
+}
+
+func (b *Block) Type() types.Type {
+	return types.NewProc()
 }
 
 type StringKind int

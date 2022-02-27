@@ -38,7 +38,7 @@ func (c *Car) Drive(x int) int {
 	return c.Starting_miles
 }
 func (c *Car) Mileage() string {
-	c.Log()
+	c.log()
 	return fmt.Sprintf("%d miles", c.Starting_miles)
 }
 func main() {

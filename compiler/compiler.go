@@ -51,7 +51,7 @@ func Compile(p *parser.Program) (string, error) {
 
 	for _, o := range p.Objects {
 		if m, ok := o.(*parser.Method); ok {
-			decls = append(decls, g.CompileFunc(m, nil))
+			decls = append(decls, g.CompileFunc(m, nil)...)
 		}
 	}
 
@@ -135,7 +135,28 @@ func Compile(p *parser.Program) (string, error) {
 	return out.String(), nil
 }
 
-func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) *ast.FuncDecl {
+func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) []ast.Decl {
+	decls := []ast.Decl{}
+
+	if m.Block != nil {
+		funcType := &ast.FuncType{
+			Params: &ast.FieldList{
+				List: g.GetFuncParams(m.Block.Params),
+			},
+			Results: &ast.FieldList{
+				List: g.GetReturnType(m.Block.ReturnType),
+			},
+		}
+		typeSpec := &ast.TypeSpec{
+			Name: g.it.Get(m.Name + strings.Title(m.Block.Name)),
+			Type: funcType,
+		}
+		decls = append(decls, &ast.GenDecl{
+			Tok:   token.TYPE,
+			Specs: []ast.Spec{typeSpec},
+		})
+	}
+
 	if c == nil {
 		g.PushState(InFuncDeclaration)
 	} else {
@@ -150,16 +171,12 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) *ast.FuncDecl
 		g.popTracker()
 		g.currentRcvr = nil
 	}()
-	params := g.GetFuncParams(m)
-
-	fields := []*ast.Field{}
-	if m.ReturnType().IsMultiple() {
-		multiple := m.ReturnType().(types.Multiple)
-		for _, t := range multiple {
-			fields = append(fields, g.retTypeField(t))
-		}
-	} else {
-		fields = append(fields, g.retTypeField(m.ReturnType()))
+	params := g.GetFuncParams(m.Params)
+	if m.Block != nil {
+		params = append(params, &ast.Field{
+			Names: []*ast.Ident{g.it.Get(m.Block.Name)},
+			Type:  g.it.Get(m.Name + strings.Title(m.Block.Name)),
+		})
 	}
 
 	signature := &ast.FuncType{
@@ -167,7 +184,7 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) *ast.FuncDecl
 			List: params,
 		},
 		Results: &ast.FieldList{
-			List: fields,
+			List: g.GetReturnType(m.ReturnType()),
 		},
 	}
 
@@ -191,12 +208,14 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) *ast.FuncDecl
 		}
 	}
 
-	return decl
+	decls = append(decls, decl)
+
+	return decls
 }
 
-func (g *GoProgram) GetFuncParams(m *parser.Method) []*ast.Field {
+func (g *GoProgram) GetFuncParams(rubyParams []*parser.Param) []*ast.Field {
 	params := []*ast.Field{}
-	for _, p := range m.Params {
+	for _, p := range rubyParams {
 		var (
 			lastParam    *ast.Field
 			lastSeenType string
@@ -215,6 +234,19 @@ func (g *GoProgram) GetFuncParams(m *parser.Method) []*ast.Field {
 		}
 	}
 	return params
+}
+
+func (g *GoProgram) GetReturnType(t types.Type) []*ast.Field {
+	fields := []*ast.Field{}
+	if t.IsMultiple() {
+		multiple := t.(types.Multiple)
+		for _, t := range multiple {
+			fields = append(fields, g.retTypeField(t))
+		}
+	} else {
+		fields = append(fields, g.retTypeField(t))
+	}
+	return fields
 }
 
 func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
@@ -280,7 +312,7 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 		// struct initialization k/v pair, every preceding assignment to them to be
 		// locals, and every one after to mutate the field on the already-created
 		// struct.
-		params = g.GetFuncParams(initialize)
+		params = g.GetFuncParams(initialize.Params)
 		for _, stmt := range initialize.Body.Statements {
 			if assign, ok := stmt.(*parser.AssignmentNode); ok {
 				if ivar, isIvar := assign.Left[0].(*parser.IVarNode); isIvar {
@@ -332,7 +364,7 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 		if m.Name == "initialize" {
 			continue
 		}
-		decls = append(decls, g.CompileFunc(m, c))
+		decls = append(decls, g.CompileFunc(m, c)...)
 	}
 
 	return decls
@@ -701,6 +733,20 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 					args = append(args, g.CompileExpr(arg.(*parser.KeyValuePair).Value))
 				}
 			}
+		}
+		if n.Block != nil {
+			funcType := &ast.FuncType{
+				Params: &ast.FieldList{
+					List: g.GetFuncParams(n.Block.Params),
+				},
+				Results: &ast.FieldList{
+					List: g.GetReturnType(n.Block.Body.ReturnType),
+				},
+			}
+			args = append(args, &ast.FuncLit{
+				Type: funcType,
+				Body: g.CompileBlockStmt(n.Block.Body.Statements),
+			})
 		}
 		//TODO take into account private/protected
 		return bst.Call(nil, strings.Title(n.MethodName), args...)

@@ -51,8 +51,8 @@ func root(yylex yyLexer) *Program {
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node
 %type <node_list> compstmt stmts program mlhs mlhs_basic mlhs_head 
 %type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args
-%type <param> f_arg_item f_kw f_opt
-%type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg
+%type <param> f_arg_item f_kw f_opt f_block_arg
+%type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg 
 %type <body> bodystmt
 %type <when> when
 %type <whens> case_body cases
@@ -223,7 +223,11 @@ command:
 //| primary_value tCOLON2 operation2 command_args =LOWEST
 //| primary_value tCOLON2 operation2 command_args cmd_brace_block
 //| kSUPER command_args
-//| kYIELD command_args
+| YIELD command_args
+  {
+    root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
+    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", Args: $2, lineNo: currentLineNo}
+  }
 //| k_return call_args
 | RETURN call_args
   {
@@ -601,15 +605,28 @@ primary:
   {
     $$ = &HashNode{Pairs: $2, lineNo: currentLineNo}
   }
-//| kYIELD tLPAREN2 call_args rparen
-//| kYIELD tLPAREN2 rparen
-//| kYIELD
+| YIELD LPAREN call_args rparen
+  {
+    // this is naive, as in theory the source could have non-block locals called "blk".
+    root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
+    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", Args: $3, lineNo: currentLineNo}
+  }
+| YIELD LPAREN rparen
+  {
+    root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
+    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", lineNo: currentLineNo}
+  }
+| YIELD
+  {
+    root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
+    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", lineNo: currentLineNo}
+  }
 //| fcall brace_block
 | method_call
 | method_call brace_block
  {
    call := $1.(*MethodCall)
-   call.Block = $2
+   call.SetBlock($2)
    if yylex.(*Lexer).blockDepth == 0 {
      call.RawBlock = yylex.(*Lexer).lastParsedToken.RawBlock
    }
@@ -808,7 +825,11 @@ brace_block:
 brace_body: 
   opt_block_param compstmt
   {
-    $$ = &Block{Params: $1, Body: &Body{Statements: $2}}
+    blk := &Block{Body: &Body{Statements: $2}, ParamList: NewParamList()}
+    for _, p := range $1 {
+      blk.AddParam(p)
+    }
+    $$ = blk
   }
 
 // do_body:   
@@ -947,7 +968,9 @@ method_signature:
     method.lineNo = currentLineNo
 
     for _, p := range $3 {
-      method.AddParam(p)
+      if err := method.AddParam(p); err != nil {
+        root(yylex).AddError(err)
+      }
     }
 
     root(yylex).PushState(InMethodDefinition)
@@ -1066,8 +1089,15 @@ args_tail:
   f_kwarg
 //f_kwarg tCOMMA f_kwrest opt_f_block_arg
 //| f_kwarg opt_f_block_arg
+//{
+//  $$ = append($1, $2)
+//}
 //| f_kwrest opt_f_block_arg
-//| f_block_arg
+| f_block_arg
+  {
+    $$ = []*Param{$1}
+  }
+
 opt_args_tail: 
   COMMA args_tail
   {
@@ -1181,10 +1211,20 @@ f_optarg:
 //restarg_mark: tSTAR2 | tSTAR
 //f_rest_arg: restarg_mark tIDENTIFIER
 //| restarg_mark
-//blkarg_mark: tAMPER2 | tAMPER
-//f_block_arg: blkarg_mark tIDENTIFIER
-//opt_f_block_arg: tCOMMA f_block_arg
-//|
+f_block_arg:
+  AND IDENT
+  {
+    $$ = &Param{Name: $2, Kind: ExplicitBlock}  
+  }
+//opt_f_block_arg: 
+//  COMMA f_block_arg
+//  {
+//    $$ = []*Param{$2}
+//  }
+//| 
+//  {
+//    $$ = []*Param{}
+//  }
 //singleton: var_ref
 //| tLPAREN2 expr rparen
 

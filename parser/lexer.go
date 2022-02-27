@@ -401,7 +401,7 @@ func (l *Lexer) lexPunct() error {
 					return err
 				}
 				switch l.lastToken {
-				case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT:
+				case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, YIELD:
 				default:
 					l.Emit(exprStartTokens[tok])
 					return err
