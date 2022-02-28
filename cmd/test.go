@@ -19,6 +19,11 @@ var TestDir, TestFile, TestCase string
 
 func runTest(script, name string) bool {
 	fmt.Printf("Running test '%s': ", name)
+	if script == "" {
+		color.Red("FAIL\n    ")
+		color.Red("No Ruby source detected")
+		return false
+	}
 	if diff, compiled, err := compiler.CompareThanosToMRI(script, name); err != nil {
 		color.Red("FAIL\n    ")
 		color.Red(err.Error())

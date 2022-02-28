@@ -1,4 +1,4 @@
-gauntlet "user-defined block method" do
+gauntlet("user-defined block method") do
   def logging(arr, &blk)
     arr.each do |n|
       blk.call(n)

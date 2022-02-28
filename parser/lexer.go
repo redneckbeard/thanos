@@ -135,7 +135,6 @@ type Lexer struct {
 	stateStack      []LexState
 	lastToken       int
 	rawSource       []rune
-	blockDepth      int
 	lastParsedToken Token
 	gauntlet        bool
 	spaceConsumed   bool
@@ -209,14 +208,12 @@ func (l *Lexer) ResetBuffer() {
 }
 
 func (l *Lexer) Emit(t int) {
-	// gauntlet support
-	if l.blockDepth > 0 {
+	if l.gauntlet {
 		l.rawSource = append(l.rawSource, l.read...)
-	}
-	tok := Token{t, string(l.read), l.lineNo, string(l.rawSource)}
-	if l.blockDepth == 0 {
+	} else {
 		l.rawSource = []rune{}
 	}
+	tok := Token{t, string(l.read), l.lineNo, string(l.rawSource)}
 	l.stream <- tok
 	l.lastToken = t
 	l.ResetBuffer()
@@ -269,7 +266,7 @@ func (l *Lexer) lexWhitespace() error {
 		l.Emit(NEWLINE)
 		l.lineNo++
 	} else {
-		if l.blockDepth > 0 {
+		if l.gauntlet {
 			l.rawSource = append(l.rawSource, l.read...)
 		}
 		l.ResetBuffer()
@@ -510,19 +507,6 @@ func (l *Lexer) lexWord() error {
 		// and just include that string in the token wrapper.
 		case "gauntlet":
 			l.gauntlet = true
-			l.Emit(p)
-		case "do":
-			l.Emit(p)
-			if l.gauntlet {
-				l.blockDepth++
-			}
-		case "end":
-			if l.gauntlet {
-				l.blockDepth--
-				if l.blockDepth == 0 {
-					l.gauntlet = false
-				}
-			}
 			l.Emit(p)
 		default:
 			l.Emit(p)

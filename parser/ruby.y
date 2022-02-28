@@ -627,8 +627,10 @@ primary:
  {
    call := $1.(*MethodCall)
    call.SetBlock($2)
-   if yylex.(*Lexer).blockDepth == 0 {
-     call.RawBlock = yylex.(*Lexer).lastParsedToken.RawBlock
+   if yylex.(*Lexer).gauntlet && call.MethodName == "gauntlet" {
+     lines := strings.Split(yylex.(*Lexer).lastParsedToken.RawBlock, "\n")
+     call.RawBlock = strings.Join(lines[1:len(lines)-1], "\n")
+     yylex.(*Lexer).gauntlet = false
    }
    $$ = call
  }
