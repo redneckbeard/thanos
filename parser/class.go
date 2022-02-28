@@ -185,34 +185,7 @@ func (cls *Class) BuildType() *types.Class {
 		}
 	}
 
-	for _, stmt := range cls.Statements {
-		switch node := stmt.(type) {
-		case *MethodCall:
-			switch node.MethodName {
-			case "attr_reader":
-				cls.AddIVars(node.Args, true, false)
-			case "attr_writer":
-				cls.AddIVars(node.Args, false, true)
-			case "attr_accessor":
-				cls.AddIVars(node.Args, true, true)
-			}
-		case *AssignmentNode:
-			if c, ok := node.Left[0].(*ConstantNode); ok {
-				constant := &Constant{Name: c.Val}
-				switch rhs := node.Right.(type) {
-				//TODO exhaustively search to determine that type is ultimately literal
-				case *IntNode, *SymbolNode, *Float64Node, *StringNode, *BooleanNode:
-					constant._type = rhs.Type()
-					constant.Val = rhs
-				}
-				constant.Class = cls
-				cls.Constants = append(cls.Constants, constant)
-			}
-		}
-	}
-	for _, name := range []string{"attr_reader", "attr_writer", "attr_accessor"} {
-		delete(cls.MethodSet.Calls, name)
-	}
+	GetType(cls.Statements, ScopeChain{cls}, cls)
 
 	return class
 }

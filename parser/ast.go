@@ -354,7 +354,7 @@ type SymbolNode struct {
 }
 
 func (n *SymbolNode) String() string       { return n.Val }
-func (n *SymbolNode) Type() types.Type     { return nil }
+func (n *SymbolNode) Type() types.Type     { return types.SymbolType }
 func (n *SymbolNode) SetType(t types.Type) {}
 func (n *SymbolNode) LineNo() int          { return n.lineNo }
 
@@ -592,7 +592,17 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			n.Reassignment = true
 		case *ConstantNode:
 			lft.SetType(assignedType)
-			scope.Set(localName, &RubyLocal{_type: assignedType})
+			if class != nil {
+				constant := &Constant{Name: lft.Val}
+				constant._type = assignedType
+				GetType(left, scope, class)
+				GetType(n.Right, scope, class)
+				constant.Val = n.Right
+				constant.Class = class
+				class.Constants = append(class.Constants, constant)
+			} else {
+				scope.Set(localName, &RubyLocal{_type: assignedType})
+			}
 		default:
 			if local, found := scope.Get(localName); !found {
 				scope.Set(localName, &RubyLocal{_type: assignedType})
@@ -746,7 +756,25 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			method = m
 		}
 	} else if c.Receiver == nil {
-		method = globalMethodSet.Methods[c.MethodName]
+		if class == nil {
+			method = globalMethodSet.Methods[c.MethodName]
+		} else {
+			//TODO push into class methods when class method resolution is implemented
+			switch c.MethodName {
+			case "attr_reader":
+				class.AddIVars(c.Args, true, false)
+				delete(class.MethodSet.Calls, c.MethodName)
+			case "attr_writer":
+				class.AddIVars(c.Args, false, true)
+				delete(class.MethodSet.Calls, c.MethodName)
+			case "attr_accessor":
+				class.AddIVars(c.Args, true, true)
+				delete(class.MethodSet.Calls, c.MethodName)
+			default:
+				return nil, NewParseError(c, "Tried calling class method '%s' inside body of class '%s' but no such method exists", c.MethodName, class.Name())
+			}
+			return nil, nil
+		}
 	}
 
 	var blockRetType types.Type

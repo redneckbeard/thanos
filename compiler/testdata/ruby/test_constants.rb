@@ -2,6 +2,10 @@ PERMIT_AGE = 16
 
 class CTDriver
   LICENSE_AGE = 18
+  KIND_MOTORCYCLE = :motorcycle
+  KIND_COMMERCIAL = :cdl
+  KIND_SCOOTER = :scooter
+  LICENSE_KINDS = [KIND_MOTORCYCLE, KIND_COMMERCIAL, KIND_SCOOTER]
 
   def initialize(age)
     @age = age

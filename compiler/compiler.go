@@ -265,7 +265,12 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 		})
 	}
 	for _, constant := range c.Constants {
-		g.addConstant(g.it.Get(c.Name()+constant.Name), g.CompileExpr(constant.Val))
+		switch constant.Val.Type() {
+		case types.IntType, types.SymbolType, types.FloatType, types.StringType, types.BoolType:
+			g.addConstant(g.it.Get(c.Name()+constant.Name), g.CompileExpr(constant.Val))
+		default:
+			g.addGlobalVar(g.it.Get(c.Name()+constant.Name), g.it.Get(constant.Val.Type().GoType()), g.CompileExpr(constant.Val))
+		}
 	}
 	decls = append(decls, &ast.GenDecl{
 		Tok: token.TYPE,
@@ -453,7 +458,12 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 	case *parser.AssignmentNode:
 		if len(n.Left) == 1 {
 			if constant, ok := n.Left[0].(*parser.ConstantNode); ok {
-				g.addConstant(g.it.Get(constant.Namespace+constant.Val), g.CompileExpr(n.Right))
+				switch n.Right.Type() {
+				case types.IntType, types.SymbolType, types.FloatType, types.StringType, types.BoolType:
+					g.addConstant(g.it.Get(constant.Namespace+constant.Val), g.CompileExpr(n.Right))
+				default:
+					g.addGlobalVar(g.it.Get(constant.Namespace+constant.Val), g.it.Get(n.Right.Type().GoType()), g.CompileExpr(n.Right))
+				}
 				return
 			}
 		}

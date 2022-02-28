@@ -3,8 +3,13 @@ package main
 import "fmt"
 
 const CTDriverLICENSE_AGE = 18
+const CTDriverKIND_MOTORCYCLE = "motorcycle"
+const CTDriverKIND_COMMERCIAL = "cdl"
+const CTDriverKIND_SCOOTER = "scooter"
 const CrossStateCommercialCTDriverLICENSE_AGE = 21
 const PERMIT_AGE = 16
+
+var CTDriverLICENSE_KINDS []string = []string{CTDriverKIND_MOTORCYCLE, CTDriverKIND_COMMERCIAL, CTDriverKIND_SCOOTER}
 
 type CTDriver struct {
 	age int
