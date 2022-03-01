@@ -327,7 +327,7 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 					}
 					setStructFields = append(setStructFields, &ast.KeyValueExpr{
 						Key:   g.it.Get(name),
-						Value: g.CompileExpr(assign.Right),
+						Value: g.CompileExpr(assign.Right[0]),
 					})
 				}
 			}
@@ -438,7 +438,7 @@ func (g *GoProgram) CompileBlockStmt(node parser.Node) *ast.BlockStmt {
 				} else if g.CurrentState() == InCondAssignment {
 					s = &parser.AssignmentNode{
 						Left:         g.CurrentLhs,
-						Right:        s,
+						Right:        []parser.Node{s},
 						Reassignment: true,
 					}
 				}
@@ -458,11 +458,11 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 	case *parser.AssignmentNode:
 		if len(n.Left) == 1 {
 			if constant, ok := n.Left[0].(*parser.ConstantNode); ok {
-				switch n.Right.Type() {
+				switch n.Right[0].Type() {
 				case types.IntType, types.SymbolType, types.FloatType, types.StringType, types.BoolType:
-					g.addConstant(g.it.Get(constant.Namespace+constant.Val), g.CompileExpr(n.Right))
+					g.addConstant(g.it.Get(constant.Namespace+constant.Val), g.CompileExpr(n.Right[0]))
 				default:
-					g.addGlobalVar(g.it.Get(constant.Namespace+constant.Val), g.it.Get(n.Right.Type().GoType()), g.CompileExpr(n.Right))
+					g.addGlobalVar(g.it.Get(constant.Namespace+constant.Val), g.it.Get(n.Right[0].Type().GoType()), g.CompileExpr(n.Right[0]))
 				}
 				return
 			}
@@ -601,7 +601,8 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 }
 
 func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
-	if cond, ok := node.Right.(*parser.Condition); ok {
+	//TODO write test case specifically for multiple return values in branches of conditional statement
+	if cond, ok := node.Right[0].(*parser.Condition); ok {
 
 		// Here we handle the impedance mismatch between Ruby conditional
 		// expressions and Go conditional statments.
@@ -649,7 +650,8 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 	}
 	var assignFunc bst.AssignFunc
 	if node.OpAssignment {
-		infix := node.Right.(*parser.InfixExpressionNode)
+		// operator-assignment can only have singular left and right hand sides ever
+		infix := node.Right[0].(*parser.InfixExpressionNode)
 		if intNode, ok := infix.Right.(*parser.IntNode); ok && intNode.Val == "1" && (infix.Operator == "+" || infix.Operator == "-") {
 			op := token.INC
 			if infix.Operator == "-" {
@@ -664,7 +666,7 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 		}
 		assignFunc = bst.OpAssign(infix.Operator)
 		node = node.Clone()
-		node.Right = infix.Right
+		node.Right = []parser.Node{infix.Right}
 	} else if node.Reassignment {
 		assignFunc = bst.Assign
 	} else {
@@ -673,8 +675,20 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 
 	// rhs must go first here for reason of generation of local variable names
 	// in transforms
-	rhs := []ast.Expr{g.CompileExpr(node.Right)}
+	var rhs []ast.Expr
+	if _, ok := node.Right[0].Type().(types.Array); ok && len(node.Right) == 1 && len(node.Left) > 1 {
+		arr := g.CompileExpr(node.Right[0])
+		for i, _ := range node.Left {
+			rhs = append(rhs, &ast.IndexExpr{
+				X:     arr,
+				Index: bst.Int(i),
+			})
+		}
+	} else {
+		rhs = g.mapToExprs(node.Right)
+	}
 	lhs := g.mapToExprs(node.Left)
+
 	tautological := true
 	if len(lhs) != len(rhs) {
 		tautological = false
@@ -979,6 +993,9 @@ func (g *GoProgram) TransformInfixExpressionNode(node *parser.InfixExpressionNod
 		types.TypeExpr{node.Right.Type(), g.CompileExpr(node.Right)},
 		op.GoToken,
 	)
+	if transform.Expr == nil {
+		return g.CompileInfixExpressionNode(node)
+	}
 	return transform.Expr
 }
 

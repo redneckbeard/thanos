@@ -533,7 +533,7 @@ func (n *NotExpressionNode) TargetType(locals ScopeChain, class *Class) (types.T
 
 type AssignmentNode struct {
 	Left         []Node
-	Right        Node
+	Right        []Node
 	Reassignment bool
 	OpAssignment bool
 	lineNo       int
@@ -541,17 +541,21 @@ type AssignmentNode struct {
 }
 
 func (n *AssignmentNode) String() string {
-	segments := []string{}
-	for _, left := range n.Left {
-		segments = append(segments, left.String())
+	sides := []interface{}{}
+	for _, side := range [][]Node{n.Left, n.Right} {
+		segments := []string{}
+		for _, s := range side {
+			segments = append(segments, s.String())
+		}
+		var s string
+		if len(side) > 1 {
+			s = fmt.Sprintf("(%s)", strings.Join(segments, ", "))
+		} else {
+			s = side[0].String()
+		}
+		sides = append(sides, s)
 	}
-	var lhs string
-	if len(n.Left) > 1 {
-		lhs = fmt.Sprintf("(%s)", strings.Join(segments, ", "))
-	} else {
-		lhs = n.Left[0].String()
-	}
-	return fmt.Sprintf("(%s = %s)", lhs, n.Right)
+	return fmt.Sprintf("(%s = %s)", sides...)
 }
 func (n *AssignmentNode) Type() types.Type     { return n._type }
 func (n *AssignmentNode) SetType(t types.Type) { n._type = t }
@@ -559,7 +563,7 @@ func (n *AssignmentNode) LineNo() int          { return n.lineNo }
 
 func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
 	var typelist []types.Type
-	for _, left := range n.Left {
+	for i, left := range n.Left {
 		var localName string
 		switch lhs := left.(type) {
 		case *IdentNode:
@@ -579,9 +583,59 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			err          error
 		)
 		if n.OpAssignment {
-			assignedType, err = GetType(n.Right.(*InfixExpressionNode).Right, scope, class)
+			// operator assignments are always 1:1, so nothing to handle here for multiple lhs or rhs
+			assignedType, err = GetType(n.Right[i].(*InfixExpressionNode).Right, scope, class)
 		} else {
-			assignedType, err = GetType(n.Right, scope, class)
+			switch {
+			case len(n.Left) > len(n.Right):
+				/*
+
+					There are two valid scenarios here: unpacking of an array into
+					locals, and assigning from a method that returns a tuple. Note that
+					Ruby's behavior in the event of a length mismatch of the two sides is
+					to drop the excess values if lhs is shorter than rhs, and to populate
+					excess identifiers on lhs with nil of lhs is longer than rhs. There
+					is also the perfectly legal option of assigning a single value that
+					cannot be deconstructed to multiple variables, which leaves all but
+					the first as nil.
+
+					This logic will have to change to accommodate splats.
+
+				*/
+				t, err := GetType(n.Right[0], scope, class)
+				if err != nil {
+					return nil, NewParseError(n, err.Error())
+				}
+				switch rt := t.(type) {
+				case types.Multiple:
+					assignedType = rt[i]
+				case types.Array:
+					assignedType = rt.Element
+				default:
+					if i > 0 {
+						assignedType = types.NilType
+					} else {
+						assignedType = t
+					}
+				}
+			case len(n.Left) == len(n.Right):
+				assignedType, err = GetType(n.Right[i], scope, class)
+			case len(n.Left) < len(n.Right):
+				// If there's only one lhs element, this is an implicit Array, and
+				// needs to get type checked. Otherwise, as discussed above, we throw
+				// away any rhs values beyond the length of lhs.
+				if len(n.Left) == 1 {
+					array := &ArrayNode{Args: ArgsNode(n.Right), lineNo: n.Right[0].LineNo()}
+					if at, err := GetType(array, scope, class); err != nil {
+						return nil, err
+					} else {
+						n.Right = []Node{array}
+						assignedType = at
+					}
+				} else {
+					assignedType, err = GetType(n.Right[i], scope, class)
+				}
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -596,8 +650,7 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				constant := &Constant{Name: lft.Val}
 				constant._type = assignedType
 				GetType(left, scope, class)
-				GetType(n.Right, scope, class)
-				constant.Val = n.Right
+				constant.Val = n.Right[i]
 				constant.Class = class
 				class.Constants = append(class.Constants, constant)
 			} else {
@@ -628,6 +681,9 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			}
 		}
 		typelist = append(typelist, assignedType)
+	}
+	if len(typelist) > 1 {
+		return types.Multiple(typelist), nil
 	}
 	return typelist[0], nil
 }
@@ -1247,7 +1303,7 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 		} else if _, ok := s.Left[0].(*IVarNode); ok {
 			ret = &ReturnNode{Val: s.Left}
 		} else {
-			ret = &ReturnNode{Val: []Node{s.Right}}
+			ret = &ReturnNode{Val: []Node{s.Right[0]}}
 		}
 		if _, err := GetType(ret, scope, class); err != nil {
 			return err

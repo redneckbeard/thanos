@@ -77,6 +77,12 @@ var addOperator OperatorSpec = OperatorSpec{
 		}
 		return IntType, nil
 	},
+	TransformAST: func(left, right TypeExpr, tok token.Token) Transform {
+		if left.Type == StringType && right.Type == StringType {
+			return Transform{}
+		}
+		return nativeOperator.TransformAST(left, right, tok)
+	},
 }
 
 var powOperator OperatorSpec = OperatorSpec{

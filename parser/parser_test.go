@@ -125,6 +125,10 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		{`def foo; yield "foo"; end`, `(def foo(&blk); (blk.call("foo")); end)`},
 		{`def foo; yield(); end`, `(def foo(&blk); (blk.call()); end)`},
 		{`def foo; yield; end`, `(def foo(&blk); (blk.call()); end)`},
+
+		{`a = b, c`, `(a = [b, c])`},
+		{`a, b = c, d`, `((a, b) = (c, d))`},
+		{`a, b = c`, `((a, b) = c)`},
 	}
 
 	for i, tt := range tests {
@@ -371,6 +375,28 @@ foo("quux")`,
 			`,
 			argumentTypes: map[string]types.Type{"radius": types.IntType},
 			ReturnType:    types.FloatType,
+		},
+		{
+			input: `
+			def foo(a, b)
+			  c, d = a ** 2, b ** 2.0
+				c + d
+			end
+			foo(1, 2)
+			`,
+			argumentTypes: map[string]types.Type{"a": types.IntType, "b": types.IntType},
+			ReturnType:    types.FloatType,
+		},
+		{
+			input: `
+			def foo(a, b)
+			  c = a, b
+				c << 3
+			end
+			foo(1, 2)
+			`,
+			argumentTypes: map[string]types.Type{"a": types.IntType, "b": types.IntType},
+			ReturnType:    types.NewArray(types.IntType),
 		},
 	}
 

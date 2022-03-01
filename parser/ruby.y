@@ -50,7 +50,7 @@ func root(yylex yyLexer) *Program {
 %type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp, expr_value_do
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node
 %type <node_list> compstmt stmts program mlhs mlhs_basic mlhs_head 
-%type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args
+%type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args mrhs mrhs_arg
 %type <param> f_arg_item f_kw f_opt f_block_arg
 %type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg 
 %type <body> bodystmt
@@ -154,10 +154,16 @@ stmt:
 | command_asgn
 | mlhs ASSIGN command_call
   {
+    $$ = &AssignmentNode{Left: $1, Right: []Node{$3}, lineNo: currentLineNo}
+  }
+| lhs ASSIGN mrhs
+  {
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: $3, lineNo: currentLineNo}
+  }
+| mlhs ASSIGN mrhs_arg
+  {
     $$ = &AssignmentNode{Left: $1, Right: $3, lineNo: currentLineNo}
   }
-//| lhs tEQL mrhs
-//| mlhs tEQL mrhs_arg
 | private
   {
     root(yylex).inPrivateMethods = true
@@ -169,12 +175,12 @@ command_asgn:
   lhs ASSIGN command_rhs
   {
    
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: $3, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{$3}, lineNo: currentLineNo}
   }
 | var_lhs op_asgn command_rhs
   {
     operation := &InfixExpressionNode{Left: $1, Operator: strings.Trim($2, "="), Right: $3, lineNo: currentLineNo}
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: operation, OpAssignment: true, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
   }
 //| primary_value tLBRACK2 opt_call_args rbracket tOP_ASGN command_rhs
 //| primary_value call_op tIDENTIFIER tOP_ASGN command_rhs
@@ -350,12 +356,12 @@ op:   PIPE    | CARET  | AND  | SPACESHIP  | EQ
 arg: 
   lhs ASSIGN arg_rhs
   {
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: $3, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{$3}, lineNo: currentLineNo}
   }
 | var_lhs op_asgn arg_rhs
   {
     operation := &InfixExpressionNode{Left: $1, Operator: strings.Trim($2, "="), Right: $3, lineNo: currentLineNo}
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: operation, OpAssignment: true, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
   }
 //| primary_value call_op tIDENTIFIER tOP_ASGN arg_rhs
 //| primary_value call_op tCONSTANT tOP_ASGN arg_rhs
@@ -556,13 +562,23 @@ args:
 //| tSTAR arg_value
 //| args tCOMMA tSTAR arg_value
 
+mrhs_arg: 
+  mrhs
+| arg_value
+  {
+    $$ = []Node{$1}
+  }
+
+
 command_args: call_args //Ruby implementation includes some lookahead here
 //block_arg: tAMPER arg_value
 //opt_block_arg: tCOMMA block_arg
 //| # nothing
-//mrhs_arg: mrhs
-//| arg_value
-//mrhs: args tCOMMA arg_value
+mrhs: 
+  args COMMA arg_value
+  {
+		$$ = append($1, $3)
+  }
 //| args tCOMMA tSTAR arg_value
 //| tSTAR arg_value
 
