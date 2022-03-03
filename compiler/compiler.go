@@ -124,12 +124,14 @@ func Compile(p *parser.Program) (string, error) {
 		return "", fmt.Errorf("Error converting AST to []byte: %s", err.Error())
 	}
 
+	intermediate := in.String()
+
 	cmd := exec.Command("goimports")
 	cmd.Stdin = &in
 	cmd.Stdout = &out
 	err = cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("Error running gofmt: %s", err.Error())
+		return intermediate, fmt.Errorf("Error running gofmt: %s", err.Error())
 	}
 
 	return out.String(), nil
@@ -1006,7 +1008,7 @@ func (g *GoProgram) CompileStringNode(node *parser.StringNode) ast.Expr {
 		Kind:  token.STRING,
 		Value: node.GoString(),
 	}
-	if len(node.Interps) == 0 && node.Kind == parser.DoubleQuote {
+	if len(node.Interps) == 0 && node.Kind != parser.Regexp {
 		return str
 	}
 
