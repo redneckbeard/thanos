@@ -131,6 +131,7 @@ func Compile(p *parser.Program) (string, error) {
 	cmd.Stdout = &out
 	err = cmd.Run()
 	if err != nil {
+		fmt.Println(intermediate)
 		return intermediate, fmt.Errorf("Error running gofmt: %s", err.Error())
 	}
 
@@ -722,11 +723,7 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 	switch n := node.(type) {
 	case *parser.InfixExpressionNode:
-		if types.Operators[n.Operator].Spec.TransformAST != nil || n.HasMethod() {
-			return g.TransformInfixExpressionNode(n)
-		} else {
-			return g.CompileInfixExpressionNode(n)
-		}
+		return g.TransformInfixExpressionNode(n)
 	case *parser.MethodCall:
 		if n.RequiresTransform() {
 			transform := g.TransformMethodCall(n)
@@ -878,14 +875,6 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 	}
 }
 
-func (g *GoProgram) CompileInfixExpressionNode(node *parser.InfixExpressionNode) ast.Expr {
-	return &ast.BinaryExpr{
-		X:  g.CompileExpr(node.Left),
-		Op: types.Operators[node.Operator].GoToken,
-		Y:  g.CompileExpr(node.Right),
-	}
-}
-
 func (g *GoProgram) CompileRangeIndexNode(rcvr ast.Expr, r *parser.RangeNode) ast.Expr {
 	bounds := map[int]ast.Expr{}
 
@@ -984,20 +973,8 @@ func (g *GoProgram) CompileRangeIndexNode(rcvr ast.Expr, r *parser.RangeNode) as
 }
 
 func (g *GoProgram) TransformInfixExpressionNode(node *parser.InfixExpressionNode) ast.Expr {
-	if node.HasMethod() {
-		transform := g.getTransform(g.CompileExpr(node.Left), node.Left.Type(), node.Operator, parser.ArgsNode{node.Right}, nil)
-		g.appendToCurrentBlock(transform.Stmts...)
-		return transform.Expr
-	}
-	op := types.Operators[node.Operator]
-	transform := op.Spec.TransformAST(
-		types.TypeExpr{node.Left.Type(), g.CompileExpr(node.Left)},
-		types.TypeExpr{node.Right.Type(), g.CompileExpr(node.Right)},
-		op.GoToken,
-	)
-	if transform.Expr == nil {
-		return g.CompileInfixExpressionNode(node)
-	}
+	transform := g.getTransform(g.CompileExpr(node.Left), node.Left.Type(), node.Operator, parser.ArgsNode{node.Right}, nil)
+	g.appendToCurrentBlock(transform.Stmts...)
 	return transform.Expr
 }
 

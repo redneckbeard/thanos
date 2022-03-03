@@ -263,19 +263,8 @@ The following instance methods have not yet been implemented on File. This list 
 
 The following instance methods have not yet been implemented on Float. This list does not include methods inherited from `Object` or `Kernel` that are missing from those ancestors.
 
-* `Float#%`
-* `Float#*`
-* `Float#**`
-* `Float#+`
 * `Float#+@`
-* `Float#-`
 * `Float#-@`
-* `Float#/`
-* `Float#<`
-* `Float#<=`
-* `Float#>`
-* `Float#>=`
-* `Float#abs`
 * `Float#abs2`
 * `Float#angle`
 * `Float#arg`
@@ -299,13 +288,11 @@ The following instance methods have not yet been implemented on Float. This list
 * `Float#magnitude`
 * `Float#modulo`
 * `Float#nan?`
-* `Float#negative?`
 * `Float#next_float`
 * `Float#nonzero?`
 * `Float#numerator`
 * `Float#phase`
 * `Float#polar`
-* `Float#positive?`
 * `Float#prev_float`
 * `Float#quo`
 * `Float#rationalize`
@@ -323,7 +310,6 @@ The following instance methods have not yet been implemented on Float. This list
 * `Float#to_int`
 * `Float#to_r`
 * `Float#truncate`
-* `Float#zero?`
 
 # Methods missing on Hash
 
@@ -355,26 +341,19 @@ The following instance methods have not yet been implemented on Hash. This list 
 * `Hash#default=`
 * `Hash#default_proc`
 * `Hash#default_proc=`
-* `Hash#delete`
-* `Hash#delete_if`
 * `Hash#detect`
 * `Hash#dig`
 * `Hash#drop`
 * `Hash#drop_while`
-* `Hash#each`
 * `Hash#each_cons`
 * `Hash#each_entry`
-* `Hash#each_key`
 * `Hash#each_pair`
 * `Hash#each_slice`
-* `Hash#each_value`
 * `Hash#each_with_index`
 * `Hash#each_with_object`
-* `Hash#empty?`
 * `Hash#entries`
 * `Hash#fetch`
 * `Hash#fetch_values`
-* `Hash#filter`
 * `Hash#filter!`
 * `Hash#filter_map`
 * `Hash#find`
@@ -386,23 +365,17 @@ The following instance methods have not yet been implemented on Hash. This list 
 * `Hash#grep`
 * `Hash#grep_v`
 * `Hash#group_by`
-* `Hash#has_key?`
-* `Hash#has_value?`
-* `Hash#include?`
 * `Hash#index`
 * `Hash#inject`
 * `Hash#invert`
 * `Hash#keep_if`
 * `Hash#key`
 * `Hash#key?`
-* `Hash#keys`
 * `Hash#lazy`
-* `Hash#length`
 * `Hash#map`
 * `Hash#max`
 * `Hash#max_by`
 * `Hash#member?`
-* `Hash#merge`
 * `Hash#merge!`
 * `Hash#min`
 * `Hash#min_by`
@@ -414,7 +387,6 @@ The following instance methods have not yet been implemented on Hash. This list 
 * `Hash#rassoc`
 * `Hash#reduce`
 * `Hash#rehash`
-* `Hash#reject`
 * `Hash#reject!`
 * `Hash#replace`
 * `Hash#reverse_each`
@@ -444,7 +416,6 @@ The following instance methods have not yet been implemented on Hash. This list 
 * `Hash#uniq`
 * `Hash#update`
 * `Hash#value?`
-* `Hash#values`
 * `Hash#values_at`
 * `Hash#zip`
 
@@ -452,24 +423,12 @@ The following instance methods have not yet been implemented on Hash. This list 
 
 The following instance methods have not yet been implemented on Integer. This list does not include methods inherited from `Object` or `Kernel` that are missing from those ancestors.
 
-* `Integer#%`
 * `Integer#&`
-* `Integer#*`
-* `Integer#**`
-* `Integer#+`
 * `Integer#+@`
-* `Integer#-`
 * `Integer#-@`
-* `Integer#/`
-* `Integer#<`
-* `Integer#<<`
-* `Integer#<=`
-* `Integer#>`
-* `Integer#>=`
 * `Integer#>>`
 * `Integer#[]`
 * `Integer#^`
-* `Integer#abs`
 * `Integer#abs2`
 * `Integer#allbits?`
 * `Integer#angle`
@@ -487,8 +446,6 @@ The following instance methods have not yet been implemented on Integer. This li
 * `Integer#digits`
 * `Integer#div`
 * `Integer#divmod`
-* `Integer#downto`
-* `Integer#even?`
 * `Integer#fdiv`
 * `Integer#finite?`
 * `Integer#floor`
@@ -498,20 +455,16 @@ The following instance methods have not yet been implemented on Integer. This li
 * `Integer#imag`
 * `Integer#imaginary`
 * `Integer#infinite?`
-* `Integer#integer?`
 * `Integer#lcm`
 * `Integer#magnitude`
 * `Integer#modulo`
-* `Integer#negative?`
 * `Integer#next`
 * `Integer#nobits?`
 * `Integer#nonzero?`
 * `Integer#numerator`
-* `Integer#odd?`
 * `Integer#ord`
 * `Integer#phase`
 * `Integer#polar`
-* `Integer#positive?`
 * `Integer#pow`
 * `Integer#pred`
 * `Integer#quo`
@@ -526,15 +479,12 @@ The following instance methods have not yet been implemented on Integer. This li
 * `Integer#size`
 * `Integer#step`
 * `Integer#succ`
-* `Integer#times`
 * `Integer#to_c`
 * `Integer#to_f`
 * `Integer#to_i`
 * `Integer#to_int`
 * `Integer#to_r`
 * `Integer#truncate`
-* `Integer#upto`
-* `Integer#zero?`
 * `Integer#|`
 * `Integer#~`
 
@@ -554,11 +504,73 @@ The following instance methods have not yet been implemented on MatchData. This 
 * `MatchData#to_a`
 * `MatchData#values_at`
 
+# Methods missing on Numeric
+
+The following instance methods have not yet been implemented on Numeric. This list does not include methods inherited from `Object` or `Kernel` that are missing from those ancestors.
+
+* `Numeric#+@`
+* `Numeric#-@`
+* `Numeric#abs2`
+* `Numeric#angle`
+* `Numeric#arg`
+* `Numeric#between?`
+* `Numeric#ceil`
+* `Numeric#clamp`
+* `Numeric#coerce`
+* `Numeric#conj`
+* `Numeric#conjugate`
+* `Numeric#denominator`
+* `Numeric#div`
+* `Numeric#divmod`
+* `Numeric#fdiv`
+* `Numeric#finite?`
+* `Numeric#floor`
+* `Numeric#i`
+* `Numeric#imag`
+* `Numeric#imaginary`
+* `Numeric#infinite?`
+* `Numeric#integer?`
+* `Numeric#magnitude`
+* `Numeric#modulo`
+* `Numeric#nonzero?`
+* `Numeric#numerator`
+* `Numeric#phase`
+* `Numeric#polar`
+* `Numeric#quo`
+* `Numeric#real`
+* `Numeric#real?`
+* `Numeric#rect`
+* `Numeric#rectangular`
+* `Numeric#remainder`
+* `Numeric#round`
+* `Numeric#singleton_method_added`
+* `Numeric#step`
+* `Numeric#to_c`
+* `Numeric#to_int`
+* `Numeric#truncate`
+
 # Methods missing on Object
 
 The following instance methods have not yet been implemented on Object. This list does not include methods inherited from `Object` or `Kernel` that are missing from those ancestors.
 
 * `Object#`
+
+# Methods missing on Proc
+
+The following instance methods have not yet been implemented on Proc. This list does not include methods inherited from `Object` or `Kernel` that are missing from those ancestors.
+
+* `Proc#<<`
+* `Proc#>>`
+* `Proc#[]`
+* `Proc#arity`
+* `Proc#binding`
+* `Proc#curry`
+* `Proc#lambda?`
+* `Proc#parameters`
+* `Proc#ruby2_keywords`
+* `Proc#source_location`
+* `Proc#to_proc`
+* `Proc#yield`
 
 # Methods missing on Range
 
@@ -655,14 +667,9 @@ The following instance methods have not yet been implemented on String. This lis
 
 * `String#%`
 * `String#*`
-* `String#+`
 * `String#+@`
 * `String#-@`
-* `String#<`
 * `String#<<`
-* `String#<=`
-* `String#>`
-* `String#>=`
 * `String#[]`
 * `String#[]=`
 * `String#ascii_only?`

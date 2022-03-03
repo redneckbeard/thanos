@@ -480,7 +480,6 @@ func (n *InfixExpressionNode) SetType(t types.Type) { n._type = t }
 func (n *InfixExpressionNode) LineNo() int          { return n.lineNo }
 
 func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
-	spec := types.Operators[n.Operator].Spec
 	tl, err := GetType(n.Left, locals, class)
 	if err != nil {
 		return nil, err
@@ -496,18 +495,7 @@ func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types
 			return t, nil
 		}
 	}
-	badOperandMsg := "tried applying `%s` but %s is invalid operator for type %s"
-	if !spec.IsValidOperandType(tl) {
-		return nil, fmt.Errorf(badOperandMsg, n, n.Operator, tl)
-	}
-	if !spec.IsValidOperandType(tr) {
-		return nil, fmt.Errorf(badOperandMsg, n, n.Operator, tr)
-	}
-	if t, err := spec.ComputeReturnType(tl, tr); err != nil {
-		return t, NewParseError(n, err.Error())
-	} else {
-		return t, nil
-	}
+	return nil, NewParseError(n, "No method `%s` on type %s", n.Operator, tl)
 }
 
 func (n *InfixExpressionNode) HasMethod() bool {
@@ -520,14 +508,18 @@ func (n *InfixExpressionNode) HasMethod() bool {
 type NotExpressionNode struct {
 	Arg    Node
 	lineNo int
+	_type  types.Type
 }
 
 func (n *NotExpressionNode) String() string       { return fmt.Sprintf("!%s", n.Arg) }
-func (n *NotExpressionNode) Type() types.Type     { return types.BoolType }
-func (n *NotExpressionNode) SetType(t types.Type) {}
+func (n *NotExpressionNode) Type() types.Type     { return n._type }
+func (n *NotExpressionNode) SetType(t types.Type) { n._type = types.BoolType }
 func (n *NotExpressionNode) LineNo() int          { return n.lineNo }
 
 func (n *NotExpressionNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	if _, err := GetType(n.Arg, locals, class); err != nil {
+		return nil, err
+	}
 	return types.BoolType, nil
 }
 
@@ -1844,5 +1836,8 @@ func (n *WhileNode) SetType(t types.Type) {}
 func (n *WhileNode) LineNo() int          { return n.lineNo }
 
 func (n *WhileNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	if _, err := GetType(n.Condition, locals, class); err != nil {
+		return nil, err
+	}
 	return types.NilType, nil
 }

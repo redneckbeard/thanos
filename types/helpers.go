@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 
@@ -71,4 +72,20 @@ func UnwrapTypeExprs(typeExprs []TypeExpr) []ast.Expr {
 		exprs = append(exprs, typeExpr.Expr)
 	}
 	return exprs
+}
+
+func simpleComparisonOperatorSpec(tok token.Token) MethodSpec {
+	return MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			if r == args[0] {
+				return BoolType, nil
+			}
+			return nil, fmt.Errorf("Tried to compare disparate types %s and %s", r, args[0])
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, tok, args[0].Expr),
+			}
+		},
+	}
 }

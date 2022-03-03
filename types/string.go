@@ -2,6 +2,7 @@ package types
 
 import (
 	"go/ast"
+	"go/token"
 
 	"github.com/redneckbeard/thanos/bst"
 )
@@ -65,6 +66,34 @@ func (t String) Alias(existingMethod, newMethod string) {
 }
 
 func init() {
+	StringType.Def("+", MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			return receiverType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.ADD, args[0].Expr),
+			}
+		},
+	})
+	StringType.Def("<", simpleComparisonOperatorSpec(token.LSS))
+	StringType.Def(">", simpleComparisonOperatorSpec(token.GTR))
+	StringType.Def("<=", simpleComparisonOperatorSpec(token.LEQ))
+	StringType.Def(">=", simpleComparisonOperatorSpec(token.GEQ))
+	StringType.Def("==", simpleComparisonOperatorSpec(token.EQL))
+	StringType.Def("!=", simpleComparisonOperatorSpec(token.NEQ))
+	StringType.Def("=~", MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			// In reality the match operator returns an int, or nil if there's no match. However, in practical
+			// use it is relied on for evaluation to a boolean
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Call(args[0].Expr, "MatchString", rcvr.Expr),
+			}
+		},
+	})
 	StringType.Def("match", MethodSpec{
 		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
 			return MatchDataType, nil

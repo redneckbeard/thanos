@@ -2,6 +2,7 @@ package types
 
 import (
 	"go/ast"
+	"go/token"
 	"strconv"
 
 	"github.com/redneckbeard/thanos/bst"
@@ -48,7 +49,43 @@ func (t Object) Alias(existingMethod, newMethod string) {
 	t.proto.MakeAlias(existingMethod, newMethod, false)
 }
 
+func logicalOperatorSpec(tok token.Token) MethodSpec {
+	return MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			left, right := rcvr.Expr, args[0].Expr
+			//TODO in both these cases, this will be wrong for numeric types and strings
+			if rcvr.Type != BoolType {
+				left = bst.Binary(left, token.NEQ, it.Get("nil"))
+			}
+			if args[0].Type != BoolType {
+				right = bst.Binary(right, token.NEQ, it.Get("nil"))
+			}
+			return Transform{
+				Expr: bst.Binary(left, tok, right),
+			}
+		},
+	}
+}
+
 func init() {
+	ObjectType.Def("==", MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("reflect", "DeepEqual", rcvr.Expr, args[0].Expr),
+				Imports: []string{"reflect"},
+			}
+		},
+	})
+
+	ObjectType.Def("&&", logicalOperatorSpec(token.LAND))
+	ObjectType.Def("||", logicalOperatorSpec(token.LOR))
+
 	ObjectType.Def("is_a?", MethodSpec{
 		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
 			return BoolType, nil

@@ -49,7 +49,73 @@ func (t Numeric) Alias(existingMethod, newMethod string) {
 	t.proto.MakeAlias(existingMethod, newMethod, false)
 }
 
+func numericOperatorSpec(tok token.Token, comparison bool) MethodSpec {
+	return MethodSpec{
+		ReturnType: func(rcvr Type, blockReturnType Type, args []Type) (Type, error) {
+			if comparison {
+				return BoolType, nil
+			}
+			if rcvr == FloatType || args[0] == FloatType {
+				return FloatType, nil
+			}
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			leftExpr, rightExpr := rcvr.Expr, args[0].Expr
+			if rcvr.Type == FloatType && args[0].Type == IntType {
+				if _, ok := rightExpr.(*ast.BasicLit); !ok {
+					rightExpr = bst.Call(nil, "float64", rightExpr)
+				}
+			} else if rcvr.Type == IntType && args[0].Type == FloatType {
+				if _, ok := leftExpr.(*ast.BasicLit); !ok {
+					leftExpr = bst.Call(nil, "float64", leftExpr)
+				}
+			}
+			return Transform{
+				Expr: bst.Binary(leftExpr, tok, rightExpr),
+			}
+		},
+	}
+}
+
 func init() {
+	NumericType.Def("+", numericOperatorSpec(token.ADD, false))
+	NumericType.Def("-", numericOperatorSpec(token.SUB, false))
+	NumericType.Def("*", numericOperatorSpec(token.MUL, false))
+	NumericType.Def("/", numericOperatorSpec(token.QUO, false))
+	NumericType.Def("%", numericOperatorSpec(token.REM, false))
+	NumericType.Def("<<", numericOperatorSpec(token.SHL, false))
+	NumericType.Def("<", numericOperatorSpec(token.LSS, true))
+	NumericType.Def(">", numericOperatorSpec(token.GTR, true))
+	NumericType.Def("<=", numericOperatorSpec(token.LEQ, true))
+	NumericType.Def(">=", numericOperatorSpec(token.GEQ, true))
+	NumericType.Def("==", numericOperatorSpec(token.EQL, true))
+	NumericType.Def("!=", numericOperatorSpec(token.NEQ, true))
+	NumericType.Def("**", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			if r == IntType && args[0] == IntType {
+				return IntType, nil
+			}
+			return FloatType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			leftExpr, rightExpr := rcvr.Expr, args[0].Expr
+			if _, ok := leftExpr.(*ast.BasicLit); !ok && rcvr.Type == IntType {
+				leftExpr = bst.Call(nil, "float64", leftExpr)
+			}
+			if _, ok := rightExpr.(*ast.BasicLit); !ok && args[0].Type == IntType {
+				rightExpr = bst.Call(nil, "float64", rightExpr)
+			}
+			expr := bst.Call("math", "Pow", leftExpr, rightExpr)
+			if rcvr.Type == IntType && args[0].Type == IntType {
+				expr = bst.Call(nil, "int", expr)
+			}
+			return Transform{
+				Expr: expr,
+			}
+		},
+	})
+
 	NumericType.Def("abs", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			return r, nil
