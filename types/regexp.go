@@ -60,4 +60,16 @@ func init() {
 			}
 		},
 	})
+	RegexpType.Def("===", MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			// In reality the match operator returns an int, or nil if there's no match. However, in practical
+			// use it is relied on for evaluation to a boolean
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Call(rcvr.Expr, "MatchString", args[0].Expr),
+			}
+		},
+	})
 }

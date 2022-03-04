@@ -1757,13 +1757,12 @@ func (n *CaseNode) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 
 	for _, w := range n.Whens {
 		for _, cond := range w.Conditions {
-			switch c := cond.(type) {
-			case *RangeNode:
+			ct, err := GetType(cond, locals, class)
+			if err != nil {
+				return nil, err
+			}
+			if ct.HasMethod("===") {
 				n.RequiresExpansion = true
-			case *StringNode:
-				if c.Kind == Regexp {
-					n.RequiresExpansion = true
-				}
 			}
 		}
 		tw, err := GetType(w, locals, class)

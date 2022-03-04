@@ -2,6 +2,7 @@ package types
 
 import (
 	"go/ast"
+	"go/token"
 
 	"github.com/redneckbeard/thanos/bst"
 )
@@ -48,4 +49,23 @@ func (t Range) Alias(existingMethod, newMethod string) {
 }
 
 func init() {
+	RangeType.Def("===", MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			upperTok := token.LSS
+			rangeExpr := rcvr.Expr.(*ast.CompositeLit)
+			if rangeExpr.Elts[2].(*ast.Ident).Name == "true" {
+				upperTok = token.LEQ
+			}
+			return Transform{
+				Expr: bst.Binary(
+					bst.Binary(args[0].Expr, token.GEQ, rangeExpr.Elts[0]),
+					token.LAND,
+					bst.Binary(args[0].Expr, upperTok, rangeExpr.Elts[1]),
+				),
+			}
+		},
+	})
 }

@@ -524,18 +524,16 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 			list := []ast.Expr{}
 			for _, arg := range when.Conditions {
 				var expr ast.Expr
-				switch a := arg.(type) {
-				case *parser.RangeNode:
-					upperTok := token.LSS
-					if a.Inclusive {
-						upperTok = token.LEQ
-					}
-					expr = bst.Binary(
-						bst.Binary(tag, token.GEQ, g.CompileExpr(a.Lower)),
-						token.LAND,
-						bst.Binary(tag, upperTok, g.CompileExpr(a.Upper)),
+				if arg.Type().HasMethod("===") {
+					transform := arg.Type().TransformAST(
+						"===",
+						g.CompileExpr(arg),
+						[]types.TypeExpr{types.TypeExpr{n.Value.Type(), tag}},
+						nil,
+						g.it,
 					)
-				default:
+					expr = transform.Expr
+				} else {
 					expr = g.CompileExpr(arg)
 					if n.RequiresExpansion && isSimple(expr) {
 						expr = bst.Binary(tag, token.EQL, expr)
@@ -869,6 +867,20 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		return &ast.UnaryExpr{
 			Op: token.NOT,
 			X:  g.CompileExpr(n.Arg),
+		}
+	case *parser.RangeNode:
+		g.AddImports("github.com/redneckbeard/thanos/stdlib")
+		bounds := g.mapToExprs([]parser.Node{n.Lower, n.Upper})
+		args := append(bounds, g.it.Get(strconv.FormatBool(n.Inclusive)))
+		return &ast.CompositeLit{
+			Type: &ast.IndexExpr{
+				X: &ast.SelectorExpr{
+					X:   g.it.Get("stdlib"),
+					Sel: g.it.Get("Range"),
+				},
+				Index: g.it.Get("int"),
+			},
+			Elts: args,
 		}
 	default:
 		return &ast.BadExpr{}

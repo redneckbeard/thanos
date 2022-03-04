@@ -1,6 +1,13 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
+
+var patt = regexp.MustCompile(`foo`)
+var patt1 = regexp.MustCompile(`bar`)
+var patt2 = regexp.MustCompile(`baz`)
 
 func Cond_return(a, b int) int {
 	if a == 47 {
@@ -71,6 +78,16 @@ func Switch_on_int_with_range(x int) string {
 		return "many"
 	}
 }
+func Switch_on_regexps(x string) int {
+	switch {
+	case patt.MatchString(x):
+		return 1
+	case patt1.MatchString(x):
+		return 2
+	case patt2.MatchString(x):
+		return 3
+	}
+}
 func main() {
 	baz := Cond_return(2, 4)
 	quux := Cond_assignment(1, 3, false)
@@ -79,4 +96,5 @@ func main() {
 	Length_if_array([]string{"foo", "bar", "baz"})
 	Switch_on_int_val(5)
 	Switch_on_int_with_range(5)
+	Switch_on_regexps("foo")
 }

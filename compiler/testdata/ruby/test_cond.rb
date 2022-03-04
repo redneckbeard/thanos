@@ -77,6 +77,17 @@ def switch_on_int_with_range(x)
   end
 end
 
+def switch_on_regexps(x)
+  case x
+  when /foo/
+    1
+  when /bar/
+    2
+  when /baz/
+    3
+  end
+end
+
 baz = cond_return(2, 4)
 quux = cond_assignment(1, 3, false)
 zoo = cond_invoke
@@ -84,3 +95,4 @@ last = tern(10, 20, 30)
 length_if_array(["foo", "bar", "baz"])
 switch_on_int_val(5)
 switch_on_int_with_range(5)
+switch_on_regexps("foo")
