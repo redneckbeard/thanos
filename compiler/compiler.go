@@ -40,6 +40,7 @@ type GoProgram struct {
 }
 
 func Compile(p *parser.Program) (string, error) {
+	globalIdents = make(bst.IdentTracker)
 	g := &GoProgram{FSM: &parser.FSM{}, Imports: make(map[string]bool)}
 	g.pushTracker()
 

@@ -7,8 +7,8 @@ import (
 	"github.com/redneckbeard/thanos/stdlib"
 )
 
-var patt1 = regexp.MustCompile(`foo`)
-var patt2 = regexp.MustCompile(`\d{1,3}\.\d{1,3}\.(?P<third>\d{1,3})\.\d{1,3}`)
+var patt = regexp.MustCompile(`foo`)
+var patt1 = regexp.MustCompile(`\d{1,3}\.\d{1,3}\.(?P<third>\d{1,3})\.\d{1,3}`)
 
 func Hello(name string) string {
 	fmt.Println("debug message")
@@ -24,7 +24,7 @@ func Hello_interp(name string, age int) {
 	fmt.Printf("%s is %s than me, age %d\n", name, comparative, age)
 }
 func Matches_foo(foolike string) {
-	if patt1.MatchString(foolike) {
+	if patt.MatchString(foolike) {
 		fmt.Println("got a match")
 	}
 }
@@ -35,7 +35,7 @@ func Matches_interp(foo int, bar string) {
 	}
 }
 func Extract_third_octet(ip string) string {
-	return stdlib.NewMatchData(patt2, ip).GetByName("third")
+	return stdlib.NewMatchData(patt1, ip).GetByName("third")
 }
 func main() {
 	greeting := Hello("me")
