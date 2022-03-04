@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"regexp"
+
+	"github.com/redneckbeard/thanos/stdlib"
 )
 
 var patt = regexp.MustCompile(`foo`)
@@ -65,6 +67,7 @@ func Switch_on_int_val(x int) string {
 	}
 }
 func Switch_on_int_with_range(x int) string {
+	loc := &stdlib.Range[int]{9, 12, true}
 	switch {
 	case x == 0:
 		return "none"
@@ -74,6 +77,8 @@ func Switch_on_int_with_range(x int) string {
 		return "a few"
 	case x == 6 || x == 7 || x == 8:
 		return "several"
+	case stdlib.RangeCovers(loc, x):
+		return "a lot"
 	default:
 		return "many"
 	}

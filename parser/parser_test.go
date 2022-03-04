@@ -830,7 +830,7 @@ func TestMethodParamInferenceErrors(t *testing.T) {
 		{`def foo(bar, baz)
 		    bar[1..baz] 
 			end
-			foo([1,2,3,4,5], true)`, "line 2: Tried to construct range with BoolType but only IntType is allowed"},
+			foo([1,2,3,4,5], true)`, "line 2: Tried to construct range from disparate types IntType and BoolType"},
 		{`def foo(bar, baz)
 		    case baz
 				when true then "string"

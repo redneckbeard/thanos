@@ -63,6 +63,7 @@ def switch_on_int_val(x)
 end
 
 def switch_on_int_with_range(x)
+  loc = 9..12
   case x
   when 0
     "none"
@@ -72,6 +73,8 @@ def switch_on_int_with_range(x)
     "a few"
   when 6, 7, 8 # In Go, this now has to get expanded to several expressions with ||
     "several"
+  when loc
+    "a lot"
   else
     "many"
   end

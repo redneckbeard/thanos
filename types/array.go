@@ -144,20 +144,13 @@ func init() {
 			return r, nil
 		},
 		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
-			var transformedFinal *ast.ExprStmt
 			finalStatement := blk.Statements[len(blk.Statements)-1]
 			switch f := finalStatement.(type) {
 			case *ast.ReturnStmt:
-				transformedFinal = &ast.ExprStmt{
+				blk.Statements[len(blk.Statements)-1] = &ast.ExprStmt{
 					X: f.Results[0],
 				}
-			case *ast.ExprStmt:
-				transformedFinal = f
-			default:
-				panic("Encountered an unexpected node type")
 			}
-
-			blk.Statements[len(blk.Statements)-1] = transformedFinal
 
 			loop := &ast.RangeStmt{
 				Key:   it.Get("_"),

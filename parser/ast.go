@@ -1712,22 +1712,24 @@ func (n *RangeNode) String() string {
 	return fmt.Sprintf("(%s%s%s)", n.Lower, rangeOp, upper)
 }
 func (n *RangeNode) Type() types.Type     { return n._type }
-func (n *RangeNode) SetType(t types.Type) { n._type = types.RangeType }
+func (n *RangeNode) SetType(t types.Type) { n._type = t }
 func (n *RangeNode) LineNo() int          { return n.lineNo }
 
 func (n *RangeNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	var t types.Type
 	for _, bound := range []Node{n.Lower, n.Upper} {
 		if bound != nil {
-			t, err := GetType(bound, locals, class)
+			bt, err := GetType(bound, locals, class)
 			if err != nil {
-				return t, err
+				return nil, err
 			}
-			if t != types.IntType {
-				return t, NewParseError(n, "Tried to construct range with %s but only IntType is allowed", t)
+			if t != nil && t != bt {
+				return nil, NewParseError(n, "Tried to construct range from disparate types %s and %s", t, bt)
 			}
+			t = bt
 		}
 	}
-	return types.RangeType, nil
+	return types.NewRange(t), nil
 }
 
 type CaseNode struct {

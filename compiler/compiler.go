@@ -132,7 +132,6 @@ func Compile(p *parser.Program) (string, error) {
 	cmd.Stdout = &out
 	err = cmd.Run()
 	if err != nil {
-		fmt.Println(intermediate)
 		return intermediate, fmt.Errorf("Error running gofmt: %s", err.Error())
 	}
 
@@ -876,10 +875,10 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		return &ast.CompositeLit{
 			Type: &ast.IndexExpr{
 				X: &ast.SelectorExpr{
-					X:   g.it.Get("stdlib"),
+					X:   g.it.Get("&stdlib"),
 					Sel: g.it.Get("Range"),
 				},
-				Index: g.it.Get("int"),
+				Index: g.it.Get(n.Type().(types.Range).Element.GoType()),
 			},
 			Elts: args,
 		}
