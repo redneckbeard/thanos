@@ -128,6 +128,7 @@ func Compile(p *parser.Root) (string, error) {
 	cmd.Stdout = &out
 	err = cmd.Run()
 	if err != nil {
+		fmt.Println(intermediate)
 		return intermediate, fmt.Errorf("Error running gofmt: %s", err.Error())
 	}
 

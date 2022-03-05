@@ -244,7 +244,21 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 	} else {
 		rhs = g.mapToExprs(node.Right)
 	}
-	lhs := g.mapToExprs(node.Left)
+	var lhs []ast.Expr
+	for i, left := range node.Left {
+		if call, ok := left.(*parser.MethodCall); ok {
+			// If we have a setter call, we have to ignore the corresponding rhs
+			// value and append this to the current block statement.
+
+			// TODO this is not right for cases with multiple setters and locals in
+			// the same assignment. Will need to work backwards through the lhs bits.
+			// Should write a failing test first.
+			g.CompileStmt(call)
+			rhs = append(rhs[:i], rhs[i+1:]...)
+		} else {
+			lhs = append(lhs, g.CompileExpr(left))
+		}
+	}
 
 	tautological := true
 	if len(lhs) != len(rhs) {

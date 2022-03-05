@@ -3,10 +3,13 @@ package parser
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/redneckbeard/thanos/types"
 )
+
+var setterPatt = regexp.MustCompile(`\w+=`)
 
 type MethodSet struct {
 	Methods map[string]*Method
@@ -166,6 +169,9 @@ func (m *Method) GoName() string {
 	name := strings.TrimRight(m.Name, "?!")
 	if !m.Private {
 		name = strings.Title(name)
+	}
+	if setterPatt.MatchString(name) {
+		name = "Set" + strings.TrimRight(name, "=")
 	}
 	return name
 }

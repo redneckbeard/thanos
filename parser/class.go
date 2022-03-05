@@ -313,6 +313,42 @@ func (cls *Class) AddIVar(name string, ivar *IVar) error {
 		cls.MethodSet.AddMethod(method)
 		cls.GenerateMethod(method, cls.Type().(*types.Class))
 	}
+	if !ivar.Readable && ivar.Writeable {
+		scope := NewScope(ivar.Name + "Set")
+		paramList := NewParamList()
+		paramList.AddParam(&Param{
+			Name:  name,
+			_type: ivar.Type(),
+		})
+		method := &Method{
+			Name:      name + "=",
+			Locals:    scope,
+			Scope:     ScopeChain{scope},
+			ParamList: paramList,
+			Body: &Body{
+				Statements: Statements{
+					&AssignmentNode{
+						Left: []Node{
+							&IVarNode{
+								Val:   "@" + ivar.Name,
+								Class: cls,
+								_type: ivar.Type(),
+							},
+						},
+						Right: []Node{
+							&IdentNode{
+								Val: name,
+							},
+						},
+						Reassignment: true,
+					},
+				},
+				ReturnType: ivar.Type(),
+			},
+		}
+		cls.MethodSet.AddMethod(method)
+		cls.GenerateMethod(method, cls.Type().(*types.Class))
+	}
 	return nil
 }
 

@@ -308,7 +308,11 @@ lhs:
       lineNo: currentLineNo,
     }
   }
-// | primary_value call_op tIDENTIFIER
+| primary_value DOT IDENT
+  {
+    call := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
+    $$ = call
+  }
 // | primary_value tCOLON2 tIDENTIFIER
 // | primary_value call_op tCONSTANT
 // | primary_value tCOLON2 tCONSTANT

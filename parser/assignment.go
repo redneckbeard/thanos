@@ -12,6 +12,7 @@ type AssignmentNode struct {
 	Right        []Node
 	Reassignment bool
 	OpAssignment bool
+	SetterCall   bool
 	lineNo       int
 	_type        types.Type
 }
@@ -51,6 +52,11 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			GetType(lhs, scope, class)
 		case *ConstantNode:
 			localName = lhs.Val
+		case *MethodCall:
+			if lhs.Receiver == nil {
+				panic("The first pass through parsing should never result in a receiverless LHS method call, but somehow we got here")
+			}
+
 		default:
 			return nil, NewParseError(lhs, "%s not yet supported in LHS of assignments", lhs)
 		}
@@ -138,6 +144,15 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			} else {
 				scope.Set(localName, &RubyLocal{_type: assignedType})
 			}
+		case *MethodCall:
+			// we should only ever hit this branch for a setter, and thus we have to
+			// munge the call to reflect what's actually happening.
+			lft.MethodName += "="
+			lft.Args = []Node{n.Right[i]}
+			if _, err := GetType(lft, scope, class); err != nil {
+				return nil, err
+			}
+			n.SetterCall = true
 		default:
 			if local, found := scope.Get(localName); !found {
 				scope.Set(localName, &RubyLocal{_type: assignedType})

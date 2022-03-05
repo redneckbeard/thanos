@@ -5,6 +5,7 @@ import "fmt"
 type Vehicle struct {
 	starting_miles int
 	no_reader      string
+	registration   string
 }
 
 func NewVehicle(starting_miles int) *Vehicle {
@@ -24,10 +25,15 @@ func (v *Vehicle) log() {
 func (v *Vehicle) Starting_miles() int {
 	return v.starting_miles
 }
+func (v *Vehicle) SetRegistration(registration string) string {
+	v.registration = registration
+	return v.registration
+}
 
 type Car struct {
 	starting_miles int
 	no_reader      string
+	registration   string
 }
 
 func NewCar(starting_miles int) *Car {
@@ -47,10 +53,15 @@ func (c *Car) Mileage() string {
 func (c *Car) Starting_miles() int {
 	return c.starting_miles
 }
+func (c *Car) SetRegistration(registration string) string {
+	c.registration = registration
+	return c.registration
+}
 func main() {
 	mapped := []string{}
 	for _, car := range []*Car{NewCar(10), NewCar(20), NewCar(30)} {
 		car.Drive(100)
+		car.SetRegistration("XXXXXX")
 		mapped = append(mapped, fmt.Sprintf("%s, started at %d", car.Mileage(), car.Starting_miles()))
 	}
 	fmt.Println(mapped)
