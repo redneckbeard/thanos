@@ -6,14 +6,14 @@ import __yyfmt__ "fmt"
 import "strings"
 
 func setRoot(yylex yyLexer, nodes []Node) {
-	p := yylex.(*Lexer).Program
+	p := yylex.(*Lexer).Root
 	for _, n := range nodes {
 		p.AddStatement(n)
 	}
 }
 
-func root(yylex yyLexer) *Program {
-	return yylex.(*Lexer).Program
+func root(yylex yyLexer) *Root {
+	return yylex.(*Lexer).Root
 }
 
 type yySymType struct {
@@ -28,7 +28,7 @@ type yySymType struct {
 	node_list Statements
 	param     *Param
 	params    []*Param
-	program   *Program
+	program   *Root
 	regexp    string
 	when      *WhenNode
 	whens     []*WhenNode

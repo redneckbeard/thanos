@@ -128,7 +128,7 @@ func (t Token) String() string {
 
 type Lexer struct {
 	*bytes.Buffer
-	Program         *Program
+	Root            *Root
 	lineNo          int
 	stream          chan Token
 	read            []rune
@@ -145,7 +145,7 @@ func NewLexer(buf []byte) *Lexer {
 		Buffer:        bytes.NewBuffer(buf),
 		lineNo:        1,
 		stream:        make(chan Token),
-		Program:       NewProgram(),
+		Root:          NewRoot(),
 		spaceConsumed: true,
 	}
 	go l.Tokenize()
@@ -161,7 +161,7 @@ func (l *Lexer) Lex(lval *yySymType) int {
 }
 
 func (l *Lexer) Error(e string) {
-	l.Program.AddError(errors.New(e))
+	l.Root.AddError(errors.New(e))
 }
 
 func (l *Lexer) pushState(state LexState) {

@@ -1,26 +1,27 @@
 package parser
 
-import (
-	"github.com/redneckbeard/thanos/types"
-)
-
-type State string
+import "github.com/redneckbeard/thanos/types"
 
 type Local interface {
 	Type() types.Type
 }
 
-const (
-	TopLevelStatement  State = "TopLevelStatement"
-	InClassBody        State = "InClassBody"
-	InMethodDefinition State = "InMethodDefinition"
-	InString           State = "InString"
-)
-
 type local struct{}
 
 func (loc *local) Type() types.Type {
 	return nil
+}
+
+type RubyLocal struct {
+	_type types.Type
+	Calls []*MethodCall
+}
+
+func (rl *RubyLocal) String() string       { return rl._type.String() }
+func (rl *RubyLocal) Type() types.Type     { return rl._type }
+func (rl *RubyLocal) SetType(t types.Type) { rl._type = t }
+func (rl *RubyLocal) AddCall(c *MethodCall) {
+	rl.Calls = append(rl.Calls, c)
 }
 
 var BadLocal = new(local)
@@ -104,36 +105,4 @@ func (chain ScopeChain) Extend(scope Scope) ScopeChain {
 	dst := make(ScopeChain, len(chain))
 	copy(dst, chain)
 	return append(dst, scope)
-}
-
-type FSM struct {
-	StateStack []State
-	ScopeChain ScopeChain
-}
-
-func (fsm *FSM) PushState(s State) {
-	fsm.StateStack = append(fsm.StateStack, s)
-}
-
-func (fsm *FSM) PopState() {
-	if len(fsm.StateStack) > 0 {
-		fsm.StateStack = fsm.StateStack[:len(fsm.StateStack)-1]
-	}
-}
-
-func (fsm *FSM) CurrentState() State {
-	if len(fsm.StateStack) == 0 {
-		return TopLevelStatement
-	}
-	return fsm.StateStack[len(fsm.StateStack)-1]
-}
-
-func (fsm *FSM) PushScope(locals Scope) {
-	fsm.ScopeChain = append(fsm.ScopeChain, locals)
-}
-
-func (fsm *FSM) PopScope() {
-	if len(fsm.ScopeChain) > 0 {
-		fsm.ScopeChain = fsm.ScopeChain[:len(fsm.ScopeChain)-1]
-	}
 }

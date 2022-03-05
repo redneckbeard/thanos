@@ -21,7 +21,7 @@ import (
 	"github.com/redneckbeard/thanos/types"
 )
 
-func ParseFile(filename string) (*Program, error) {
+func ParseFile(filename string) (*Root, error) {
 	var f *os.File
 	if filename == "" {
 		f = os.Stdin
@@ -43,22 +43,22 @@ func ParseFile(filename string) (*Program, error) {
 	}
 }
 
-func ParseString(s string) (*Program, error) {
+func ParseString(s string) (*Root, error) {
 	return ParseBytes([]byte(s))
 }
 
-func ParseBytes(b []byte) (*Program, error) {
+func ParseBytes(b []byte) (*Root, error) {
 	types.ClassRegistry.Initialize()
 	parser := yyNewParser()
 	l := NewLexer(b)
 	parser.Parse(l)
-	if err := l.Program.Analyze(); err != nil {
-		return l.Program, err
+	if err := l.Root.Analyze(); err != nil {
+		return l.Root, err
 	}
-	if err := l.Program.ParseError(); err != nil {
-		return l.Program, err
+	if err := l.Root.ParseError(); err != nil {
+		return l.Root, err
 	} else {
-		return l.Program, nil
+		return l.Root, nil
 	}
 }
 
