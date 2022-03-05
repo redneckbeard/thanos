@@ -96,7 +96,7 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 				  puts "blah"
 				end
 			end`,
-			`Foo([@foo+w, @baz+rw, @quux+r] (def bar(); (Kernel.puts("blah")); end))`},
+			`Foo([@foo+w, @baz+rw, @quux+r] (def bar(); (Kernel.puts("blah")); end); (def quux(); (return @quux); end))`},
 		{`def foo(bar = "baz"); puts bar; end`, `(def foo(bar); (Kernel.puts(bar)); end)`},
 		{`5.even?`, `(5.even?())`},
 		{`5.2.positive?`, `(5.2.positive?())`},

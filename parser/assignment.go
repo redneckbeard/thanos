@@ -120,6 +120,12 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 		case *IVarNode:
 			lft.SetType(assignedType)
 			n.Reassignment = true
+			if class != nil {
+				ivar := &IVar{_type: assignedType}
+				if err = class.AddIVar(lft.NormalizedVal(), ivar); err != nil {
+					return nil, NewParseError(n, err.Error())
+				}
+			}
 		case *ConstantNode:
 			lft.SetType(assignedType)
 			if class != nil {

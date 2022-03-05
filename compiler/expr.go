@@ -75,7 +75,7 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		return g.it.Get(n.Val)
 	case *parser.IVarNode:
 		ivar := n.NormalizedVal()
-		if n.IVar().Readable {
+		if n.IVar().Readable && n.IVar().Writeable {
 			ivar = strings.Title(ivar)
 		}
 		return &ast.SelectorExpr{

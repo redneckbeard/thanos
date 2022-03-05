@@ -24,7 +24,7 @@ var execCmd = &cobra.Command{
 	output. Useful for exploring edge cases that might be missing from the test
 	suite.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		program, err := parser.ParseFile(Source)
+		program, err := parser.ParseFile(File)
 		if err != nil {
 			fmt.Println(err)
 			return

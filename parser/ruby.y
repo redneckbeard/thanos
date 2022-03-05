@@ -4,14 +4,14 @@ package parser
 import "strings"
 
 func setRoot(yylex yyLexer, nodes []Node) {
-  p := yylex.(*Lexer).Program
+  p := yylex.(*Lexer).Root
   for _, n := range nodes {
     p.AddStatement(n)
   }
 }
 
-func root(yylex yyLexer) *Program {
-  return yylex.(*Lexer).Program
+func root(yylex yyLexer) *Root {
+  return yylex.(*Lexer).Root
 }
 %}
 
@@ -49,7 +49,7 @@ func root(yylex yyLexer) *Program {
 %type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do
 %type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp, expr_value_do
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node
-%type <node_list> compstmt stmts program mlhs mlhs_basic mlhs_head 
+%type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head 
 %type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args mrhs mrhs_arg
 %type <param> f_arg_item f_kw f_opt f_block_arg
 %type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg 
@@ -72,7 +72,7 @@ func root(yylex yyLexer) *Program {
  node_list Statements
  param *Param
  params []*Param
- program *Program
+ root *Root
  regexp string
  when *WhenNode
  whens []*WhenNode
@@ -83,11 +83,11 @@ func root(yylex yyLexer) *Program {
 %%
 
 main: 
-  program
+  root
   {
     setRoot(yylex, $1)
   }
-program: 
+root: 
   stmts opt_terms
   {
     $$ = $1
@@ -1043,8 +1043,7 @@ user_variable:
     $$ = ivar
     cls := root(yylex).currentClass
     if cls != nil {
-      cls.ivars[ivar.NormalizedVal()] = &IVar{Name: ivar.NormalizedVal()}
-      cls.ivarOrder = append(cls.ivarOrder, ivar.NormalizedVal())
+      cls.AddIVar(ivar.NormalizedVal(), &IVar{Name: ivar.NormalizedVal()})
     }
   }
 | GVAR

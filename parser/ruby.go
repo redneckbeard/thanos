@@ -28,7 +28,7 @@ type yySymType struct {
 	node_list Statements
 	param     *Param
 	params    []*Param
-	program   *Root
+	root      *Root
 	regexp    string
 	when      *WhenNode
 	whens     []*WhenNode
@@ -1849,8 +1849,7 @@ yydefault:
 			yyVAL.node = ivar
 			cls := root(yylex).currentClass
 			if cls != nil {
-				cls.ivars[ivar.NormalizedVal()] = &IVar{Name: ivar.NormalizedVal()}
-				cls.ivarOrder = append(cls.ivarOrder, ivar.NormalizedVal())
+				cls.AddIVar(ivar.NormalizedVal(), &IVar{Name: ivar.NormalizedVal()})
 			}
 		}
 	case 186:

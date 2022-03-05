@@ -17,7 +17,7 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 	structFields := []*ast.Field{}
 	for _, t := range c.IVars(nil) {
 		name := t.Name
-		if t.Readable || t.Writeable {
+		if t.Readable && t.Writeable {
 			name = strings.Title(name)
 		}
 		structFields = append(structFields, &ast.Field{
@@ -83,7 +83,7 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 			if assign, ok := stmt.(*parser.AssignmentNode); ok {
 				if ivar, isIvar := assign.Left[0].(*parser.IVarNode); isIvar {
 					name := ivar.NormalizedVal()
-					if ivar.IVar().Readable || ivar.IVar().Writeable {
+					if ivar.IVar().Readable && ivar.IVar().Writeable {
 						name = strings.Title(name)
 					}
 					setStructFields = append(setStructFields, &ast.KeyValueExpr{

@@ -15,6 +15,11 @@ type MethodSet struct {
 	Class   *Class
 }
 
+func (ms *MethodSet) AddMethod(m *Method) {
+	ms.Methods[m.Name] = m
+	ms.Order = append(ms.Order, m.Name)
+}
+
 func (ms *MethodSet) AddCall(c *MethodCall) {
 	ms.Calls[c.MethodName] = append(ms.Calls[c.MethodName], c)
 	cls := ms.Class

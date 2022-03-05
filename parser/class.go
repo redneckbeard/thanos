@@ -32,7 +32,8 @@ func (n *IVarNode) SetType(t types.Type) {
 func (n *IVarNode) LineNo() int { return n.lineNo }
 
 func (n *IVarNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
-	if n.Class != nil {
+	if class != nil {
+		n.Class = class
 		if spec, exists := n.Class.ivars[n.NormalizedVal()]; exists {
 			return spec.Type(), nil
 		}
@@ -108,9 +109,8 @@ func (cls *Class) String() string {
 		methods = append(methods, m.String())
 	}
 	instanceVars := []string{}
-	for _, name := range cls.ivarOrder {
-		ivar := cls.ivars[name]
-		name = "@" + name
+	for _, ivar := range cls.IVars(nil) {
+		name := "@" + ivar.Name
 		switch {
 		case ivar.Readable && ivar.Writeable:
 			name += "+rw"
@@ -137,26 +137,7 @@ func (cls *Class) BuildType() *types.Class {
 	class.UserDefined = true
 	for _, name := range cls.MethodSet.Order {
 		m := cls.MethodSet.Methods[name]
-		// insert the class as a scope immediately after the method's locals
-		m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{cls, m.Scope[len(m.Scope)-1]}...)
-		// track internal calls to own methods here where receiver is implicit
-		for _, c := range cls.MethodSet.Calls[m.Name] {
-			c.Receiver = &SelfNode{_type: class.Instance.(types.Type), lineNo: c.lineNo}
-		}
-		class.Instance.Def(m.Name, func(m *Method) types.MethodSpec {
-			return types.MethodSpec{
-				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
-					return m.ReturnType(), nil
-				},
-
-				//blockArgs    func(Type, []Type) []Type
-				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-					return types.Transform{
-						Expr: bst.Call(rcvr.Expr, m.GoName(), types.UnwrapTypeExprs(args)...),
-					}
-				},
-			}
-		}(m))
+		cls.GenerateMethod(m, class)
 	}
 
 	class.Instance.Def("initialize", types.MethodSpec{
@@ -188,6 +169,27 @@ func (cls *Class) BuildType() *types.Class {
 	GetType(cls.Statements, ScopeChain{cls}, cls)
 
 	return class
+}
+
+func (cls *Class) GenerateMethod(m *Method, class *types.Class) {
+	// insert the class as a scope immediately after the method's locals
+	m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{cls, m.Scope[len(m.Scope)-1]}...)
+	// track internal calls to own methods here where receiver is implicit
+	for _, c := range cls.MethodSet.Calls[m.Name] {
+		c.Receiver = &SelfNode{_type: class.Instance.(types.Type), lineNo: c.lineNo}
+	}
+	class.Instance.Def(m.Name, types.MethodSpec{
+		ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+			return m.ReturnType(), nil
+		},
+
+		//blockArgs    func(Type, []Type) []Type
+		TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+			return types.Transform{
+				Expr: bst.Call(rcvr.Expr, m.GoName(), types.UnwrapTypeExprs(args)...),
+			}
+		},
+	})
 }
 
 func (cls *Class) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
@@ -271,10 +273,47 @@ func (cls *Class) AddIVars(args ArgsNode, readable, writeable bool) {
 		if ok {
 			//TODO this method needs to return an error
 			name := strings.TrimLeft(sym.Val, ":")
-			cls.ivars[name] = &IVar{Readable: readable, Writeable: writeable}
-			cls.ivarOrder = append(cls.ivarOrder, name)
+			ivar := &IVar{Name: name, Readable: readable, Writeable: writeable}
+			cls.AddIVar(name, ivar)
 		}
 	}
+}
+func (cls *Class) AddIVar(name string, ivar *IVar) error {
+	if existing, ok := cls.ivars[name]; ok {
+		if existing.Type() != ivar.Type() {
+			return fmt.Errorf("Attempted to set @%s on %s with %s but already was assigned %s", name, cls.Name(), ivar.Type(), existing.Type())
+		} else if existing.Readable == ivar.Readable && existing.Writeable == ivar.Writeable {
+			return nil
+		} else if ivar.Readable || ivar.Writeable {
+			existing.Readable, existing.Writeable = ivar.Readable, existing.Writeable
+			ivar = existing
+		}
+	} else {
+		cls.ivars[name] = ivar
+		cls.ivarOrder = append(cls.ivarOrder, name)
+	}
+	if ivar.Readable && !ivar.Writeable {
+		scope := NewScope(ivar.Name + "Get")
+		method := &Method{
+			Name:      name,
+			Locals:    scope,
+			Scope:     ScopeChain{scope},
+			ParamList: NewParamList(),
+			Body: &Body{
+				Statements: Statements{
+					&IVarNode{
+						Val:   "@" + ivar.Name,
+						Class: cls,
+						_type: ivar.Type(),
+					},
+				},
+				ReturnType: ivar.Type(),
+			},
+		}
+		cls.MethodSet.AddMethod(method)
+		cls.GenerateMethod(method, cls.Type().(*types.Class))
+	}
+	return nil
 }
 
 func (cls *Class) IVars(skip map[string]bool) []*IVar {

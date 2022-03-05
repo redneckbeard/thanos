@@ -118,8 +118,7 @@ func (r *Root) AddMethod(m *Method) {
 	m.Body.ExplicitReturns = r.ExplicitReturns
 	r.ExplicitReturns = []*ReturnNode{}
 	ms := r.CurrentMethodSet()
-	ms.Methods[m.Name] = m
-	ms.Order = append(ms.Order, m.Name)
+	ms.AddMethod(m)
 	r.currentMethod = nil
 }
 
