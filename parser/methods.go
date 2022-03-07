@@ -396,26 +396,35 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 	if ms, ok := classMethodSets[receiverType]; ok {
 		if m, userDefined := ms.Methods[c.MethodName]; userDefined {
 			method = m
+			class = ms.Class
+		}
+	} else if c.MethodName == "new" {
+		if ms, ok := classMethodSets[receiverType.(*types.Class).Instance.(types.Type)]; ok {
+			if m, userDefined := ms.Methods["initialize"]; userDefined {
+				method = m
+				class = ms.Class
+			}
 		}
 	} else if c.Receiver == nil {
-		if class == nil {
-			method = globalMethodSet.Methods[c.MethodName]
-		} else {
-			//TODO push into class methods when class method resolution is implemented
-			switch c.MethodName {
-			case "attr_reader":
-				class.AddIVars(c.Args, true, false)
-				delete(class.MethodSet.Calls, c.MethodName)
-			case "attr_writer":
-				class.AddIVars(c.Args, false, true)
-				delete(class.MethodSet.Calls, c.MethodName)
-			case "attr_accessor":
-				class.AddIVars(c.Args, true, true)
-				delete(class.MethodSet.Calls, c.MethodName)
-			default:
-				return nil, NewParseError(c, "Tried calling class method '%s' inside body of class '%s' but no such method exists", c.MethodName, class.Name())
-			}
+		//TODO push into class methods when class method resolution is implemented
+		switch c.MethodName {
+		case "attr_reader":
+			class.AddIVars(c.Args, true, false)
+			delete(class.MethodSet.Calls, c.MethodName)
 			return nil, nil
+		case "attr_writer":
+			class.AddIVars(c.Args, false, true)
+			delete(class.MethodSet.Calls, c.MethodName)
+			return nil, nil
+		case "attr_accessor":
+			class.AddIVars(c.Args, true, true)
+			delete(class.MethodSet.Calls, c.MethodName)
+			return nil, nil
+		default:
+			method = globalMethodSet.Methods[c.MethodName]
+			if method == nil {
+				return nil, NewParseError(c, "Tried calling method '%s' inside but no such method exists", c.MethodName)
+			}
 		}
 	}
 
@@ -443,9 +452,12 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			method.Locals.Set(method.Block.Name, c.Block)
 		}
 		// set block in scope here
-		if err := method.Body.InferReturnType(method.Scope, nil); err != nil {
+		if err := method.Body.InferReturnType(method.Scope, class); err != nil {
 			return nil, err
 		} else {
+			if method.Name == "initialize" {
+				return receiverType.(*types.Class).Instance.(types.Type), nil
+			}
 			return method.ReturnType(), nil
 		}
 	} else if c.Receiver == nil {

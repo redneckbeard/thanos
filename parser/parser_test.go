@@ -673,6 +673,40 @@ func TestInstanceMethodParamInferenceHappyPath(t *testing.T) {
 			},
 			returnTypes: []types.Type{types.IntType, types.FloatType},
 		},
+		{
+			input: `
+class Foo
+  def initialize(name)
+    @name  = name
+    clear
+  end
+
+  def clear
+    @stack = 0
+  end
+
+  def bar(bit)
+    bit_value = bit ? 1 : 0
+    @stack = (@stack << 1) | bit_value
+
+    bit
+  end
+
+  def baz
+    bit_value = @stack & 1
+    @stack  >>= 1
+
+    bit_value == 1
+  end
+end
+Foo.new("foo").bar(true)
+			`,
+			argumentTypes: []map[string]types.Type{
+				map[string]types.Type{"bit": types.BoolType},
+				map[string]types.Type{},
+			},
+			returnTypes: []types.Type{types.BoolType, types.BoolType},
+		},
 	}
 
 	for i, tt := range tests {
