@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/redneckbeard/thanos/stdlib"
 )
@@ -43,4 +44,6 @@ func main() {
 	Matches_foo("football")
 	Matches_interp(10, "foofoo")
 	Extract_third_octet("127.0.0.1")
+	terms := strings.Fields(`foo bar baz`)
+	interp_terms := []string{"foo", fmt.Sprintf("%s", "BAR BAZ QUUX"), "bar"}
 }

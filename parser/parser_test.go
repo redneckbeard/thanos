@@ -129,6 +129,8 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		{`a = b, c`, `(a = [b, c])`},
 		{`a, b = c, d`, `((a, b) = (c, d))`},
 		{`a, b = c`, `((a, b) = c)`},
+		{`%w$foo bar baz$`, `%w['foo bar baz']`},
+		{`%W$foo #{5} baz$`, `%w["foo %d baz" % (5)]`},
 	}
 
 	for i, tt := range tests {
@@ -397,6 +399,17 @@ foo("quux")`,
 			`,
 			argumentTypes: map[string]types.Type{"a": types.IntType, "b": types.IntType},
 			ReturnType:    types.NewArray(types.IntType),
+		},
+		{
+			input: `
+			def foo(a)
+			  words = %w{words words words}
+				words[a]
+			end
+			foo(1)
+			`,
+			argumentTypes: map[string]types.Type{"a": types.IntType},
+			ReturnType:    types.StringType,
 		},
 	}
 

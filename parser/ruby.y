@@ -41,14 +41,14 @@ func root(yylex yyLexer) *Root {
 %token <str> IVAR CVAR GVAR METHODIDENT IDENT COMMENT LABEL
 
 %token <str> DOT LBRACE RBRACE NEWLINE COMMA
-%token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND
+%token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND WORDSBEG RAWWORDSBEG
 %token <str> SEMICOLON LBRACKET LBRACKETSTART RBRACKET LPAREN LPARENSTART RPAREN HASHROCKET
 %token <str> SCOPE
 
 
-%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do
+%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do raw_string_beg
 %type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp, expr_value_do
-%type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node
+%type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node 
 %type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head 
 %type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args mrhs mrhs_arg
 %type <param> f_arg_item f_kw f_opt f_block_arg
@@ -899,16 +899,26 @@ string:
   }
 
 raw_string: 
-  RAWSTRINGBEG STRINGBODY RAWSTRINGEND
+  raw_string_beg STRINGBODY RAWSTRINGEND
   {
-    $$ = &StringNode{BodySegments: []string{$2}, Kind: SingleQuote, lineNo: currentLineNo} 
+    $$ = &StringNode{BodySegments: []string{$2}, Kind: getStringKind($1), lineNo: currentLineNo} 
   }
+
+raw_string_beg:
+  RAWSTRINGBEG
+| RAWWORDSBEG
 
 string_beg: 
   STRINGBEG
   {
     root(yylex).PushState(InString)
-    root(yylex).PushString()
+    root(yylex).PushString(getStringKind($1))
+    $$ = ""
+  }
+| WORDSBEG
+  {
+    root(yylex).PushState(InString)
+    root(yylex).PushString(getStringKind($1))
     $$ = ""
   }
 
@@ -947,7 +957,6 @@ regexp:
   regex_beg string_contents regex_end //REGEXPOPT
 	{
 		regexp := root(yylex).PopString()
-    regexp.Kind = Regexp
     $$ = regexp
 	}
 
@@ -955,7 +964,7 @@ regex_beg:
   REGEXBEG
 	{
 		root(yylex).PushState(InString)
-		root(yylex).PushString()
+		root(yylex).PushString(Regexp)
 		$$ = ""
 	}
 

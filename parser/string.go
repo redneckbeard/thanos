@@ -14,11 +14,34 @@ const (
 	DoubleQuote StringKind = iota
 	SingleQuote
 	Regexp
+	Words
+	RawWords
 )
+
+func getStringKind(delim string) StringKind {
+	switch delim {
+	case "\"":
+		return DoubleQuote
+	case "'":
+		return SingleQuote
+	case "/":
+		return Regexp
+	}
+	kind := delim[1:2]
+	switch kind {
+	case "w":
+		return RawWords
+	case "W":
+		return Words
+	}
+	panic("The lexer should have errored already")
+}
 
 var stringDelims = map[StringKind]string{
 	DoubleQuote: `"`,
+	Words:       `"`,
 	SingleQuote: "'",
+	RawWords:    "'",
 	Regexp:      "/",
 }
 
@@ -48,7 +71,7 @@ func (n *StringNode) GoString() string {
 	switch n.Kind {
 	case Regexp:
 		return strings.ReplaceAll(n.FmtString("`"), "(?<", "(?P<")
-	case SingleQuote:
+	case SingleQuote, RawWords:
 		return n.FmtString("`")
 	default:
 		return n.FmtString(`"`)
@@ -93,9 +116,17 @@ func (n *StringNode) String() string {
 		interps = append(interps, interp.String())
 	}
 	if len(n.Interps) == 0 {
-		return n.FmtString(stringDelims[n.Kind])
+		str := n.FmtString(stringDelims[n.Kind])
+		if n.Kind == RawWords || n.Kind == Words {
+			str = fmt.Sprintf("%%w[%s]", str)
+		}
+		return str
 	}
-	return fmt.Sprintf(`(%s %% (%s))`, n.FmtString(stringDelims[n.Kind]), strings.Join(interps, ", "))
+	str := fmt.Sprintf(`%s %% (%s)`, n.FmtString(stringDelims[n.Kind]), strings.Join(interps, ", "))
+	if n.Kind == RawWords || n.Kind == Words {
+		return fmt.Sprintf("%%w[%s]", str)
+	}
+	return fmt.Sprintf("(%s)", str)
 }
 
 func (n *StringNode) Type() types.Type {
@@ -103,6 +134,8 @@ func (n *StringNode) Type() types.Type {
 		switch n.Kind {
 		case Regexp:
 			return types.RegexpType
+		case Words, RawWords:
+			return types.NewArray(types.StringType)
 		default:
 			return types.StringType
 		}

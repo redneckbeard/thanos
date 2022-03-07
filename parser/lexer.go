@@ -111,6 +111,7 @@ const (
 	InPunct
 	InInterpString
 	InInterp
+	InRawString
 	InRegex
 	OpenBrace
 )
@@ -128,16 +129,17 @@ func (t Token) String() string {
 
 type Lexer struct {
 	*bytes.Buffer
-	Root            *Root
-	lineNo          int
-	stream          chan Token
-	read            []rune
-	stateStack      []LexState
-	lastToken       int
-	rawSource       []rune
-	lastParsedToken Token
-	gauntlet        bool
-	spaceConsumed   bool
+	Root              *Root
+	lineNo            int
+	stream            chan Token
+	read              []rune
+	stateStack        []LexState
+	lastToken         int
+	rawSource         []rune
+	lastParsedToken   Token
+	gauntlet          bool
+	spaceConsumed     bool
+	percentDelimStack []rune
 }
 
 func NewLexer(buf []byte) *Lexer {
@@ -236,6 +238,26 @@ func (l *Lexer) AtExprStart() bool {
 	return true
 }
 
+func (l *Lexer) currentStringDelim() rune {
+	return l.percentDelimStack[len(l.percentDelimStack)-1]
+}
+
+func (l *Lexer) pushStringDelim(delim rune) {
+	switch delim {
+	case '{':
+		delim = '}'
+	case '[':
+		delim = ']'
+	case '(':
+		delim = ')'
+	}
+	l.percentDelimStack = append(l.percentDelimStack, delim)
+}
+
+func (l *Lexer) popStringDelim() {
+	l.percentDelimStack = l.percentDelimStack[:len(l.percentDelimStack)-1]
+}
+
 func (l *Lexer) Tokenize() {
 	chr, err := l.Peek()
 	for err == nil {
@@ -328,6 +350,10 @@ func (l *Lexer) lexPunct() error {
 			return l.lexGlobal()
 		case '@':
 			return l.lexAttribute()
+		case '%':
+			if l.AtExprStart() {
+				return l.lexPercentLiteral()
+			}
 		}
 	}
 
@@ -601,11 +627,13 @@ func (l *Lexer) lexString() error {
 	if l.currentState() != InInterpString {
 		l.Emit(STRINGBEG)
 		l.pushState(InInterpString)
+		l.pushStringDelim('"')
 	}
 	curr, next, err := l.Advance()
 	// empty string, should be handled better
-	if curr == '"' {
+	if curr == l.currentStringDelim() {
 		l.popState()
+		l.popStringDelim()
 		l.Emit(STRINGEND)
 		return err
 	}
@@ -615,16 +643,18 @@ func (l *Lexer) lexString() error {
 			lastLoop = true
 		}
 		switch {
-		case curr == '"':
+		case curr == l.currentStringDelim():
 			l.popState()
 			l.Emit(STRINGEND)
-		case next == '"':
+			l.popStringDelim()
+		case next == l.currentStringDelim():
 			if len(l.read) > 0 {
 				l.Emit(STRINGBODY)
 			}
 			l.Advance()
 			l.popState()
 			l.Emit(STRINGEND)
+			l.popStringDelim()
 			return err
 		case curr == '#' && next == '{':
 			if len(l.read) > 1 {
@@ -646,11 +676,17 @@ func (l *Lexer) lexString() error {
 }
 
 func (l *Lexer) lexRawString() error {
-	l.Emit(RAWSTRINGBEG)
+	if l.currentState() != InRawString {
+		l.Emit(RAWSTRINGBEG)
+		l.pushState(InRawString)
+		l.pushStringDelim('\'')
+	}
 	curr, next, err := l.Advance()
 	// empty string, should be handled better
-	if curr == '\'' {
+	if curr == l.currentStringDelim() {
 		l.Emit(RAWSTRINGEND)
+		l.popState()
+		l.popStringDelim()
 		return err
 	}
 	for {
@@ -659,14 +695,18 @@ func (l *Lexer) lexRawString() error {
 			lastLoop = true
 		}
 		switch {
-		case curr == '\'':
+		case curr == l.currentStringDelim():
 			l.Emit(RAWSTRINGEND)
-		case next == '\'':
+			l.popState()
+			l.popStringDelim()
+		case next == l.currentStringDelim():
 			if len(l.read) > 0 {
 				l.Emit(STRINGBODY)
 			}
 			l.Advance()
 			l.Emit(RAWSTRINGEND)
+			l.popState()
+			l.popStringDelim()
 			return err
 		}
 		if lastLoop {
@@ -675,4 +715,30 @@ func (l *Lexer) lexRawString() error {
 		curr, next, err = l.Advance()
 	}
 	return err
+}
+
+func (l *Lexer) lexPercentLiteral() error {
+	curr, next, err := l.Advance()
+	if err != nil {
+		return err
+	}
+	if !unicode.IsPunct(next) && !unicode.IsSymbol(next) {
+		return fmt.Errorf("'%c' is not a valid delimiter for a percent literal", next)
+	}
+	l.pushStringDelim(next)
+	l.Advance()
+	switch curr {
+	case 'w':
+		l.Emit(RAWWORDSBEG)
+		l.pushState(InRawString)
+		return l.lexRawString()
+	case 'W':
+		l.Emit(WORDSBEG)
+		l.pushState(InInterpString)
+		return l.lexString()
+	case 'q', 'Q', 'r', 'R', 'i', 'I', 's', 'S', 'x', 'X':
+		return fmt.Errorf("'%%%c' literals are not supported", curr)
+	default:
+		return fmt.Errorf("'%c' is not a valid type of percent literal", curr)
+	}
 }

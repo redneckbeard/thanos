@@ -66,6 +66,7 @@ var tokenNames = map[int]string{
 	PRIVATE:       "PRIVATE",
 	PROTECTED:     "PROTECTED",
 	QMARK:         "QMARK",
+	RAWWORDSBEG:   "RAWWORDSBEG",
 	RBRACE:        "RBRACE",
 	REGEXBEG:      "REGEXBEG",
 	REGEXEND:      "REGEXEND",
@@ -84,6 +85,7 @@ var tokenNames = map[int]string{
 	TRUE:          "TRUE",
 	UNARY_NUM:     "UNARY_NUM",
 	UNLESS:        "UNLESS",
+	WORDSBEG:      "WORDSBEG",
 }
 
 var exprStartTokens = map[int]int{

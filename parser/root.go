@@ -70,8 +70,8 @@ func (r *Root) CurrentString() *StringNode {
 	return r.stringStack[len(r.stringStack)-1]
 }
 
-func (r *Root) PushString() {
-	r.stringStack = append(r.stringStack, &StringNode{Interps: make(map[int][]Node)})
+func (r *Root) PushString(kind StringKind) {
+	r.stringStack = append(r.stringStack, &StringNode{Kind: kind, Interps: make(map[int][]Node)})
 }
 
 func (r *Root) PopString() *StringNode {

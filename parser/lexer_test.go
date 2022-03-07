@@ -231,6 +231,31 @@ func TestStatefulLexing(t *testing.T) {
 			[]string{`'`, "foo#{bar}", `'`},
 		},
 		{
+			`%w{foo bar baz}`,
+			[]int{RAWWORDSBEG, STRINGBODY, RAWSTRINGEND},
+			[]string{`%w{`, "foo bar baz", `}`},
+		},
+		{
+			`%w$foo bar baz$`,
+			[]int{RAWWORDSBEG, STRINGBODY, RAWSTRINGEND},
+			[]string{`%w$`, "foo bar baz", `$`},
+		},
+		{
+			`%W|foo #{bar} baz|`,
+			[]int{WORDSBEG, STRINGBODY, INTERPBEG, IDENT, INTERPEND, STRINGBODY, STRINGEND},
+			[]string{`%W|`, "foo ", "#{", "bar", "}", " baz", `|`},
+		},
+		{
+			`%W{foo #{bar} baz}`,
+			[]int{WORDSBEG, STRINGBODY, INTERPBEG, IDENT, INTERPEND, STRINGBODY, STRINGEND},
+			[]string{`%W{`, "foo ", "#{", "bar", "}", " baz", `}`},
+		},
+		{
+			`%W{foo #{%w{b a r}} baz}`,
+			[]int{WORDSBEG, STRINGBODY, INTERPBEG, RAWWORDSBEG, STRINGBODY, RAWSTRINGEND, INTERPEND, STRINGBODY, STRINGEND},
+			[]string{`%W{`, "foo ", "#{", "%w{", "b a r", "}", "}", " baz", `}`},
+		},
+		{
 			`5.even?`,
 			[]int{INT, DOT, METHODIDENT},
 			[]string{"5", ".", "even?"},
@@ -287,13 +312,11 @@ func TestStatefulLexing(t *testing.T) {
 				if token.Type != tt.tokens[j] {
 					t.Errorf("tests[%d] - token %d type wrong. expected=%q, got=%q",
 						i+1, j, tokenNames[tt.tokens[j]], tokenNames[token.Type])
-					break
 				}
 
 				if token.Literal != tt.literals[j] {
 					t.Errorf("tests[%d] - token %d literal wrong. expected=%q, got=%q",
 						i+1, j, tt.literals[j], token.Literal)
-					break
 				}
 			}
 		}
