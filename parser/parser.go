@@ -1,4 +1,4 @@
-//go:generate goyacc -l -o ruby.go ruby.y
+//go:generate ./gen_parser.sh
 
 // package parser contains the requisite components for generating
 // type-annotated Ruby ASTs in Go. At a high level, there are three such
