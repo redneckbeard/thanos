@@ -77,8 +77,8 @@ var opAssignTokens = map[string]token.Token{
 	"&":  token.AND_ASSIGN,
 	"|":  token.OR_ASSIGN,
 	"^":  token.XOR_ASSIGN,
-	"<":  token.SHL_ASSIGN,
-	">":  token.SHR_ASSIGN,
+	"<<": token.SHL_ASSIGN,
+	">>": token.SHR_ASSIGN,
 	"&^": token.AND_NOT_ASSIGN,
 }
 

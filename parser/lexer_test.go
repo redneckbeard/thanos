@@ -300,6 +300,11 @@ func TestStatefulLexing(t *testing.T) {
 			[]int{RETURN, IDENT, IF_MOD, IDENT},
 			[]string{"return", "x", "if", "bar"},
 		},
+		{
+			`@foo[x]`,
+			[]int{IVAR, LBRACKET, IDENT, RBRACKET},
+			[]string{"@foo", "[", "x", "]"},
+		},
 	}
 
 	for i, tt := range tests {

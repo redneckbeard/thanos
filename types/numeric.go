@@ -84,7 +84,6 @@ func init() {
 	NumericType.Def("*", numericOperatorSpec(token.MUL, false))
 	NumericType.Def("/", numericOperatorSpec(token.QUO, false))
 	NumericType.Def("%", numericOperatorSpec(token.REM, false))
-	NumericType.Def("<<", numericOperatorSpec(token.SHL, false))
 	NumericType.Def("<", numericOperatorSpec(token.LSS, true))
 	NumericType.Def(">", numericOperatorSpec(token.GTR, true))
 	NumericType.Def("<=", numericOperatorSpec(token.LEQ, true))

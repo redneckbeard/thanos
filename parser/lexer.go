@@ -45,6 +45,7 @@ var validPuncts = map[string]int{
 	"::":  SCOPE,
 	"<":   LT,
 	"<<":  LSHIFT,
+	"<<=": LSHIFTASSIGN,
 	"<=":  LTE,
 	"<=>": SPACESHIP,
 	"=":   ASSIGN,
@@ -54,6 +55,7 @@ var validPuncts = map[string]int{
 	">":   GT,
 	">=":  GTE,
 	">>":  RSHIFT,
+	">>=": RSHIFTASSIGN,
 	"|":   PIPE,
 	"||":  LOGICALOR,
 }
@@ -424,7 +426,7 @@ func (l *Lexer) lexPunct() error {
 					return err
 				}
 				switch l.lastToken {
-				case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, YIELD:
+				case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, YIELD, IVAR:
 				default:
 					l.Emit(exprStartTokens[tok])
 					return err
@@ -457,7 +459,7 @@ func (l *Lexer) lexPunct() error {
 			return err
 		}
 		switch l.lastToken {
-		case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT:
+		case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, IVAR:
 		default:
 			l.Emit(exprStartTokens[validTok])
 			return err
