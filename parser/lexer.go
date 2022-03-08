@@ -232,7 +232,7 @@ func (l *Lexer) AtExprStart() bool {
 	}
 	midExprTokens := []int{
 		NIL, SYMBOL, STRING, INT, FLOAT, TRUE, FALSE, DEF, END, SELF, CONSTANT,
-		IVAR, CVAR, GVAR, METHODIDENT, IDENT,
+		IVAR, CVAR, GVAR, METHODIDENT, IDENT, DO,
 		RBRACE, STRINGEND, RBRACKET, RPAREN,
 	}
 
@@ -369,12 +369,17 @@ func (l *Lexer) lexPunct() error {
 		if next == '@' {
 			return l.lexAttribute()
 		}
-	case '"':
+	case '"', '`':
 		if l.currentState() == InInterpString {
 			l.popState()
 			l.Emit(STRINGEND)
 			return err
 		} else {
+			if curr == '`' {
+				l.pushStringDelim('`')
+				l.pushState(InInterpString)
+				l.Emit(XSTRINGBEG)
+			}
 			return l.lexString()
 		}
 	case '\'':
@@ -743,7 +748,15 @@ func (l *Lexer) lexPercentLiteral() error {
 		l.Emit(WORDSBEG)
 		l.pushState(InInterpString)
 		return l.lexString()
-	case 'q', 'Q', 'r', 'R', 'i', 'I', 's', 'S', 'x', 'X':
+	case 'x':
+		l.Emit(RAWXSTRINGBEG)
+		l.pushState(InInterpString)
+		return l.lexRawString()
+	case 'X':
+		l.Emit(XSTRINGBEG)
+		l.pushState(InInterpString)
+		return l.lexString()
+	case 'q', 'Q', 'r', 'R', 'i', 'I', 's', 'S':
 		return fmt.Errorf("'%%%c' literals are not supported", curr)
 	default:
 		return fmt.Errorf("'%c' is not a valid type of percent literal", curr)

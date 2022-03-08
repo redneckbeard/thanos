@@ -35,3 +35,4 @@ matches_interp(10, "foofoo")
 extract_third_octet("127.0.0.1")
 terms = %w{foo bar baz}
 interp_terms = %W{foo #{"BAR BAZ QUUX"} bar}
+puts `man -P cat #{"date"}`

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 
@@ -46,4 +47,6 @@ func main() {
 	Extract_third_octet("127.0.0.1")
 	terms := strings.Fields(`foo bar baz`)
 	interp_terms := []string{"foo", fmt.Sprintf("%s", "BAR BAZ QUUX"), "bar"}
+	output, _ := exec.Command("man", "-P", "cat", fmt.Sprintf("%s", "date")).Output()
+	fmt.Println(output)
 }

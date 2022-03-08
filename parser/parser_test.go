@@ -410,6 +410,16 @@ foo("quux")`,
 			argumentTypes: map[string]types.Type{"a": types.IntType},
 			ReturnType:    types.StringType,
 		},
+		{
+			input: `
+			def foo
+			  %X{date}
+			end
+			foo
+			`,
+			argumentTypes: map[string]types.Type{},
+			ReturnType:    types.StringType,
+		},
 	}
 
 	for i, tt := range tests {

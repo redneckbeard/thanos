@@ -16,6 +16,8 @@ const (
 	Regexp
 	Words
 	RawWords
+	Exec
+	RawExec
 )
 
 func getStringKind(delim string) StringKind {
@@ -26,6 +28,8 @@ func getStringKind(delim string) StringKind {
 		return SingleQuote
 	case "/":
 		return Regexp
+	case "`":
+		return Exec
 	}
 	kind := delim[1:2]
 	switch kind {
@@ -33,6 +37,10 @@ func getStringKind(delim string) StringKind {
 		return RawWords
 	case "W":
 		return Words
+	case "x":
+		return RawExec
+	case "X":
+		return Exec
 	}
 	panic("The lexer should have errored already")
 }
@@ -43,6 +51,8 @@ var stringDelims = map[StringKind]string{
 	SingleQuote: "'",
 	RawWords:    "'",
 	Regexp:      "/",
+	RawExec:     "`",
+	Exec:        "`",
 }
 
 type StringNode struct {

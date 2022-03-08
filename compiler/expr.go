@@ -327,41 +327,56 @@ func (g *GoProgram) CompileStringNode(node *parser.StringNode) ast.Expr {
 		g.AddImports("strings")
 		return bst.Call("strings", "Fields", str)
 	case parser.Words:
-		// Ruby interpolated words apply the splitting on whitespace _before_
-		// interpolation. There's no sensible way to achieve this in Go, so we
-		// leave the nonsense in the compiler and have output be a string slice
-		// literal.
-
-		// The following is nearly exactly how we generate the format string, but
-		// it is not immediately obvious how to DRY it out without obscuring the
-		// intentions of the former.
-
-		var elements []ast.Expr
-
-		for i, seg := range node.BodySegments {
-			if interps, exists := node.Interps[i]; exists {
-				for _, interp := range interps {
-					verb := types.FprintVerb(interp.Type())
-					elements = append(elements, bst.Call("fmt", "Sprintf", bst.String(verb), g.CompileExpr(interp)))
-				}
-			}
-			for _, s := range strings.Fields(seg) {
-				elements = append(elements, bst.String(s))
-			}
-		}
-		if trailingInterps, exists := node.Interps[len(node.BodySegments)]; exists {
-			for _, trailingInterp := range trailingInterps {
-				verb := types.FprintVerb(trailingInterp.Type())
-				elements = append(elements, bst.Call("fmt", "Sprintf", bst.String(verb), g.CompileExpr(trailingInterp)))
-			}
-		}
 		return &ast.CompositeLit{
 			Type: &ast.ArrayType{
 				Elt: g.it.Get("string"),
 			},
-			Elts: elements,
+			Elts: g.stringElements(node),
 		}
+	case parser.Exec, parser.RawExec:
+		g.AddImports("os/exec")
+		outputVariable := g.it.New("output")
+		g.appendToCurrentBlock(bst.Define(
+			[]ast.Expr{outputVariable, g.it.Get("_")},
+			bst.Call(
+				bst.Call("exec", "Command", g.stringElements(node)...),
+				"Output",
+			),
+		))
+		return bst.Call(nil, "string", outputVariable)
 	default:
 		return formatted
 	}
+}
+
+func (g *GoProgram) stringElements(node *parser.StringNode) []ast.Expr {
+	// Ruby interpolated words apply the splitting on whitespace _before_
+	// interpolation. There's no sensible way to achieve this in Go, so we
+	// leave the nonsense in the compiler and have output be a string slice
+	// literal.
+
+	// The following is nearly exactly how we generate the format string, but
+	// it is not immediately obvious how to DRY it out without obscuring the
+	// intentions of the former.
+	var elements []ast.Expr
+
+	for i, seg := range node.BodySegments {
+		if interps, exists := node.Interps[i]; exists {
+			for _, interp := range interps {
+				verb := types.FprintVerb(interp.Type())
+				elements = append(elements, bst.Call("fmt", "Sprintf", bst.String(verb), g.CompileExpr(interp)))
+			}
+		}
+		for _, s := range strings.Fields(seg) {
+			elements = append(elements, bst.String(s))
+		}
+	}
+	if trailingInterps, exists := node.Interps[len(node.BodySegments)]; exists {
+		for _, trailingInterp := range trailingInterps {
+			verb := types.FprintVerb(trailingInterp.Type())
+			elements = append(elements, bst.Call("fmt", "Sprintf", bst.String(verb), g.CompileExpr(trailingInterp)))
+		}
+	}
+
+	return elements
 }

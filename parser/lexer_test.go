@@ -305,6 +305,11 @@ func TestStatefulLexing(t *testing.T) {
 			[]int{IVAR, LBRACKET, IDENT, RBRACKET},
 			[]string{"@foo", "[", "x", "]"},
 		},
+		{
+			"`man -P cat #{\"date\"}`",
+			[]int{XSTRINGBEG, STRINGBODY, INTERPBEG, STRINGBEG, STRINGBODY, STRINGEND, INTERPEND, STRINGEND},
+			[]string{"`", "man -P cat ", "#{", `"`, "date", `"`, "}", "`"},
+		},
 	}
 
 	for i, tt := range tests {

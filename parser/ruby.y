@@ -41,7 +41,7 @@ func root(yylex yyLexer) *Root {
 %token <str> IVAR CVAR GVAR METHODIDENT IDENT COMMENT LABEL
 
 %token <str> DOT LBRACE RBRACE NEWLINE COMMA
-%token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND WORDSBEG RAWWORDSBEG
+%token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND WORDSBEG RAWWORDSBEG XSTRINGBEG RAWXSTRINGBEG
 %token <str> SEMICOLON LBRACKET LBRACKETSTART RBRACKET LPAREN LPARENSTART RPAREN HASHROCKET
 %token <str> SCOPE
 
@@ -907,6 +907,7 @@ raw_string:
 raw_string_beg:
   RAWSTRINGBEG
 | RAWWORDSBEG
+| RAWXSTRINGBEG
 
 string_beg: 
   STRINGBEG
@@ -916,6 +917,12 @@ string_beg:
     $$ = ""
   }
 | WORDSBEG
+  {
+    root(yylex).PushState(InString)
+    root(yylex).PushString(getStringKind($1))
+    $$ = ""
+  }
+| XSTRINGBEG
   {
     root(yylex).PushState(InString)
     root(yylex).PushString(getStringKind($1))
@@ -974,11 +981,6 @@ regex_end:
 		root(yylex).PopState()
 		$$ = ""
 	}
-//words: tWORDS_BEG word_list tSTRING_END
-//word_list: # nothing
-//| word_list word tSPACE
-//word: string_content
-//| word string_content
 //symbols: tSYMBOLS_BEG symbol_list tSTRING_END
 //symbol_list: # nothing
 //| symbol_list word tSPACE
