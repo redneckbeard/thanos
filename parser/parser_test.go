@@ -197,13 +197,13 @@ func TestMethodParamInferenceHappyPath(t *testing.T) {
 			ReturnType:    types.IntType,
 		},
 		{
-			input: `def foo(bar) bar.map do |x| x % 2 == 0 end; end
+			input: `def foo(bar); bar.map do |x| x % 2 == 0 end; end
 foo([1,2,3,4,5])`,
 			argumentTypes: map[string]types.Type{"bar": types.NewArray(types.IntType)},
 			ReturnType:    types.NewArray(types.BoolType),
 		},
 		{
-			input: `def foo(bar) bar + "foo"; end
+			input: `def foo(bar); bar + "foo"; end
 foo("bar")`,
 			argumentTypes: map[string]types.Type{"bar": types.StringType},
 			ReturnType:    types.StringType,
@@ -403,8 +403,7 @@ foo("quux")`,
 		{
 			input: `
 			def foo(a)
-			  words = %w{words words words}
-				words[a]
+			  %w{words words words}[a]
 			end
 			foo(1)
 			`,

@@ -1851,6 +1851,7 @@ yydefault:
 			root(yylex).PushState(InMethodDefinition)
 			root(yylex).PushScope(method.Locals)
 			yyVAL.meth = method
+			yylex.(*Lexer).resetExpr = true
 		}
 	case 183:
 		yyDollar = yyS[yypt-1 : yypt+1]

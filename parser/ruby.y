@@ -1007,6 +1007,7 @@ method_signature:
     root(yylex).PushState(InMethodDefinition)
     root(yylex).PushScope(method.Locals)
     $$ = method
+    yylex.(*Lexer).resetExpr = true
   }
 
 symbol: 

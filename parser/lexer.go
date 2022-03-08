@@ -142,6 +142,7 @@ type Lexer struct {
 	gauntlet          bool
 	spaceConsumed     bool
 	percentDelimStack []rune
+	resetExpr         bool
 }
 
 func NewLexer(buf []byte) *Lexer {
@@ -212,6 +213,7 @@ func (l *Lexer) ResetBuffer() {
 }
 
 func (l *Lexer) Emit(t int) {
+	l.resetExpr = false
 	if l.gauntlet {
 		l.rawSource = append(l.rawSource, l.read...)
 	} else {
@@ -225,6 +227,9 @@ func (l *Lexer) Emit(t int) {
 }
 
 func (l *Lexer) AtExprStart() bool {
+	if l.resetExpr {
+		return true
+	}
 	midExprTokens := []int{
 		NIL, SYMBOL, STRING, INT, FLOAT, TRUE, FALSE, DEF, END, SELF, CONSTANT,
 		IVAR, CVAR, GVAR, METHODIDENT, IDENT,
@@ -426,7 +431,7 @@ func (l *Lexer) lexPunct() error {
 					return err
 				}
 				switch l.lastToken {
-				case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, YIELD, IVAR:
+				case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, YIELD, IVAR, STRINGEND, RAWSTRINGEND:
 				default:
 					l.Emit(exprStartTokens[tok])
 					return err
@@ -459,7 +464,7 @@ func (l *Lexer) lexPunct() error {
 			return err
 		}
 		switch l.lastToken {
-		case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, IVAR:
+		case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, YIELD, IVAR, STRINGEND, RAWSTRINGEND:
 		default:
 			l.Emit(exprStartTokens[validTok])
 			return err
