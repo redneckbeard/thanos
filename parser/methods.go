@@ -9,7 +9,11 @@ import (
 	"github.com/redneckbeard/thanos/types"
 )
 
-var setterPatt = regexp.MustCompile(`\w+=`)
+var (
+	setterPatt     = regexp.MustCompile(`\w+=`)
+	interrogPatt   = regexp.MustCompile(`\w+\?`)
+	interrogPrefix = regexp.MustCompile(`^(Can|Is|Does|Has)`)
+)
 
 type MethodSet struct {
 	Methods map[string]*Method
@@ -166,12 +170,18 @@ func (m *Method) ReturnType() types.Type {
 }
 
 func (m *Method) GoName() string {
-	name := strings.TrimRight(m.Name, "?!")
+	name := strings.TrimRight(m.Name, "!")
 	if !m.Private {
 		name = strings.Title(name)
 	}
 	if setterPatt.MatchString(name) {
 		name = "Set" + strings.TrimRight(name, "=")
+	}
+	if interrogPatt.MatchString(name) {
+		name = strings.TrimRight(name, "?")
+		if !interrogPrefix.MatchString(name) {
+			name = "Is" + name
+		}
 	}
 	return name
 }
