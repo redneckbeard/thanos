@@ -590,12 +590,10 @@ primary:
   literal
 | string
 | raw_string
-// | xstring
 | regexp 
   { 
     $$ = $1 
   }
-// | words
 // | qwords
 // | symbols
 // | qsymbols
@@ -702,11 +700,6 @@ primary:
 //| kRETRY
 
 primary_value: primary
-
-// k_class: kCLASS
-// k_module: kMODULE
-// k_def: kDEF
-// k_return: kRETURN
 
 then: 
   term
@@ -1001,6 +994,24 @@ method_signature:
     method.lineNo = currentLineNo
 
     for _, p := range $3 {
+      if err := method.AddParam(p); err != nil {
+        root(yylex).AddError(err)
+      }
+    }
+
+    root(yylex).PushState(InMethodDefinition)
+    root(yylex).PushScope(method.Locals)
+    $$ = method
+    yylex.(*Lexer).resetExpr = true
+  }
+| DEF SELF DOT fname f_arglist
+  {
+    method := NewMethod($4, root(yylex))
+    method.Private = root(yylex).inPrivateMethods
+    method.ClassMethod = true
+    method.lineNo = currentLineNo
+
+    for _, p := range $5 {
       if err := method.AddParam(p); err != nil {
         root(yylex).AddError(err)
       }

@@ -35,8 +35,9 @@ func (ms *MethodSet) AddCall(c *MethodCall) {
 	}
 }
 
-func NewMethodSet() *MethodSet {
+func NewMethodSet(class *Class) *MethodSet {
 	return &MethodSet{
+		Class:   class,
 		Methods: make(map[string]*Method),
 		Calls:   make(map[string][]*MethodCall),
 	}
@@ -118,16 +119,17 @@ type BlockParam struct {
 }
 
 type Method struct {
-	Receiver Node
-	Name     string
-	Body     *Body
 	*ParamList
-	Locals  *SimpleScope
-	Scope   ScopeChain
-	Root    *Root
-	Block   *BlockParam
-	lineNo  int
-	Private bool
+	Receiver    Node
+	Name        string
+	Body        *Body
+	Locals      *SimpleScope
+	Scope       ScopeChain
+	Root        *Root
+	Block       *BlockParam
+	lineNo      int
+	Private     bool
+	ClassMethod bool
 }
 
 func NewMethod(name string, r *Root) *Method {

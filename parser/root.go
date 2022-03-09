@@ -27,7 +27,7 @@ type Root struct {
 }
 
 func NewRoot() *Root {
-	globalMethodSet = NewMethodSet()
+	globalMethodSet = NewMethodSet(nil)
 	p := &Root{
 		StateMachine: &StateMachine{},
 		MethodSets:   []*MethodSet{globalMethodSet},
@@ -83,9 +83,9 @@ func (r *Root) PopString() *StringNode {
 func (r *Root) PushClass(name string, lineNo int) {
 	r.PushState(InClassBody)
 	cls := &Class{name: name, lineNo: lineNo, ivars: make(map[string]*IVar)}
-	ms := NewMethodSet()
+	ms, cms := NewMethodSet(cls), NewMethodSet(cls)
 	cls.MethodSet = ms
-	ms.Class = cls
+	cls.ClassMethodSet = cms
 	r.currentClass = cls
 	r.MethodSets = append(r.MethodSets, ms)
 }
@@ -117,8 +117,12 @@ func (r *Root) CurrentMethodSet() *MethodSet {
 func (r *Root) AddMethod(m *Method) {
 	m.Body.ExplicitReturns = r.ExplicitReturns
 	r.ExplicitReturns = []*ReturnNode{}
-	ms := r.CurrentMethodSet()
-	ms.AddMethod(m)
+	if r.currentClass != nil && m.ClassMethod {
+		r.currentClass.ClassMethodSet.AddMethod(m)
+	} else {
+		ms := r.CurrentMethodSet()
+		ms.AddMethod(m)
+	}
 	r.currentMethod = nil
 }
 
@@ -198,6 +202,9 @@ func (r *Root) Analyze() error {
 	for i := len(r.Classes) - 1; i >= 0; i-- {
 		class := r.Classes[i]
 		if err := r.AnalyzeMethodSet(class.MethodSet, class.Type()); err != nil {
+			return err
+		}
+		if err := r.AnalyzeMethodSet(class.ClassMethodSet, class.Type()); err != nil {
 			return err
 		}
 	}

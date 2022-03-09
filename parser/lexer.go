@@ -532,6 +532,12 @@ func (l *Lexer) lexWord() error {
 		}
 	} else {
 		switch string(l.read) {
+		case "class":
+			if l.lastToken == DOT {
+				l.Emit(IDENT)
+			} else {
+				l.Emit(p)
+			}
 		case "if", "unless", "while", "until", "rescue":
 			if !l.AtExprStart() {
 				l.Emit(keywordModifierTokens[p])

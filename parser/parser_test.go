@@ -436,7 +436,7 @@ foo("quux")`,
 			if caseNum == 0 || caseNum == i+1 {
 				program, err := ParseString(tt.input)
 				if err != nil {
-					t.Fatalf("[Test Case %d] %s", i+1, err)
+					t.Fatalf("[Test Case %d] %s\n%s", i+1, err, tt.input)
 				}
 				method, ok := program.GetMethod("foo")
 				if !ok {
@@ -684,37 +684,26 @@ func TestInstanceMethodParamInferenceHappyPath(t *testing.T) {
 		},
 		{
 			input: `
-class Foo
-  def initialize(name)
-    @name  = name
-    clear
-  end
+			class Foo
+			  @x = 10 
 
-  def clear
-    @stack = 0
-  end
+			  def self.bar
+				  @x
+				end
 
-  def bar(bit)
-    bit_value = bit ? 1 : 0
-    @stack = (@stack << 1) | bit_value
+				def bar
+				  self.class.bar
+				end
 
-    bit
-  end
-
-  def baz
-    bit_value = @stack & 1
-    @stack  >>= 1
-
-    bit_value == 1
-  end
-end
-Foo.new("foo").bar(true)
+				def baz
+				end
+			end
 			`,
 			argumentTypes: []map[string]types.Type{
-				map[string]types.Type{"bit": types.BoolType},
+				map[string]types.Type{},
 				map[string]types.Type{},
 			},
-			returnTypes: []types.Type{types.BoolType, types.BoolType},
+			returnTypes: []types.Type{types.IntType, types.NilType},
 		},
 	}
 
@@ -748,6 +737,71 @@ Foo.new("foo").bar(true)
 					t.Errorf("[Test Case %d] type inference failed for return type for method '%s': expected %s, got %s", i+1, method.Name, tt.returnTypes[j], method.ReturnType())
 					break
 				}
+			}
+		}
+	}
+}
+
+func TestClassMethodParamInferenceHappyPath(t *testing.T) {
+	tests := []struct {
+		input         string
+		argumentTypes map[string]types.Type
+		returnType    types.Type
+	}{
+		{
+			input: `
+			class Foo
+			  def self.bar
+				  "string"
+				end
+			end
+			`,
+			argumentTypes: map[string]types.Type{},
+			returnType:    types.StringType,
+		},
+		{
+			input: `
+			class Foo
+			  @x = 10 
+
+			  def self.bar
+				  @x
+				end
+			end
+			`,
+			argumentTypes: map[string]types.Type{},
+			returnType:    types.IntType,
+		},
+	}
+
+	for i, tt := range tests {
+		if caseNum == 0 || caseNum == i+1 {
+			program, err := ParseString(tt.input)
+			if err != nil {
+				t.Fatalf("[Test Case %d] %s", i+1, err)
+			}
+			class := program.Classes[0]
+			method, ok := class.ClassMethodSet.Methods["bar"]
+			if !ok {
+				t.Fatal("Could not find class method 'bar'")
+			}
+			if len(method.Params) > 0 {
+				for k := 0; k < len(tt.argumentTypes); k++ {
+					param, _ := method.GetParam(k)
+					if param != method.GetParamByName(param.Name) {
+						t.Errorf("[Test Case %d] positional vs optional arg access differs for parameter '%s'", i+1, param.Name)
+						break
+					}
+					expectedType := tt.argumentTypes[param.Name]
+					if param.Type() != expectedType {
+						t.Errorf("[Test Case %d] type inference failed for parameter '%s': expected %s, but got %s", i+1, param.Name, expectedType, param.Type())
+						break
+					}
+				}
+			}
+			if !method.ReturnType().Equals(tt.returnType) {
+				t.Errorf("[Test Case %d] type inference failed for return type for method '%s': expected %s, got %s", i+1, method.Name, tt.returnType, method.ReturnType())
+				break
 			}
 		}
 	}

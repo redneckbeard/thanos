@@ -93,6 +93,7 @@ type Class struct {
 	name, Superclass string
 	Statements       Statements
 	MethodSet        *MethodSet
+	ClassMethodSet   *MethodSet
 	_type            types.Type
 	lineNo           int
 	Body             Body
