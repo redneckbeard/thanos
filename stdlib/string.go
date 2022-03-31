@@ -17,6 +17,17 @@ func Hex(s string) int {
 	return hex
 }
 
+func Reverse(s string) string {
+	runes := []rune(s)
+	i, j := 0, len(runes)-1
+	for i < j {
+		runes[i], runes[j] = runes[j], runes[i]
+		i++
+		j--
+	}
+	return string(runes)
+}
+
 func Join[T fmt.Stringer](t []T, delim string) string {
 	segments := []string{}
 	for _, segment := range t {

@@ -49,6 +49,21 @@ func (t kernel) Alias(existingMethod, newMethod string) {
 }
 
 func init() {
+	KernelType.Def("print", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return NilType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Stmts: []ast.Stmt{
+					&ast.ExprStmt{
+						X: bst.Call("fmt", "Print", UnwrapTypeExprs(args)...),
+					},
+				},
+				Imports: []string{"fmt"},
+			}
+		},
+	})
 	KernelType.Def("puts", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			return NilType, nil

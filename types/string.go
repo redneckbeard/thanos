@@ -276,8 +276,18 @@ func init() {
 	// `String#partition`
 	// `String#prepend`
 	// `String#replace`
-	// `String#reverse`
-	// `String#reverse!`
+	StringType.Def("reverse", MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			return StringType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "Reverse", rcvr.Expr),
+				Imports: []string{"github.com/redneckbeard/thanos"},
+			}
+		},
+	})
+	StringType.Alias("reverse", "reverse!")
 	// `String#rindex`
 	// `String#rjust`
 	// `String#rpartition`

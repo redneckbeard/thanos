@@ -105,6 +105,16 @@ func init() {
 	//`Integer#bit_length`
 	//`Integer#ceil`
 	//`Integer#chr`
+	IntType.Def("chr", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return StringType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Call(nil, "string", bst.Call(nil, "rune", rcvr.Expr)),
+			}
+		},
+	})
 	//`Integer#clamp`
 	//`Integer#coerce`
 	//`Integer#conj`
