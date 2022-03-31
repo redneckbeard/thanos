@@ -63,7 +63,14 @@ func (n *ConstantNode) LineNo() int          { return n.lineNo }
 
 func (n *ConstantNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if local := locals.ResolveVar(n.Val); local == BadLocal {
-		return types.ClassRegistry.Get(n.Val)
+		if t, err := types.ClassRegistry.Get(n.Val); err != nil {
+			if t, ok := types.PredefinedConstants[n.Val]; ok {
+				return t.Type, nil
+			}
+			return nil, err
+		} else {
+			return t, nil
+		}
 	} else {
 		if constant, ok := local.(*Constant); ok {
 			n.Namespace = constant.Namespace.QualifiedName()

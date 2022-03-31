@@ -163,6 +163,10 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 	case *parser.SelfNode:
 		return g.currentRcvr
 	case *parser.ConstantNode:
+		if predefined, ok := types.PredefinedConstants[n.Val]; ok {
+			g.AddImports(predefined.Imports...)
+			return predefined.Expr
+		}
 		return g.it.Get(n.Namespace + n.Val)
 	case *parser.ScopeAccessNode:
 		return g.it.Get(n.ReceiverName() + n.Constant)
