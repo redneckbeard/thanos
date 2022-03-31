@@ -46,7 +46,7 @@ func root(yylex yyLexer) *Root {
 %token <str> SCOPE
 
 
-%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do raw_string_beg class module
+%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do raw_string_beg class module comment
 %type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp expr_value_do block_command block_call
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node 
 %type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head mlhs_inner
@@ -1393,20 +1393,24 @@ trailer: | NEWLINE | COMMA
 term: 
   SEMICOLON
 | NEWLINE
-| COMMENT NEWLINE
-{
-  root(yylex).AddComment(Comment{Text: $1, LineNo: currentLineNo})
-  $$ = $2
-}
-| NEWLINE COMMENT NEWLINE
-{
-  root(yylex).AddComment(Comment{Text: $2, LineNo: currentLineNo})
-  $$ = $3
-}
+| comment
+
+comment:
+  COMMENT
+  {
+    root(yylex).AddComment(Comment{Text: strings.TrimSpace($1), LineNo: currentLineNo})
+    $$ = $1
+  }
+| comment COMMENT
+  {
+    root(yylex).AddComment(Comment{Text: strings.TrimSpace($2), LineNo: currentLineNo})
+    $$ = $2
+  }
 
 terms: 
   term
 | terms NEWLINE
+| terms comment
 
 none: { $$ = nil }
 

@@ -578,6 +578,7 @@ func (l *Lexer) lexComment() error {
 			lastLoop = true
 		}
 		if next == '\n' {
+			l.Advance()
 			break
 		}
 		if lastLoop {
@@ -586,6 +587,7 @@ func (l *Lexer) lexComment() error {
 		_, next, err = l.Advance()
 	}
 	l.Emit(COMMENT)
+	l.lineNo++
 	return err
 }
 

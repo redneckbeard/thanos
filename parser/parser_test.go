@@ -1270,7 +1270,7 @@ def foo(bar)
 		t.Fatalf("expected method to have line number 2, got %d", m.LineNo())
 	}
 	if len(p.Comments) != 3 {
-		t.Fatal("Expected 3 comments")
+		t.Fatalf("Expected 3 comments, have only %v", p.Comments)
 	}
 	comments := []struct {
 		txt    string

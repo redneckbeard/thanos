@@ -183,8 +183,8 @@ func TestStatefulLexing(t *testing.T) {
 			`# this is a preceding comment
 			"foo#{bar}baz#{quux}" # this is an inline comment
 			# this is a trailing comment`,
-			[]int{COMMENT, NEWLINE, STRINGBEG, STRINGBODY, INTERPBEG, IDENT, INTERPEND, STRINGBODY, INTERPBEG, IDENT, INTERPEND, STRINGEND, COMMENT, NEWLINE, COMMENT},
-			[]string{`# this is a preceding comment`, "\n", `"`, "foo", "#{", "bar", "}", "baz", "#{", "quux", "}", `"`, `# this is an inline comment`, "\n", `# this is a trailing comment`},
+			[]int{COMMENT, STRINGBEG, STRINGBODY, INTERPBEG, IDENT, INTERPEND, STRINGBODY, INTERPBEG, IDENT, INTERPEND, STRINGEND, COMMENT, COMMENT},
+			[]string{"# this is a preceding comment\n", `"`, "foo", "#{", "bar", "}", "baz", "#{", "quux", "}", `"`, "# this is an inline comment\n", `# this is a trailing comment`},
 		},
 		{
 			`0...3`,
