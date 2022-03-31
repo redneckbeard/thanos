@@ -147,6 +147,14 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 			Cond: g.CompileExpr(n.Condition),
 			Body: g.CompileBlockStmt(n.Body),
 		})
+	case *parser.BreakNode:
+		g.appendToCurrentBlock(&ast.BranchStmt{
+			Tok: token.BREAK,
+		})
+	case *parser.NextNode:
+		g.appendToCurrentBlock(&ast.BranchStmt{
+			Tok: token.CONTINUE,
+		})
 	default:
 		expr := g.CompileExpr(n)
 		// A single ident being returned here means we've prepended statements and

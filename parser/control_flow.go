@@ -156,9 +156,50 @@ func (n *WhileNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 	if _, err := GetType(n.Condition, locals, class); err != nil {
 		return nil, err
 	}
+	if _, err := GetType(n.Body, locals, class); err != nil {
+		return nil, err
+	}
 	return types.NilType, nil
 }
 
 func (n *WhileNode) Copy() Node {
 	return &WhileNode{n.Condition.Copy(), n.Body.Copy().(Statements), n.lineNo}
+}
+
+type BreakNode struct {
+	lineNo int
+}
+
+func (n *BreakNode) String() string {
+	return fmt.Sprintf("(break)")
+}
+func (n *BreakNode) Type() types.Type     { return types.NilType }
+func (n *BreakNode) SetType(t types.Type) {}
+func (n *BreakNode) LineNo() int          { return n.lineNo }
+
+func (n *BreakNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	return types.NilType, nil
+}
+
+func (n *BreakNode) Copy() Node {
+	return n
+}
+
+type NextNode struct {
+	lineNo int
+}
+
+func (n *NextNode) String() string {
+	return fmt.Sprintf("(next)")
+}
+func (n *NextNode) Type() types.Type     { return types.NilType }
+func (n *NextNode) SetType(t types.Type) {}
+func (n *NextNode) LineNo() int          { return n.lineNo }
+
+func (n *NextNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	return types.NilType, nil
+}
+
+func (n *NextNode) Copy() Node {
+	return n
 }

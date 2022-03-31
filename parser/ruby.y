@@ -757,8 +757,14 @@ primary:
     $$ = $1
   }
 //| k_def singleton dot_or_colon
-//| kBREAK
-//| kNEXT
+| BREAK
+  {
+    $$ = &BreakNode{lineNo: currentLineNo}  
+  }
+| NEXT
+  {
+    $$ = &NextNode{lineNo: currentLineNo}  
+  }
 //| kREDO
 //| kRETRY
 
