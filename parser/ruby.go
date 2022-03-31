@@ -1789,7 +1789,8 @@ yydefault:
 				Condition: yyDollar[1].node,
 				True:      Statements{yyDollar[3].node},
 				False: &Condition{
-					True: Statements{yyDollar[6].node},
+					True:       Statements{yyDollar[6].node},
+					elseBranch: true,
 				},
 				lineNo: currentLineNo,
 			}
@@ -2042,7 +2043,7 @@ yydefault:
 	case 169:
 		yyDollar = yyS[yypt-2 : yypt+1]
 		{
-			yyVAL.node = &Condition{True: yyDollar[2].node_list, lineNo: currentLineNo}
+			yyVAL.node = &Condition{True: yyDollar[2].node_list, lineNo: currentLineNo, elseBranch: true}
 		}
 	case 170:
 		yyDollar = yyS[yypt-0 : yypt+1]

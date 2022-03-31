@@ -500,6 +500,7 @@ arg:
        True: Statements{$3},
        False: &Condition{
          True: Statements{$6},
+         elseBranch: true,
        },
        lineNo: currentLineNo,
     }
@@ -798,7 +799,7 @@ opt_else:
   none
 | ELSE compstmt
   {
-    $$ = &Condition{True: $2, lineNo: currentLineNo}
+    $$ = &Condition{True: $2, lineNo: currentLineNo, elseBranch: true}
   }
         
 //for_var: lhs

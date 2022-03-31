@@ -8,10 +8,12 @@ import (
 )
 
 type Condition struct {
-	Condition Node
-	True      Statements
-	False     Node
-	lineNo    int
+	Condition  Node
+	True       Statements
+	False      Node
+	elseBranch bool
+	lineNo     int
+	_type      types.Type
 }
 
 func (n *Condition) String() string {
@@ -23,8 +25,8 @@ func (n *Condition) String() string {
 	}
 	return fmt.Sprintf("(if %s %s %s)", n.Condition, n.True[0], n.False)
 }
-func (n *Condition) Type() types.Type     { return n.True.Type() }
-func (n *Condition) SetType(t types.Type) {}
+func (n *Condition) Type() types.Type     { return n._type }
+func (n *Condition) SetType(t types.Type) { n._type = t }
 func (n *Condition) LineNo() int          { return n.lineNo }
 
 func (n *Condition) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
@@ -34,7 +36,10 @@ func (n *Condition) TargetType(locals ScopeChain, class *Class) (types.Type, err
 	t1, err1 := GetType(n.True, locals, class)
 	// else clause
 	if n.False == nil {
-		return t1, nil
+		if n.elseBranch {
+			return t1, nil
+		}
+		return types.NilType, nil
 	}
 	if t2, err2 := GetType(n.False, locals, class); t1 == t2 && err1 == nil && err2 == nil {
 		return t1, nil
