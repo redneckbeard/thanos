@@ -196,6 +196,26 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		}
 	case *parser.SuperNode:
 		return g.CompileSuperNode(n)
+	case *parser.Condition:
+		// The following duplicates much of what is done for an assignment with a
+		// conditional on the RHS, but we can't easily reuse that year because the local
+		// var that gets generated won't be identifiable from this spot in the tree.
+		name := g.it.New("cond")
+		g.appendToCurrentBlock(&ast.DeclStmt{
+			Decl: &ast.GenDecl{
+				Tok: token.VAR,
+				Specs: []ast.Spec{&ast.ValueSpec{
+					Names: []*ast.Ident{name},
+					Type:  g.it.Get(n.Type().GoType()),
+				}},
+			},
+		})
+		g.State.Push(InCondAssignment)
+		g.CurrentLhs = []parser.Node{&parser.IdentNode{Val: name.Name}}
+		g.CompileStmt(n)
+		g.CurrentLhs = nil
+		g.State.Pop()
+		return name
 	default:
 		return &ast.BadExpr{}
 	}
