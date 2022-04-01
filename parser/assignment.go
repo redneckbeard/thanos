@@ -149,15 +149,13 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			}
 			n.SetterCall = true
 		default:
-			if local, found := scope.Get(localName); !found {
+			local := scope.ResolveVar(localName)
+			if _, ok := local.(*IVar); ok || local == BadLocal {
 				scope.Set(localName, &RubyLocal{_type: assignedType})
 			} else {
 				if local.Type() == nil {
 					loc := local.(*RubyLocal)
 					loc.SetType(assignedType)
-					for _, c := range loc.Calls {
-						GetType(c, scope, class)
-					}
 				} else {
 					n.Reassignment = true
 				}
@@ -167,7 +165,7 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 							return nil, NewParseError(n, "Attempted to assign %s member to %s", assignedType, arr)
 						}
 					} else {
-						return nil, NewParseError(n, "tried assigning type %s to local %s in scope %s but had previously assigned type %s", assignedType, localName, scope.Name(), scope.MustGet(localName))
+						return nil, NewParseError(n, "tried assigning type %s to local %s in scope %s but had previously assigned type %s", assignedType, localName, scope.Name(), local.Type())
 					}
 				}
 			}
