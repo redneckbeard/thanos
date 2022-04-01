@@ -218,7 +218,12 @@ func init() {
 			return BoolType, nil
 		},
 		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
-			blockVar := blk.Args[0]
+			var blockVar ast.Expr
+			if len(blk.Args) == 1 {
+				blockVar = blk.Args[0]
+			} else {
+				blockVar = it.New("x")
+			}
 			loop := &ast.ForStmt{
 				Init: bst.Define(blockVar, bst.Int(0)),
 				Cond: bst.Binary(blockVar, token.LSS, rcvr.Expr),
