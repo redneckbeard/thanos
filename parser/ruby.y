@@ -198,7 +198,13 @@ command_asgn:
     }
     $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
   }
-//| primary_value call_op tIDENTIFIER tOP_ASGN command_rhs
+| primary_value call_op IDENT op_asgn command_rhs
+  {
+    call := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
+    operation := &InfixExpressionNode{Left: call, Operator: strings.Trim($4, "="), Right: $5, lineNo: currentLineNo}
+    assignment := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+  }
 | primary_value call_op CONSTANT op_asgn command_rhs
   {
      noop := &NoopNode{currentLineNo}
@@ -422,7 +428,13 @@ arg:
     }
     $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
   }
-//| primary_value call_op tIDENTIFIER tOP_ASGN arg_rhs
+| primary_value call_op IDENT op_asgn arg_rhs
+  {
+    call := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
+    operation := &InfixExpressionNode{Left: call, Operator: strings.Trim($4, "="), Right: $5, lineNo: currentLineNo}
+    assignment := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+  }
 | primary_value call_op CONSTANT op_asgn arg_rhs
   {
      noop := &NoopNode{currentLineNo}

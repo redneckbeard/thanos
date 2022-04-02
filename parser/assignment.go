@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/redneckbeard/thanos/stdlib"
 	"github.com/redneckbeard/thanos/types"
@@ -144,7 +145,9 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 		case *MethodCall:
 			// we should only ever hit this branch for a setter, and thus we have to
 			// munge the call to reflect what's actually happening.
-			lft.MethodName += "="
+			if !strings.HasSuffix(lft.MethodName, "=") {
+				lft.MethodName += "="
+			}
 			lft.Args = []Node{n.Right[i]}
 			if _, err := GetType(lft, scope, class); err != nil {
 				return nil, err

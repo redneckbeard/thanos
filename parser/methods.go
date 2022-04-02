@@ -309,16 +309,16 @@ func (b *Block) Copy() *Block {
 }
 
 type MethodCall struct {
-	Receiver   Node
-	Method     *Method
-	MethodName string
-	Args       ArgsNode
-	Block      *Block
-	RawBlock   string
-	Getter     bool
-	Op         string
-	_type      types.Type
-	lineNo     int
+	Receiver       Node
+	Method         *Method
+	MethodName     string
+	Args           ArgsNode
+	Block          *Block
+	RawBlock       string
+	Getter, Setter bool
+	Op             string
+	_type          types.Type
+	lineNo         int
 }
 
 func (n *MethodCall) String() string {
@@ -395,10 +395,13 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			return nil, fmt.Errorf("Method '%s' called on '%s' but type of '%s' is not inferred", c.MethodName, c.Receiver, c.Receiver)
 		}
 		if !receiverType.HasMethod(c.MethodName) {
-			if ms, ok := classMethodSets[receiverType]; ok && ms.Class != nil && len(c.Args) == 0 {
+			if ms, ok := classMethodSets[receiverType]; ok && ms.Class != nil {
 				for _, ivar := range ms.Class.IVars(nil) {
-					if c.MethodName == ivar.Name && ivar.Readable {
+					if c.MethodName == ivar.Name && ivar.Readable && len(c.Args) == 0 {
 						c.Getter = true
+						return ivar.Type(), nil
+					} else if c.MethodName == ivar.Name+"=" && ivar.Writeable {
+						c.Setter = true
 						return ivar.Type(), nil
 					}
 				}
@@ -509,6 +512,7 @@ func (n *MethodCall) Copy() Node {
 		n.Block.Copy(),
 		"",
 		n.Getter,
+		n.Setter,
 		n.Op,
 		n._type,
 		n.lineNo,

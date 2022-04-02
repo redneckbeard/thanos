@@ -26,6 +26,8 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 			return transform.Expr
 		} else if n.Getter {
 			return bst.Dot(g.CompileExpr(n.Receiver), strings.Title(n.MethodName))
+		} else if n.Setter {
+			return bst.Dot(g.CompileExpr(n.Receiver), strings.Title(strings.TrimSuffix(n.MethodName, "=")))
 		}
 		args := []ast.Expr{}
 		if n.Method == nil {

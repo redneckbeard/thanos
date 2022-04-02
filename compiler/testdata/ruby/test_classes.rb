@@ -1,10 +1,12 @@
 class Vehicle
   attr_reader :starting_miles
   attr_writer :registration
+  attr_accessor :vin
 
   def initialize(starting_miles)
     @starting_miles = starting_miles
     @no_reader = "unexported"
+    @vin = 100
   end
 
   def drive(x)
@@ -40,5 +42,6 @@ puts [Car.new(10), Car.new(20), Car.new(30)].map do |car|
     car.drive(100)
   end
   car.registration = "XXXXXX"
+  car.vin += 1
   "#{car.mileage}, started at #{car.starting_miles}"
 end

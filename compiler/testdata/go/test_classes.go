@@ -5,6 +5,7 @@ import "fmt"
 type Vehicle struct {
 	starting_miles int
 	no_reader      string
+	Vin            int
 	registration   string
 }
 
@@ -13,10 +14,11 @@ func NewVehicle(starting_miles int) *Vehicle {
 	newInstance.Initialize(starting_miles)
 	return newInstance
 }
-func (v *Vehicle) Initialize(starting_miles int) string {
+func (v *Vehicle) Initialize(starting_miles int) int {
 	v.starting_miles = starting_miles
 	v.no_reader = "unexported"
-	return v.no_reader
+	v.Vin = 100
+	return v.Vin
 }
 func (v *Vehicle) Drive(x int) int {
 	v.starting_miles += x
@@ -40,6 +42,7 @@ func (v *Vehicle) SetRegistration(registration string) string {
 type Car struct {
 	starting_miles int
 	no_reader      string
+	Vin            int
 	registration   string
 }
 
@@ -64,10 +67,11 @@ func (c *Car) Log() {
 	}
 	super(c)
 }
-func (c *Car) Initialize(starting_miles int) string {
+func (c *Car) Initialize(starting_miles int) int {
 	c.starting_miles = starting_miles
 	c.no_reader = "unexported"
-	return c.no_reader
+	c.Vin = 100
+	return c.Vin
 }
 func (c *Car) Mileage() string {
 	c.log()
@@ -85,6 +89,7 @@ func main() {
 	for _, car := range []*Car{NewCar(10), NewCar(20), NewCar(30)} {
 		car.Drive(100)
 		car.SetRegistration("XXXXXX")
+		car.Vin++
 		mapped = append(mapped, fmt.Sprintf("%s, started at %d", car.Mileage(), car.Starting_miles()))
 	}
 	fmt.Println(mapped)
