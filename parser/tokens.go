@@ -4,6 +4,7 @@ var tokenNames = map[int]string{
 	ADDASSIGN:     "ADDASSIGN",
 	ALIAS:         "ALIAS",
 	AND:           "AND",
+	ANDDOT:        "ANDDOT",
 	ASSIGN:        "ASSIGN",
 	ASTERISK:      "ASTERISK",
 	BANG:          "BANG",

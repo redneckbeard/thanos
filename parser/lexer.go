@@ -32,6 +32,7 @@ var validPuncts = map[string]int{
 	"%=":  MODASSIGN,
 	"&&":  LOGICALAND,
 	"&":   AND,
+	"&.":  ANDDOT,
 	"*":   ASTERISK,
 	"**":  POW,
 	"*=":  MULASSIGN,

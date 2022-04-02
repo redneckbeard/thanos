@@ -316,6 +316,7 @@ type MethodCall struct {
 	Block      *Block
 	RawBlock   string
 	Getter     bool
+	Op         string
 	_type      types.Type
 	lineNo     int
 }
@@ -508,6 +509,7 @@ func (n *MethodCall) Copy() Node {
 		n.Block.Copy(),
 		"",
 		n.Getter,
+		n.Op,
 		n._type,
 		n.lineNo,
 	}

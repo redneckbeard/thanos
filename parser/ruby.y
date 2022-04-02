@@ -40,13 +40,13 @@ func root(yylex yyLexer) *Root {
 
 %token <str> IVAR CVAR GVAR METHODIDENT IDENT COMMENT LABEL
 
-%token <str> DOT LBRACE LBRACEBLOCK RBRACE NEWLINE COMMA
+%token <str> ANDDOT DOT LBRACE LBRACEBLOCK RBRACE NEWLINE COMMA
 %token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND WORDSBEG RAWWORDSBEG XSTRINGBEG RAWXSTRINGBEG
 %token <str> SEMICOLON LBRACKET LBRACKETSTART RBRACKET LPAREN LPARENSTART RPAREN HASHROCKET
 %token <str> SCOPE
 
 
-%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do raw_string_beg class module comment
+%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do raw_string_beg class module comment call_op
 %type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp expr_value_do block_command block_call
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node 
 %type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head mlhs_inner
@@ -242,7 +242,7 @@ command:
     $$ = call
   }
 //| fcall command_args cmd_brace_block
-| primary_value DOT operation command_args %prec LOWEST
+| primary_value call_op operation command_args %prec LOWEST
 //| primary_value call_op operation2 command_args cmd_brace_block
 | SUPER command_args
   {
@@ -317,9 +317,9 @@ mlhs_node: user_variable
       lineNo: currentLineNo,
     }
   }
-| primary_value DOT IDENT
+| primary_value call_op IDENT
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Op: $2, lineNo: currentLineNo}
     $$ = call
   }
 
@@ -334,9 +334,9 @@ lhs:
       lineNo: currentLineNo,
     }
   }
-| primary_value DOT IDENT
+| primary_value call_op IDENT
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Op: $2, lineNo: currentLineNo}
     $$ = call
   }
 
@@ -900,9 +900,9 @@ method_call:
     }
     $$ = call
   }
-| primary_value DOT fname opt_paren_args
+| primary_value call_op fname opt_paren_args
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, Op: $2, lineNo: currentLineNo}
     root(yylex).AddCall(call)
     $$ = call
   }
@@ -1377,8 +1377,7 @@ operation: IDENT | CONSTANT | METHODIDENT
 //operation2: tIDENTIFIER | tCONSTANT | tFID | op
 //operation3: tIDENTIFIER | tFID | op
 //dot_or_colon: call_op | tCOLON2
-//call_op: tDOT
-//| tANDDOT
+call_op: DOT | ANDDOT
 
 opt_terms:  | terms
 opt_nl:  | NEWLINE
