@@ -43,7 +43,9 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			localName = lhs.Val
 			GetType(lhs, scope, class)
 		case *BracketAssignmentNode:
-			localName = lhs.Composite.(*IdentNode).Val
+			if ident, ok := lhs.Composite.(*IdentNode); ok {
+				localName = ident.Val
+			}
 		case *IVarNode:
 			GetType(lhs, scope, class)
 		case *ConstantNode:

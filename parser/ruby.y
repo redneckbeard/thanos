@@ -187,11 +187,30 @@ command_asgn:
     operation := &InfixExpressionNode{Left: $1, Operator: strings.Trim($2, "="), Right: $3, lineNo: currentLineNo}
     $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
   }
-//| primary_value tLBRACK2 opt_call_args rbracket tOP_ASGN command_rhs
+| primary_value LBRACKET opt_call_args rbracket op_asgn command_rhs
+  {
+    access := &BracketAccessNode{Composite: $1, Args: $3, lineNo: currentLineNo}
+    operation := &InfixExpressionNode{Left: access, Operator: strings.Trim($5, "="), Right: $6, lineNo: currentLineNo}
+    assignment := &BracketAssignmentNode{
+      Composite: $1,
+      Args: $3,
+      lineNo: currentLineNo,
+    }
+    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+  }
 //| primary_value call_op tIDENTIFIER tOP_ASGN command_rhs
-//| primary_value call_op tCONSTANT tOP_ASGN command_rhs
-//| primary_value tCOLON2 tCONSTANT tOP_ASGN command_rhs
-//| primary_value tCOLON2 tIDENTIFIER tOP_ASGN command_rhs
+| primary_value call_op CONSTANT op_asgn command_rhs
+  {
+     noop := &NoopNode{currentLineNo}
+     root(yylex).AddError(NewParseError(&NoopNode{currentLineNo}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
+     $$ = noop
+  }
+| primary_value SCOPE CONSTANT op_asgn command_rhs
+  {
+     noop := &NoopNode{currentLineNo}
+     root(yylex).AddError(NewParseError(&NoopNode{currentLineNo}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
+     $$ = noop
+  }
 
 command_rhs: 
   command_call %prec ASSIGN
@@ -392,10 +411,30 @@ arg:
     operation := &InfixExpressionNode{Left: $1, Operator: strings.Trim($2, "="), Right: $3, lineNo: currentLineNo}
     $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
   }
+| primary_value LBRACKET opt_call_args rbracket op_asgn arg_rhs
+  {
+    access := &BracketAccessNode{Composite: $1, Args: $3, lineNo: currentLineNo}
+    operation := &InfixExpressionNode{Left: access, Operator: strings.Trim($5, "="), Right: $6, lineNo: currentLineNo}
+    assignment := &BracketAssignmentNode{
+      Composite: $1,
+      Args: $3,
+      lineNo: currentLineNo,
+    }
+    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+  }
 //| primary_value call_op tIDENTIFIER tOP_ASGN arg_rhs
-//| primary_value call_op tCONSTANT tOP_ASGN arg_rhs
-//| primary_value tCOLON2 tIDENTIFIER tOP_ASGN arg_rhs
-//| primary_value tCOLON2 tCONSTANT tOP_ASGN arg_rhs
+| primary_value call_op CONSTANT op_asgn arg_rhs
+  {
+     noop := &NoopNode{currentLineNo}
+     root(yylex).AddError(NewParseError(&NoopNode{currentLineNo}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
+     $$ = noop
+  }
+| primary_value SCOPE CONSTANT op_asgn arg_rhs
+  {
+     noop := &NoopNode{currentLineNo}
+     root(yylex).AddError(NewParseError(&NoopNode{currentLineNo}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
+     $$ = noop
+  }
 //| tCOLON3 tCONSTANT tOP_ASGN arg_rhs
 | arg DOT2 arg
   {
