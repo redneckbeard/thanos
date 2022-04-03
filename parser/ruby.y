@@ -745,7 +745,12 @@ primary:
     root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
     $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", lineNo: currentLineNo}
   }
-//| fcall brace_block
+| fcall brace_block
+  {
+  	call := &MethodCall{MethodName: $1, lineNo: currentLineNo}
+    call.SetBlock($2)
+    $$ = call
+   }
 | method_call
 | method_call brace_block
  {
@@ -937,8 +942,20 @@ block_call:
     root(yylex).AddCall(call)
     $$ = call
   }
-//| block_call dot_or_colon operation2 opt_paren_args brace_block
-//| block_call dot_or_colon operation2 command_args do_block
+| block_call DOT operation opt_paren_args brace_block
+  {
+    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, lineNo: currentLineNo}
+    call.SetBlock($5)
+    root(yylex).AddCall(call)
+    $$ = call
+  }
+| block_call DOT operation command_args do_block
+  {
+    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, lineNo: currentLineNo}
+    call.SetBlock($5)
+    root(yylex).AddCall(call)
+    $$ = call
+  }
 
 method_call: 
   fcall paren_args
@@ -1457,11 +1474,6 @@ comment:
   {
     root(yylex).AddComment(Comment{Text: strings.TrimSpace($1), LineNo: currentLineNo})
     $$ = $1
-  }
-| comment COMMENT
-  {
-    root(yylex).AddComment(Comment{Text: strings.TrimSpace($2), LineNo: currentLineNo})
-    $$ = $2
   }
 
 terms: 
