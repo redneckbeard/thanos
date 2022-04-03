@@ -24,4 +24,18 @@ func main() {
 		}
 		fmt.Println(y)
 	}
+	var x int
+	for _, x = range []int{1, 2, 3, 4} {
+		fmt.Println(x)
+		if x == 3 {
+			break
+		}
+	}
+	var k string
+	var v int
+	for k, v = range map[string]int{"foo": 1, "bar": 2, "baz": 3, "quux": 4} {
+		if k == "foo" || v == 10 {
+			continue
+		}
+	}
 }

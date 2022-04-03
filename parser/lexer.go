@@ -77,6 +77,7 @@ var keywords = map[string]int{
 	"for":      FOR,
 	"gauntlet": IDENT,
 	"if":       IF,
+	"in":       IN,
 	"module":   MODULE,
 	"next":     NEXT,
 	"nil":      NIL,
@@ -225,7 +226,7 @@ func (l *Lexer) AtExprStart() bool {
 	midExprTokens := []int{
 		NIL, SYMBOL, STRING, INT, FLOAT, TRUE, FALSE, DEF, END, SELF, CONSTANT,
 		IVAR, CVAR, GVAR, METHODIDENT, IDENT, DO,
-		RBRACE, STRINGEND, RBRACKET, RPAREN,
+		RBRACE, STRINGEND, RBRACKET, RPAREN, BREAK, NEXT,
 	}
 
 	for _, tok := range midExprTokens {

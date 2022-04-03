@@ -152,6 +152,9 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		{`[1,2,3][2] += 1`, "([1, 2, 3][2] = ([1, 2, 3][2] + 1))"},
 		{`[1,2,3][2] += foo 3`, "([1, 2, 3][2] = ([1, 2, 3][2] + (foo(3))))"},
 		{`foo.bar += 4`, "((foo.bar=(((foo.bar()) + 4))) = ((foo.bar()) + 4))"},
+		{`for x in [1,2,3,4]
+		    puts x
+		  end`, "(for [x] in [1, 2, 3, 4] ((Kernel.puts(x))))"},
 	}
 
 	for i, tt := range tests {

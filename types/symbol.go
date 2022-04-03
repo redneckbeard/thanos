@@ -2,6 +2,7 @@ package types
 
 import (
 	"go/ast"
+	"go/token"
 
 	"github.com/redneckbeard/thanos/bst"
 )
@@ -48,4 +49,5 @@ func (t Symbol) Alias(existingMethod, newMethod string) {
 }
 
 func init() {
+	SymbolType.Def("==", simpleComparisonOperatorSpec(token.EQL))
 }

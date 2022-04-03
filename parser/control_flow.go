@@ -171,6 +171,67 @@ func (n *WhileNode) Copy() Node {
 	return &WhileNode{n.Condition.Copy(), n.Body.Copy().(Statements), n.lineNo}
 }
 
+type ForInNode struct {
+	For    []Node
+	In     Node
+	Body   Statements
+	lineNo int
+}
+
+func (n *ForInNode) String() string {
+	return fmt.Sprintf("(for %s in %s (%s))", n.For, n.In, n.Body)
+}
+func (n *ForInNode) Type() types.Type     { return n.Body.Type() }
+func (n *ForInNode) SetType(t types.Type) {}
+func (n *ForInNode) LineNo() int          { return n.lineNo }
+
+func (n *ForInNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	var inType types.Type
+	inType, err := GetType(n.In, locals, class)
+	if err != nil {
+		return nil, err
+	}
+	if !inType.IsComposite() {
+		return nil, NewParseError(n, "For loops over %s not supported", inType)
+	}
+	if t, ok := inType.(types.Hash); ok {
+		if len(n.For) != 2 {
+			return nil, NewParseError(n, "For loops over hashes must unpack one key and one value")
+		}
+		for i, v := range n.For {
+			ident, ok := v.(*IdentNode)
+			if !ok {
+				return nil, NewParseError(n, "Not sure how this even successfully parsed")
+			}
+			if i == 0 {
+				locals.Set(ident.Val, &RubyLocal{_type: t.Key})
+			} else {
+				locals.Set(ident.Val, &RubyLocal{_type: t.Value})
+			}
+		}
+	} else {
+		if len(n.For) != 1 {
+			return nil, NewParseError(n, "Destructuring subarrays in for loops not supported")
+		}
+		ident, ok := n.For[0].(*IdentNode)
+		if !ok {
+			return nil, NewParseError(n, "Not sure how this even successfully parsed")
+		}
+		locals.Set(ident.Val, &RubyLocal{_type: inType.(types.CompositeType).Inner()})
+	}
+	for _, v := range n.For {
+		GetType(v, locals, class)
+	}
+	if _, err := GetType(n.Body, locals, class); err != nil {
+		return nil, err
+	}
+	return inType, nil
+}
+
+func (n *ForInNode) Copy() Node {
+	return &ForInNode{n.For, n.In, n.Body, n.lineNo}
+}
+
 type BreakNode struct {
 	lineNo int
 }

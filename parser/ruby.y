@@ -36,7 +36,7 @@ func root(yylex yyLexer) *Root {
 %token <str> FLOAT 
 %token <str> TRUE FALSE
 %token <str> CLASS MODULE DEF END IF IF_MOD UNLESS UNLESS_MOD BEGIN RESCUE RESCUE_MOD THEN ELSE WHILE WHILE_MOD RETURN YIELD SELF CONSTANT 
-%token <str> ENSURE ELSIF CASE WHEN UNTIL UNTIL_MOD FOR BREAK NEXT SUPER ALIAS DO DO_COND DO_BLOCK PRIVATE PROTECTED
+%token <str> ENSURE ELSIF CASE WHEN UNTIL UNTIL_MOD FOR BREAK NEXT SUPER ALIAS DO DO_COND DO_BLOCK PRIVATE PROTECTED IN
 
 %token <str> IVAR CVAR GVAR METHODIDENT IDENT COMMENT LABEL
 
@@ -47,9 +47,9 @@ func root(yylex yyLexer) *Root {
 
 
 %type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do raw_string_beg class module comment call_op
-%type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp expr_value_do block_command block_call
+%type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp expr_value_do block_command block_call 
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node 
-%type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head mlhs_inner
+%type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head mlhs_inner for_var
 %type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args mrhs mrhs_arg
 %type <param> f_arg_item f_kw f_opt f_block_arg
 %type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg 
@@ -788,7 +788,10 @@ primary:
   {
     $$ = &CaseNode{Whens: $3, lineNo: currentLineNo}
   }
-//| kFOR for_var kIN expr_value_do compstmt kEND
+| FOR for_var IN expr_value_do compstmt END
+  {
+    $$ = &ForInNode{For: $2, In: $4, Body: $5, lineNo: currentLineNo}
+  }
 | class cpath superclass bodystmt END
   {
     root(yylex).currentClass.Superclass = $3
@@ -858,8 +861,12 @@ opt_else:
     $$ = &Condition{True: $2, lineNo: currentLineNo, elseBranch: true}
   }
         
-//for_var: lhs
-//| mlhs
+for_var: 
+  lhs
+  {
+    $$ = []Node{$1}
+  }
+| mlhs
 //f_marg: f_norm_arg
 //| tLPAREN f_margs rparen
 //f_marg_list: f_marg

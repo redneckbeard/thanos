@@ -24,3 +24,12 @@ until y > 100
   end
   puts y
 end
+
+for x in [1, 2, 3, 4] do
+  puts x
+  break if x == 3
+end
+
+for k, v in {foo: 1, bar: 2, baz: 3, quux: 4} do
+  next if k == :foo || v == 10
+end

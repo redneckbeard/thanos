@@ -155,6 +155,29 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 		g.appendToCurrentBlock(&ast.BranchStmt{
 			Tok: token.CONTINUE,
 		})
+	case *parser.ForInNode:
+		// Ruby for-loops don't create a new variable scope, so we have to declare
+		// the variable upfront and use an assignment rather than declaration operator
+		// in the range statement
+		var outerScope []ast.Expr
+		for _, v := range n.For {
+			name := v.(*parser.IdentNode).Val
+			outerScope = append(outerScope, g.it.Get(name))
+			g.appendToCurrentBlock(&ast.DeclStmt{
+				Decl: bst.Declare(token.VAR, g.it.Get(name), g.it.Get(v.Type().GoType())),
+			})
+		}
+		loop := &ast.RangeStmt{
+			Tok:  token.ASSIGN,
+			X:    g.CompileExpr(n.In),
+			Body: g.CompileBlockStmt(n.Body),
+		}
+		if _, ok := n.In.Type().(types.Hash); ok {
+			loop.Key, loop.Value = outerScope[0], outerScope[1]
+		} else {
+			loop.Key, loop.Value = g.it.Get("_"), outerScope[0]
+		}
+		g.appendToCurrentBlock(loop)
 	default:
 		expr := g.CompileExpr(n)
 		// A single ident being returned here means we've prepended statements and
