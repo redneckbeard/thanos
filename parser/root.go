@@ -177,7 +177,7 @@ func (r *Root) AddCall(c *MethodCall) {
 			}
 		}
 	} else if method, found := r.MethodSetStack.Peek().Methods[c.MethodName]; found {
-		if err := method.AnalyzeArguments(r.MethodSetStack.Peek().Class, c); err != nil {
+		if err := method.AnalyzeArguments(r.MethodSetStack.Peek().Class, c, nil); err != nil {
 			r.AddError(err)
 			if e, ok := err.(*ParseError); ok && e.terminal {
 				return
@@ -251,7 +251,12 @@ func (r *Root) Analyze() error {
 
 	// First pass, just to pick up method calls
 	if len(r.Statements) > 0 {
-		(&Body{Statements: r.Statements}).InferReturnType(r.ScopeChain, nil)
+		err := (&Body{Statements: r.Statements}).InferReturnType(r.ScopeChain, nil)
+		if err != nil {
+			if parseError, ok := err.(*ParseError); ok && parseError.terminal {
+				return err
+			}
+		}
 	}
 
 	// Work backwards through class declarations so that child classes are

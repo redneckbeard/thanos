@@ -88,7 +88,12 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) []ast.Decl {
 
 func (g *GoProgram) GetFuncParams(rubyParams []*parser.Param) []*ast.Field {
 	params := []*ast.Field{}
+	var splat *parser.Param
 	for _, p := range rubyParams {
+		if p.Kind == parser.Splat {
+			splat = p
+			continue
+		}
 		var (
 			lastParam    *ast.Field
 			lastSeenType string
@@ -105,6 +110,12 @@ func (g *GoProgram) GetFuncParams(rubyParams []*parser.Param) []*ast.Field {
 				Type:  g.it.Get(p.Type().GoType()),
 			})
 		}
+	}
+	if splat != nil {
+		params = append(params, &ast.Field{
+			Names: []*ast.Ident{g.it.Get(splat.Name)},
+			Type:  &ast.Ellipsis{Elt: g.it.Get(splat.Type().(types.Array).Inner().GoType())},
+		})
 	}
 	return params
 }

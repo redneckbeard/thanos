@@ -55,7 +55,10 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			if lhs.Receiver == nil {
 				panic("The first pass through parsing should never result in a receiverless LHS method call, but somehow we got here")
 			}
-
+		case *SplatNode:
+			if ident, ok := lhs.Arg.(*IdentNode); ok {
+				localName = ident.Val
+			}
 		default:
 			return nil, NewParseError(lhs, "%s not yet supported in LHS of assignments", lhs)
 		}
@@ -80,10 +83,14 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 					cannot be deconstructed to multiple variables, which leaves all but
 					the first as nil.
 
-					This logic will have to change to accommodate splats.
-
 				*/
-				t, err := GetType(n.Right[0], scope, class)
+				var rightIndex int
+				if i >= len(n.Right) {
+					rightIndex = len(n.Right) - 1
+				} else {
+					rightIndex = i
+				}
+				t, err := GetType(n.Right[rightIndex], scope, class)
 				if err != nil {
 					return nil, NewParseError(n, err.Error())
 				}
@@ -91,9 +98,13 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				case types.Multiple:
 					assignedType = rt[i]
 				case types.Array:
-					assignedType = rt.Element
+					if _, ok := n.Left[i].(*SplatNode); ok {
+						assignedType = rt
+					} else {
+						assignedType = rt.Element
+					}
 				default:
-					if i > 0 {
+					if i > rightIndex {
 						assignedType = types.NilType
 					} else {
 						assignedType = t

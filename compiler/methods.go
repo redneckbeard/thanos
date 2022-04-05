@@ -16,29 +16,9 @@ func (g *GoProgram) TransformMethodCall(c *parser.MethodCall) types.Transform {
 }
 
 func (g *GoProgram) getTransform(call *parser.MethodCall, rcvr ast.Expr, rcvrType types.Type, methodName string, args parser.ArgsNode, blk *types.Block) types.Transform {
-	argExprs := []types.TypeExpr{}
+	var argExprs []types.TypeExpr
 	if call != nil && call.Method != nil {
-		for i := 0; i < len(call.Method.Params); i++ {
-			p, _ := call.Method.GetParam(i)
-			switch p.Kind {
-			case parser.Positional:
-				argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(args[i])})
-			case parser.Named:
-				if i >= len(args) {
-					argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(p.Default)})
-				} else if _, ok := args[i].(*parser.KeyValuePair); ok {
-					argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(p.Default)})
-				} else {
-					argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(args[i])})
-				}
-			case parser.Keyword:
-				if arg, err := args.FindByName(p.Name); err != nil {
-					argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(p.Default)})
-				} else {
-					argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(arg.(*parser.KeyValuePair).Value)})
-				}
-			}
-		}
+		argExprs = g.CompileArgs(call, args)
 	} else {
 		for _, a := range args {
 			argExprs = append(argExprs, types.TypeExpr{Expr: g.CompileExpr(a), Type: a.Type()})

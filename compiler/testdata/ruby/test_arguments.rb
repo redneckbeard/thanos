@@ -31,3 +31,29 @@ class Foo
 end
 
 Foo.new
+
+def splat(a, *b, c: false)
+  if c
+    b[0]
+  else
+    a
+  end
+end
+
+splat(9, 2, 3)
+splat(9, 2, c: true)
+splat(9)
+splat(9, *[1, 2])
+splat(9, 5, *[1, 2])
+
+foo = [1, 2, 3]
+
+a, *b = foo
+c, d, *e = foo
+
+syms = [:foo, :bar, :baz]
+
+f = :quux, *syms
+g, h, i = :quux, *syms
+x, y, *z = :quux, *syms
+

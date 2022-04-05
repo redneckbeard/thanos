@@ -268,16 +268,26 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 	// rhs must go first here for reason of generation of local variable names
 	// in transforms
 	var rhs []ast.Expr
-	if _, ok := node.Right[0].Type().(types.Array); ok && len(node.Right) == 1 && len(node.Left) > 1 {
-		arr := g.CompileExpr(node.Right[0])
-		for i := range node.Left {
-			rhs = append(rhs, &ast.IndexExpr{
-				X:     arr,
-				Index: bst.Int(i),
-			})
+	for i, right := range node.Right {
+		if _, ok := right.Type().(types.Array); ok && i == len(node.Right)-1 && len(node.Left)-1 > i {
+			arr := g.CompileExpr(right)
+			for j, left := range node.Left[i:len(node.Left)] {
+				if _, ok := left.(*parser.SplatNode); ok {
+					rhs = append(rhs, &ast.SliceExpr{
+						X:    arr,
+						Low:  bst.Int(j),
+						High: bst.Call(nil, "len", arr),
+					})
+				} else {
+					rhs = append(rhs, &ast.IndexExpr{
+						X:     arr,
+						Index: bst.Int(j),
+					})
+				}
+			}
+		} else {
+			rhs = append(rhs, g.CompileExpr(right))
 		}
-	} else {
-		rhs = g.mapToExprs(node.Right)
 	}
 	var lhs []ast.Expr
 	for i, left := range node.Left {

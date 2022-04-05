@@ -95,7 +95,7 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 				end
 			end`,
 			`Foo({@foo+w, @baz+rw, @quux+r}; (def bar() (Kernel.puts("blah"))); (def foo=(foo) (@foo = foo)); (def quux() (return @quux)))`},
-		{`def foo(bar = "baz"); puts bar; end`, `(def foo(bar) (puts(bar)))`},
+		{`def foo(bar = "baz"); puts bar; end`, `(def foo(bar = "baz") (puts(bar)))`},
 		{`5.even?`, `(5.even?())`},
 		{`5.2.positive?`, `(5.2.positive?())`},
 		{`-5.2.positive?`, `(-5.2.positive?())`},
@@ -155,6 +155,8 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		{`for x in [1,2,3,4]
 		    puts x
 		  end`, "(for [x] in [1, 2, 3, 4] ((Kernel.puts(x))))"},
+		{"def x(*n); return n[0]; end; x(5)", `(def x(*n) (return n[0]))
+(x(5))`},
 	}
 
 	for i, tt := range tests {
@@ -557,6 +559,134 @@ foo("quux")`,
 	}
 }
 
+func TestSplatParamInferenceHappyPath(t *testing.T) {
+	tests := []struct {
+		input      string
+		ReturnType types.Type
+	}{
+		{
+			input: `
+			def foo(*x)
+			  x[0]
+			end
+			foo(:foo)
+			`,
+			ReturnType: types.SymbolType,
+		},
+		{
+			input: `
+			def foo(*x)
+			  x[0]
+			end
+			foo(:foo, :bar)
+			`,
+			ReturnType: types.SymbolType,
+		},
+		{
+			input: `
+			def foo(x, *y)
+			  y[0]
+			end
+			foo(:foo, false, true)
+			`,
+			ReturnType: types.BoolType,
+		},
+		{
+			input: `
+			def foo(x, *y, z: false)
+			  y[1]
+			end
+			foo(:foo, 10, 20, z: true)
+			`,
+			ReturnType: types.IntType,
+		},
+		{
+			input: `
+			def foo(x, *y, z: false)
+			  z
+			end
+			foo(:foo, 10, 20, z: true)
+			`,
+			ReturnType: types.BoolType,
+		},
+		{
+			input: `
+			def foo(a, *b)
+			  b[1] 
+			end
+			bar = [:foo, :bar, :baz]
+			foo(1, :quux, *bar)
+			`,
+			ReturnType: types.SymbolType,
+		},
+		{
+			input: `
+			def foo(a)
+			  x, *y = a
+				y[0]
+			end
+			foo([:foo, :bar, :baz])
+			`,
+			ReturnType: types.SymbolType,
+		},
+		{
+			input: `
+			def foo(a)
+				x = :quux, *a
+				x
+			end
+			foo([:foo, :bar, :baz])
+			`,
+			ReturnType: types.NewArray(types.SymbolType),
+		},
+		{
+			input: `
+			def foo(a)
+				x, y, z = :quux, *a
+				z
+			end
+			foo([:foo, :bar, :baz])
+			`,
+			ReturnType: types.SymbolType,
+		},
+		{
+			input: `
+			def foo(a)
+				x, y, *z = :quux, *a
+				z
+			end
+			foo([:foo, :bar, :baz])
+			`,
+			ReturnType: types.NewArray(types.SymbolType),
+		},
+	}
+
+	for i, tt := range tests {
+		func(i int, tt struct {
+			input      string
+			ReturnType types.Type
+		}) {
+			defer func() {
+				if v := recover(); v != nil {
+					t.Errorf("[Test case %d] Encountered panic in processing `%s`:\n%s", i+i, tt.input, debug.Stack())
+				}
+			}()
+			if caseNum == 0 || caseNum == i+1 {
+				program, err := ParseString(tt.input)
+				if err != nil {
+					t.Fatalf("[Test Case %d] %s", i+1, err)
+				}
+				method, ok := program.GetMethod("foo")
+				if !ok {
+					t.Fatalf("Could not find method '%s'", "foo")
+				}
+				if !method.ReturnType().Equals(tt.ReturnType) {
+					t.Errorf("[Test Case %d] type inference failed for return type for method '%s': expected %s, got %s", i+1, method.Name, tt.ReturnType, method.ReturnType())
+				}
+			}
+		}(i, tt)
+	}
+}
 func TestConstantScopeResolution(t *testing.T) {
 	tests := []struct {
 		input      string
@@ -1232,6 +1362,28 @@ func TestMethodParamInferenceErrors(t *testing.T) {
 			  Math::PI * bar * baz
 			end
 			foo(2, 2.5)`, "line 6: Class 'Math' has no constant 'PI'"},
+		{`def foo(*x)
+			  x[0]
+			end
+			foo(:foo, "bar")`, "line 4: method 'foo' called with StringType and SymbolType for splat parameter 'x' but heterogenous splat arguments are not yet supported"},
+		{`def foo(a, *b)
+			  b[1] 
+			end
+			bar = [:foo, :bar, :baz]
+			foo(1, "quux", *bar)
+			`, "line 5: method 'foo' called with SymbolType and StringType for splat parameter 'b' but heterogenous splat arguments are not yet supported"},
+		{`def foo(a, *b)
+			  b[1] 
+			end
+			bar = [:foo, :bar, :baz]
+			foo(1, "quux", *bar)
+			`, "line 5: method 'foo' called with SymbolType and StringType for splat parameter 'b' but heterogenous splat arguments are not yet supported"},
+		{`def foo(a, *b)
+			  b[1] 
+			end
+			bar = true
+			foo(1, *bar)
+			`, "line 5: tried to splat 'bar' but is not an array"},
 	}
 
 	for i, tt := range tests {

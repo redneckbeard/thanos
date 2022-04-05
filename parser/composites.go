@@ -22,6 +22,9 @@ func (n *ArrayNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 	var inner types.Type
 	for _, a := range n.Args {
 		ta, _ := GetType(a, locals, class)
+		if splat, ok := a.(*SplatNode); ok {
+			ta = splat.Type().(types.Array).Element
+		}
 		if inner != nil && ta != inner {
 			return nil, NewParseError(n, "Heterogenous array membership detected adding %s", ta)
 		} else {
@@ -179,4 +182,29 @@ func (n *BracketAccessNode) TargetType(locals ScopeChain, class *Class) (types.T
 
 func (n *BracketAccessNode) Copy() Node {
 	return &BracketAccessNode{n.Composite.Copy(), n.Args.Copy().(ArgsNode), n.lineNo, n._type}
+}
+
+type SplatNode struct {
+	Arg   Node
+	_type types.Type
+}
+
+func (n *SplatNode) String() string       { return "*" + n.Arg.String() }
+func (n *SplatNode) Type() types.Type     { return n._type }
+func (n *SplatNode) SetType(t types.Type) { n._type = t }
+func (n *SplatNode) LineNo() int          { return n.Arg.LineNo() }
+
+func (n *SplatNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	t, err := GetType(n.Arg, locals, class)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := t.(types.Array); !ok {
+		return nil, NewParseError(n, "tried to splat '%s' but is not an array", n.Arg).Terminal()
+	}
+	return t, nil
+}
+
+func (n *SplatNode) Copy() Node {
+	return &SplatNode{n.Arg, n._type}
 }

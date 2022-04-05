@@ -52,6 +52,7 @@ const (
 	Named
 	Keyword
 	ExplicitBlock
+	Splat
 )
 
 type Param struct {
@@ -67,7 +68,24 @@ func (p *Param) Type() types.Type {
 	if p.Default != nil {
 		return p.Default.Type()
 	}
+	if p.Kind == Splat && p._type != nil {
+		return types.NewArray(p._type)
+	}
 	return p._type
+}
+
+func (p *Param) String() string {
+	switch p.Kind {
+	case Positional:
+		return p.Name
+	case Named:
+		return fmt.Sprintf("%s = %s", p.Name, p.Default)
+	case Keyword:
+		return fmt.Sprintf("%s: %s", p.Name, p.Default)
+	case Splat:
+		return "*" + p.Name
+	}
+	panic("kind not set!")
 }
 
 type ParamList struct {
@@ -92,6 +110,11 @@ func (list *ParamList) AddParam(p *Param) error {
 func (list *ParamList) GetParam(i int) (*Param, error) {
 	if i < len(list.Params) {
 		return list.Params[i], nil
+	} else if len(list.Params) > 0 {
+		last := list.Params[len(list.Params)-1]
+		if last.Kind == Splat {
+			return last, nil
+		}
 	}
 	return nil, errors.New("out of bounds")
 }
@@ -147,7 +170,7 @@ func NewMethod(name string, r *Root) *Method {
 func (n *Method) paramString() string {
 	strs := []string{}
 	for _, p := range n.Params {
-		strs = append(strs, p.Name)
+		strs = append(strs, p.String())
 	}
 	if n.Block != nil {
 		strs = append(strs, "&"+n.Block.Name)
@@ -210,7 +233,7 @@ func (m *Method) AddParam(p *Param) error {
 
 func (m *Method) Analyze(ms *MethodSet) error {
 	for _, c := range ms.Calls[m.Name] {
-		if err := m.AnalyzeArguments(ms.Class, c); err != nil {
+		if err := m.AnalyzeArguments(ms.Class, c, nil); err != nil {
 			return err
 		}
 	}
@@ -237,7 +260,7 @@ func (m *Method) Analyze(ms *MethodSet) error {
 	return nil
 }
 
-func (method *Method) AnalyzeArguments(class *Class, c *MethodCall) error {
+func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeChain) error {
 	for _, p := range method.Params {
 		if p.Default != nil {
 			t, err := GetType(p.Default, ScopeChain{class}, class)
@@ -254,6 +277,10 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall) error {
 	if len(method.PositionalParams()) > len(c.PositionalArgs()) {
 		return NewParseError(c, "method '%s' called with %d positional arguments but %d expected", method.Name, len(c.PositionalArgs()), len(method.PositionalParams())).Terminal()
 	}
+	var (
+		splatSeen  bool
+		splatIndex int
+	)
 	for i, arg := range c.Args {
 		var param *Param
 		if kv, ok := arg.(*KeyValuePair); ok {
@@ -263,20 +290,43 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall) error {
 			}
 		} else {
 			var err error
-			param, err = method.GetParam(i)
+			if splatSeen {
+				param, err = method.GetParam(splatIndex)
+				c.splatLength++
+			} else {
+				param, err = method.GetParam(i)
+			}
 			if err != nil {
 				return NewParseError(c, "method '%s' called with %d arguments but %d expected", method.Name, i+1, i).Terminal()
 			}
+			if param.Kind == Splat && !splatSeen {
+				splatSeen, splatIndex = true, i
+				c.splatStart = i
+				c.splatLength = 1
+			}
+		}
+		if scope == nil {
+			scope = method.Scope
 		}
 		if param.Type() == nil {
 			// unset, so set it
-			if t, err := GetType(arg, method.Scope, class); err == nil {
+			if t, err := GetType(arg, scope, class); err == nil {
 				param._type = t
+				method.Scope.Set(param.Name, &RubyLocal{_type: param.Type()})
 			}
 		} else {
-			t, err := GetType(arg, method.Scope, class)
+			t, err := GetType(arg, scope, class)
 			if err == nil && t != param.Type() {
-				return NewParseError(c, "method '%s' called with %s for parameter '%s' but '%s' was previously seen as %s", method.Name, t, param.Name, param.Name, param.Type()).Terminal()
+				if param.Kind == Splat {
+					if splat, ok := arg.(*SplatNode); ok {
+						t = splat.Type().(types.Array).Inner()
+					}
+					if t != param.Type().(types.Array).Inner() {
+						return NewParseError(c, "method '%s' called with %s and %s for splat parameter '%s' but heterogenous splat arguments are not yet supported", method.Name, t, param.Type().(types.Array).Inner(), param.Name).Terminal()
+					}
+				} else {
+					return NewParseError(c, "method '%s' called with %s for parameter '%s' but '%s' was previously seen as %s", method.Name, t, param.Name, param.Name, param.Type()).Terminal()
+				}
 			}
 		}
 	}
@@ -309,16 +359,17 @@ func (b *Block) Copy() *Block {
 }
 
 type MethodCall struct {
-	Receiver       Node
-	Method         *Method
-	MethodName     string
-	Args           ArgsNode
-	Block          *Block
-	RawBlock       string
-	Getter, Setter bool
-	Op             string
-	_type          types.Type
-	lineNo         int
+	Receiver                Node
+	Method                  *Method
+	MethodName              string
+	Args                    ArgsNode
+	Block                   *Block
+	RawBlock                string
+	Getter, Setter          bool
+	Op                      string
+	splatStart, splatLength int
+	_type                   types.Type
+	lineNo                  int
 }
 
 func (n *MethodCall) String() string {
@@ -459,11 +510,7 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 	if method != nil {
 		//TODO should be consolidated with AnalyzeArguments/AnalyzeMethodSet
 		c.Method = method
-		for i, t := range argTypes {
-			param, _ := method.GetParam(i)
-			param._type = t
-			method.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
-		}
+		method.AnalyzeArguments(class, c, scope)
 		if c.Block != nil {
 			c.Block.Scope = scope.Extend(NewScope("block"))
 			c.Block.Method = method
@@ -514,6 +561,8 @@ func (n *MethodCall) Copy() Node {
 		n.Getter,
 		n.Setter,
 		n.Op,
+		n.splatStart,
+		n.splatLength,
 		n._type,
 		n.lineNo,
 	}
@@ -552,6 +601,23 @@ func (c *MethodCall) PositionalArgs() ArgsNode {
 		}
 	}
 	return positional
+}
+
+func (c *MethodCall) HasSplat() bool {
+	for _, arg := range c.Args {
+		if _, ok := arg.(*SplatNode); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *MethodCall) SplatArgs() []Node {
+	var args []Node
+	if c.splatLength > 0 {
+		return c.Args[c.splatStart:(c.splatStart + c.splatLength)]
+	}
+	return args
 }
 
 func (c *MethodCall) SetBlock(blk *Block) {
