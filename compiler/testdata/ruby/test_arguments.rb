@@ -40,11 +40,21 @@ def splat(a, *b, c: false)
   end
 end
 
+def double_splat(foo:, **bar)
+  foo + bar[:baz]
+end
+
 splat(9, 2, 3)
 splat(9, 2, c: true)
 splat(9)
 splat(9, *[1, 2])
 splat(9, 5, *[1, 2])
+
+double_splat(foo: 1, bar: 2, baz: 3)
+double_splat(baz: 3, foo: 1)
+double_splat(**{foo: 1, baz: 4})
+hash_from_elsewhere = {foo: 1, baz: 4}
+double_splat(**hash_from_elsewhere)
 
 foo = [1, 2, 3]
 

@@ -422,6 +422,11 @@ func (l *Lexer) lexPunct() error {
 					l.Emit(UNARY_NUM)
 					return err
 				}
+			case POW:
+				if l.AtExprStart() {
+					l.Emit(DOUBLESPLAT)
+					return err
+				}
 			case LPAREN, LBRACKET:
 				if l.spaceConsumed {
 					l.Emit(exprStartTokens[tok])
@@ -450,6 +455,11 @@ func (l *Lexer) lexPunct() error {
 	case PLUS, MINUS:
 		if l.AtExprStart() {
 			l.Emit(UNARY_NUM)
+			return err
+		}
+	case POW:
+		if l.AtExprStart() {
+			l.Emit(DOUBLESPLAT)
 			return err
 		}
 	case LPAREN, LBRACKET:

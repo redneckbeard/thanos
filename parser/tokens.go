@@ -25,6 +25,7 @@ var tokenNames = map[int]string{
 	DOT:           "DOT",
 	DOT2:          "DOT2",
 	DOT3:          "DOT3",
+	DOUBLESPLAT:   "DOUBLESPLAT",
 	ELSE:          "ELSE",
 	ELSIF:         "ELSIF",
 	END:           "END",

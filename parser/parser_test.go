@@ -659,6 +659,42 @@ func TestSplatParamInferenceHappyPath(t *testing.T) {
 			`,
 			ReturnType: types.NewArray(types.SymbolType),
 		},
+		{
+			input: `
+			def foo(**a)
+			  a[:foo]
+			end
+			foo(**{foo: "bar", baz: "quux"})
+			`,
+			ReturnType: types.StringType,
+		},
+		{
+			input: `
+			def foo(**a)
+				a[:foo]
+				end
+			foo(foo: "bar", baz: "quux")
+			`,
+			ReturnType: types.StringType,
+		},
+		{
+			input: `
+			def foo(bar:, **a)
+			  bar
+			end
+			foo(**{bar: "bar", baz: "quux"})
+			`,
+			ReturnType: types.StringType,
+		},
+		{
+			input: `
+			def foo(**a)
+				a
+			end
+			foo(bar: "bar", baz: "quux")
+			`,
+			ReturnType: types.NewHash(types.SymbolType, types.StringType),
+		},
 	}
 
 	for i, tt := range tests {

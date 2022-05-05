@@ -53,6 +53,7 @@ const (
 	Keyword
 	ExplicitBlock
 	Splat
+	DoubleSplat
 )
 
 type Param struct {
@@ -133,6 +134,15 @@ func (list *ParamList) PositionalParams() []*Param {
 
 func (list *ParamList) GetParamByName(s string) *Param {
 	return list.ParamMap[s]
+}
+
+func (list *ParamList) DoubleSplatParam() *Param {
+	for _, p := range list.Params {
+		if p.Kind == DoubleSplat {
+			return p
+		}
+	}
+	return nil
 }
 
 type BlockParam struct {
@@ -243,9 +253,15 @@ func (m *Method) Analyze(ms *MethodSet) error {
 			if ms.Class != nil {
 				name = ms.Class.Name() + "#" + name
 			}
-			return NewParseError(m, "unable to detect type signature of method '%s' because it is never called", name)
+			doubleSplat := m.DoubleSplatParam()
+			if doubleSplat != nil && param.Kind == Keyword {
+				m.Locals.Set(param.Name, &RubyLocal{_type: doubleSplat.Type().(types.Hash).Value})
+			} else {
+				return NewParseError(m, "unable to detect type signature of method '%s' because it is never called", name)
+			}
+		} else {
+			m.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
 		}
-		m.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
 	}
 	if err := m.Body.InferReturnType(m.Scope, ms.Class); err != nil {
 		return err
@@ -271,22 +287,41 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 			method.Locals.Set(p.Name, &RubyLocal{_type: t})
 		}
 	}
+
 	if c == nil {
 		return nil
 	}
+
+	c.Method = method
+
 	if len(method.PositionalParams()) > len(c.PositionalArgs()) {
 		return NewParseError(c, "method '%s' called with %d positional arguments but %d expected", method.Name, len(c.PositionalArgs()), len(method.PositionalParams())).Terminal()
 	}
+
+	if c.AllKwargsForDoubleSplat() {
+		param := c.Method.DoubleSplatParam()
+		if param.Type() == nil {
+			t, _ := GetType(c.Args[0], scope, class)
+			param._type = types.NewHash(types.SymbolType, t)
+			method.Scope.Set(param.Name, &RubyLocal{_type: param.Type()})
+		}
+		return nil
+	}
+
 	var (
 		splatSeen  bool
 		splatIndex int
 	)
+
 	for i, arg := range c.Args {
 		var param *Param
 		if kv, ok := arg.(*KeyValuePair); ok {
 			param = method.GetParamByName(kv.Label)
 			if param == nil {
-				return NewParseError(c, "method '%s' called with keyword argument '%s' but '%s' has no such parameter", method.Name, kv.Label, method.Name).Terminal()
+				param = method.DoubleSplatParam()
+				if param == nil {
+					return NewParseError(c, "method '%s' called with keyword argument '%s' but '%s' has no such parameter", method.Name, kv.Label, method.Name).Terminal()
+				}
 			}
 		} else {
 			var err error
@@ -311,6 +346,9 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 		if param.Type() == nil {
 			// unset, so set it
 			if t, err := GetType(arg, scope, class); err == nil {
+				if _, ok := t.(types.Hash); !ok && param.Kind == DoubleSplat {
+					t = types.NewHash(types.SymbolType, t)
+				}
 				param._type = t
 				method.Scope.Set(param.Name, &RubyLocal{_type: param.Type()})
 			}
@@ -324,6 +362,13 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 					if t != param.Type().(types.Array).Inner() {
 						return NewParseError(c, "method '%s' called with %s and %s for splat parameter '%s' but heterogenous splat arguments are not yet supported", method.Name, t, param.Type().(types.Array).Inner(), param.Name).Terminal()
 					}
+				} else if kv, ok := arg.(*KeyValuePair); ok && kv.DoubleSplat {
+					if t.(types.Hash).Value != param.Type() {
+						return NewParseError(c, "method '%s' called with double splat argument for parameter '%s' but hash value %s does not match", method.Name, param.Name, param.Type()).Terminal()
+					}
+				} else if kv, ok := arg.(*KeyValuePair); ok && param.Kind == DoubleSplat && !kv.DoubleSplat {
+					// the keyword argument 'foo' is valid when a double splat parameter is also named 'foo', so we have to carve out an exception for that here
+					return nil
 				} else {
 					return NewParseError(c, "method '%s' called with %s for parameter '%s' but '%s' was previously seen as %s", method.Name, t, param.Name, param.Name, param.Type()).Terminal()
 				}
@@ -612,12 +657,59 @@ func (c *MethodCall) HasSplat() bool {
 	return false
 }
 
+func (c *MethodCall) HasDoubleSplat() bool {
+	for _, arg := range c.Args {
+		if kv, ok := arg.(*KeyValuePair); ok && kv.DoubleSplat {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *MethodCall) SplatArgs() []Node {
 	var args []Node
 	if c.splatLength > 0 {
 		return c.Args[c.splatStart:(c.splatStart + c.splatLength)]
 	}
 	return args
+}
+
+func (c *MethodCall) KeywordArgsForDoubleSplatParam() *HashNode {
+	pairs := []*KeyValuePair{}
+
+	for _, a := range c.Args {
+		if kv, ok := a.(*KeyValuePair); ok && !kv.DoubleSplat {
+			if param := c.Method.GetParamByName(kv.Label); param == nil || param.Kind == DoubleSplat {
+				pairs = append(pairs, kv)
+			}
+		}
+	}
+	return &HashNode{Pairs: pairs, lineNo: c.lineNo, _type: c.Method.DoubleSplatParam().Type()}
+}
+
+func (c *MethodCall) ExtractDoubleSplatArg() Node {
+	for _, a := range c.Args {
+		if kv, ok := a.(*KeyValuePair); ok && kv.DoubleSplat {
+			return kv.Value
+		}
+	}
+	return nil
+}
+
+func (c *MethodCall) AllKwargsForDoubleSplat() bool {
+	if c.Method.DoubleSplatParam() == nil || len(c.Args) == 0 {
+		return false
+	}
+	for _, a := range c.Args {
+		if kv, ok := a.(*KeyValuePair); ok && !kv.DoubleSplat {
+			if c.Method.GetParamByName(kv.Label) != nil {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *MethodCall) SetBlock(blk *Block) {

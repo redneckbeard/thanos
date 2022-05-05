@@ -46,24 +46,40 @@ func (n *ArrayNode) Copy() Node {
 }
 
 type KeyValuePair struct {
-	Key    Node
-	Label  string
-	Value  Node
-	_type  types.Type
-	lineNo int
+	Key         Node
+	Label       string
+	Value       Node
+	DoubleSplat bool
+	_type       types.Type
+	lineNo      int
 }
 
-func (n *KeyValuePair) String() string       { return fmt.Sprintf("%s => %s", n.Key, n.Value) }
+func (n *KeyValuePair) String() string {
+	if n.DoubleSplat {
+		return fmt.Sprintf("**%s", n.Value)
+	}
+	return fmt.Sprintf("%s => %s", n.Key, n.Value)
+}
 func (n *KeyValuePair) Type() types.Type     { return n._type }
 func (n *KeyValuePair) SetType(t types.Type) { n._type = n.Value.Type() }
 func (n *KeyValuePair) LineNo() int          { return n.lineNo }
 
 func (n *KeyValuePair) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
-	return n.Value.TargetType(locals, class)
+	return GetType(n.Value, locals, class)
 }
 
 func (n KeyValuePair) Copy() Node {
-	return &KeyValuePair{n.Key.Copy(), n.Label, n.Value.Copy(), n._type, n.lineNo}
+	kv := &KeyValuePair{
+		Label:       n.Label,
+		Value:       n.Value.Copy(),
+		DoubleSplat: n.DoubleSplat,
+		_type:       n._type,
+		lineNo:      n.lineNo,
+	}
+	if n.Key != nil {
+		n.Key = n.Key.Copy()
+	}
+	return kv
 }
 
 type HashNode struct {
@@ -110,6 +126,18 @@ func (n *HashNode) Copy() Node {
 	}
 	hash.Pairs = pairs
 	return hash
+}
+
+func (n *HashNode) Merge(other *HashNode) {
+	n.Pairs = append(n.Pairs, other.Pairs...)
+}
+
+func (n *HashNode) Delete(key string) {
+	for i := len(n.Pairs) - 1; i >= 0; i-- {
+		if n.Pairs[i].Label == key {
+			n.Pairs = append(n.Pairs[0:i], n.Pairs[i+1:len(n.Pairs)]...)
+		}
+	}
 }
 
 type BracketAssignmentNode struct {

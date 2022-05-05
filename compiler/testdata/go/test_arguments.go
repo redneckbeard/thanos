@@ -23,6 +23,10 @@ func Splat(a int, c bool, b ...int) int {
 	}
 }
 
+func Double_splat(foo int, bar map[string]int) int {
+	return foo + bar["baz"]
+}
+
 type Foo struct {
 	foo int
 }
@@ -50,6 +54,19 @@ func main() {
 	Splat(9, false)
 	Splat(9, false, []int{1, 2}...)
 	Splat(9, false, append([]int{5}, []int{1, 2}...)...)
+	Double_splat(1, map[string]int{"bar": 2, "baz": 3})
+	Double_splat(1, map[string]int{"baz": 3})
+	Double_splat(1, map[string]int{"baz": 4})
+	hash_from_elsewhere := map[string]int{"foo": 1, "baz": 4}
+	hash_from_elsewhere_kwargs := map[string]int{}
+	for k, v := range hash_from_elsewhere {
+		switch k {
+		case "foo":
+		default:
+			hash_from_elsewhere_kwargs[k] = v
+		}
+	}
+	Double_splat(hash_from_elsewhere["foo"], hash_from_elsewhere_kwargs)
 	foo := []int{1, 2, 3}
 	a, b := foo[0], foo[1:len(foo)]
 	c, d, e := foo[0], foo[1], foo[2:len(foo)]
