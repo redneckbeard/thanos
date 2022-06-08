@@ -40,7 +40,7 @@ func root(yylex yyLexer) *Root {
 
 %token <str> IVAR CVAR GVAR METHODIDENT IDENT COMMENT LABEL
 
-%token <str> ANDDOT DOT LBRACE LBRACEBLOCK RBRACE NEWLINE COMMA
+%token <str> ANDDOT DOT LBRACE LBRACEBLOCK RBRACE NEWLINE COMMA DOUBLESPLAT
 %token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND WORDSBEG RAWWORDSBEG XSTRINGBEG RAWXSTRINGBEG
 %token <str> SEMICOLON LBRACKET LBRACKETSTART RBRACKET LPAREN LPARENSTART RPAREN HASHROCKET
 %token <str> SCOPE
@@ -51,8 +51,8 @@ func root(yylex yyLexer) *Root {
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node 
 %type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head mlhs_inner for_var
 %type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args mrhs mrhs_arg
-%type <param> f_arg_item f_kw f_opt f_block_arg f_rest_arg
-%type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg 
+%type <param> f_arg_item f_kw f_opt f_block_arg f_rest_arg f_kwrest
+%type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg opt_f_block_arg
 %type <body> bodystmt
 %type <when> when
 %type <whens> case_body cases
@@ -1292,12 +1292,18 @@ f_arglist:
   }
 args_tail: 
   f_kwarg
-//f_kwarg tCOMMA f_kwrest opt_f_block_arg
-//| f_kwarg opt_f_block_arg
-//{
-//  $$ = append($1, $2)
-//}
-//| f_kwrest opt_f_block_arg
+| f_kwarg COMMA f_kwrest opt_f_block_arg
+  {
+    $$ = append(append($1, $3), $4...)
+  }
+| f_kwarg opt_f_block_arg
+  {
+    $$ = append($1, $2...)
+  }
+| f_kwrest opt_f_block_arg
+  {
+    $$ = append([]*Param{$1}, $2...)
+  }
 | f_block_arg
   {
     $$ = []*Param{$1}
@@ -1407,7 +1413,11 @@ f_kwarg:
     $$ = append($1, $3)
   }
 //kwrest_mark: tPOW | tDSTAR
-//f_kwrest: kwrest_mark tIDENTIFIER
+f_kwrest: 
+  DOUBLESPLAT IDENT
+  {
+    $$ = &Param{Name: $2, Kind: DoubleSplat}  
+  }
 //| kwrest_mark
 f_opt: 
   IDENT ASSIGN arg_value
@@ -1437,15 +1447,15 @@ f_block_arg:
   {
     $$ = &Param{Name: $2, Kind: ExplicitBlock}  
   }
-//opt_f_block_arg: 
-//  COMMA f_block_arg
-//  {
-//    $$ = []*Param{$2}
-//  }
-//| 
-//  {
-//    $$ = []*Param{}
-//  }
+opt_f_block_arg: 
+  COMMA f_block_arg
+  {
+    $$ = []*Param{$2}
+  }
+| 
+  {
+    $$ = []*Param{}
+  }
 //singleton: var_ref
 //| tLPAREN2 expr rparen
 
@@ -1474,14 +1484,13 @@ assoc:
   {
     $$ = &KeyValuePair{Label: strings.TrimRight($1, ":"), Value: $2}
   }
-//| tSTRING_BEG string_contents tLABEL_END arg_value
-//| tDSTAR arg_value
+| DOUBLESPLAT arg_value
+  {
+    $$ = &KeyValuePair{Value: $2, DoubleSplat: true}
+  }
 
 operation: IDENT | CONSTANT | METHODIDENT
 
-//operation2: tIDENTIFIER | tCONSTANT | tFID | op
-//operation3: tIDENTIFIER | tFID | op
-//dot_or_colon: call_op | tCOLON2
 call_op: DOT | ANDDOT
 
 opt_terms:  | terms

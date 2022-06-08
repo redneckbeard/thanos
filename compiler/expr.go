@@ -451,7 +451,12 @@ func (g *GoProgram) CompileSuperNode(node *parser.SuperNode) ast.Expr {
 }
 
 func (g *GoProgram) CompileArgs(call *parser.MethodCall, args parser.ArgsNode) []types.TypeExpr {
-	var argExprs, splatArgs []types.TypeExpr
+	var (
+		argExprs, splatArgs []types.TypeExpr
+		seenKeywords        []string
+	)
+
+	doubleSplatArg := call.ExtractDoubleSplatArg()
 
 	for i := 0; i < len(call.Method.Params); i++ {
 		p, _ := call.Method.GetParam(i)
@@ -467,10 +472,32 @@ func (g *GoProgram) CompileArgs(call *parser.MethodCall, args parser.ArgsNode) [
 				argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(args[i])})
 			}
 		case parser.Keyword:
+
+			/*
+				The interplay of keyword arguments and keyword parameters is very messy
+				when a method has a double splat parameter defined.
+
+				* The argument could match a parameter by name, or it could be
+				  relegated to the double splat;
+				* The argument could match a parameter by name but be overridden in a
+				  double-splatted argument;
+				* The keyword parameter could have a default, and only be overridden in
+				  a double-splatted argument, etc.
+
+				For this reason, much of this logic is unfortunately split across two
+				branches in this switch: here and the parser.DoubleSplat case below.
+			*/
+
 			if arg, err := args.FindByName(p.Name); err != nil {
-				argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(p.Default)})
+				if doubleSplatArg != nil {
+					argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileKeyFromDoubleSplatArg(p.Name, doubleSplatArg)})
+					seenKeywords = append(seenKeywords, p.Name)
+				} else {
+					argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(p.Default)})
+				}
 			} else {
 				argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(arg.(*parser.KeyValuePair).Value)})
+				seenKeywords = append(seenKeywords, p.Name)
 			}
 		case parser.Splat:
 			for _, arg := range call.SplatArgs() {
@@ -509,6 +536,72 @@ func (g *GoProgram) CompileArgs(call *parser.MethodCall, args parser.ArgsNode) [
 				}
 				splatArgs = append(splatArgs, types.TypeExpr{arg.Type(), g.CompileArg(arg)})
 			}
+		case parser.DoubleSplat:
+			keywordArgsWithoutParam := call.KeywordArgsForDoubleSplatParam()
+			if doubleSplatArg != nil {
+				if h, ok := doubleSplatArg.(*parser.HashNode); ok {
+					keywordArgsWithoutParam.Merge(h)
+					for _, k := range seenKeywords {
+						keywordArgsWithoutParam.Delete(k)
+					}
+				} else {
+					/*
+						The very grossest of situations. If we've got a double splat
+						parameter, and we've got a double splat argument that's not a hash,
+						that means that somewhere in the target above this invocation we've
+						got a local with a map assigned to it, and we need to use it as this
+						argument. However, it may contain keys that belong to named
+						parameters. So the target needs to initialize a new map, copy over
+						all the keys that aren't named parameters, and use the new map as the
+						argument.
+					*/
+					original := g.it.Get(doubleSplatArg.(*parser.IdentNode).Val)
+					paramHash := g.it.New(original.Name + "_kwargs")
+					g.appendToCurrentBlock(bst.Define(paramHash, g.CompileExpr(keywordArgsWithoutParam)))
+
+					keywordParams := []ast.Expr{}
+
+					for _, p := range call.Method.Params {
+						if p.Kind == parser.Keyword {
+							keywordParams = append(keywordParams, bst.String(p.Name))
+						}
+					}
+
+					k, v := g.it.Get("k"), g.it.Get("v")
+
+					loop := &ast.RangeStmt{
+						Key:   k,
+						Value: v,
+						Tok:   token.DEFINE,
+						X:     original,
+						Body: &ast.BlockStmt{
+							List: []ast.Stmt{
+								&ast.SwitchStmt{
+									Tag: k,
+									Body: &ast.BlockStmt{
+										List: []ast.Stmt{
+											&ast.CaseClause{
+												List: keywordParams,
+											},
+											&ast.CaseClause{
+												Body: []ast.Stmt{
+													bst.Assign(&ast.IndexExpr{X: paramHash, Index: k}, v),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					}
+
+					g.appendToCurrentBlock(loop)
+
+					argExprs = append(argExprs, types.TypeExpr{keywordArgsWithoutParam.Type(), paramHash})
+					break
+				}
+			}
+			argExprs = append(argExprs, types.TypeExpr{keywordArgsWithoutParam.Type(), g.CompileExpr(keywordArgsWithoutParam)})
 		}
 	}
 	return append(argExprs, splatArgs...)
@@ -520,4 +613,21 @@ func (g *GoProgram) CompileArg(node parser.Node) ast.Expr {
 		return g.CompileExpr(assignment.Left[0])
 	}
 	return g.CompileExpr(node)
+}
+
+func (g *GoProgram) CompileKeyFromDoubleSplatArg(key string, node parser.Node) ast.Expr {
+	switch n := node.(type) {
+	case *parser.HashNode:
+		for _, kv := range n.Pairs {
+			if kv.Label == key {
+				return g.CompileExpr(kv.Value)
+			}
+		}
+	case *parser.IdentNode:
+		return &ast.IndexExpr{
+			X:     g.it.Get(n.Val),
+			Index: bst.String(key),
+		}
+	}
+	return &ast.BadExpr{}
 }
