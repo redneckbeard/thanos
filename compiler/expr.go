@@ -170,6 +170,17 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 			Kind:  token.FLOAT,
 			Value: n.Val,
 		}
+	case *parser.ImaginaryNode:
+		// Ruby 3i → Go 3i (complex128 literal)
+		return &ast.BasicLit{
+			Kind:  token.IMAG,
+			Value: n.Val,
+		}
+	case *parser.RationalNode:
+		// Ruby 3r → Go stdlib.NewRationalFromInt(3)
+		g.AddImports("github.com/redneckbeard/thanos/stdlib")
+		val := strings.TrimSuffix(n.Val, "r")
+		return bst.Call("stdlib", "NewRationalFromInt", bst.Int(val))
 	case *parser.SymbolNode:
 		return bst.String(n.Val[1:])
 	case *parser.StringNode:

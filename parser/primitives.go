@@ -57,6 +57,42 @@ func (n *Float64Node) Copy() Node {
 	return n
 }
 
+type ImaginaryNode struct {
+	Val    string
+	lineNo int
+}
+
+func (n *ImaginaryNode) String() string       { return n.Val }
+func (n *ImaginaryNode) Type() types.Type     { return types.ComplexType }
+func (n *ImaginaryNode) SetType(t types.Type) {}
+func (n *ImaginaryNode) LineNo() int          { return n.lineNo }
+
+func (n *ImaginaryNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	return types.ComplexType, nil
+}
+
+func (n *ImaginaryNode) Copy() Node {
+	return n
+}
+
+type RationalNode struct {
+	Val    string
+	lineNo int
+}
+
+func (n *RationalNode) String() string       { return n.Val }
+func (n *RationalNode) Type() types.Type     { return types.RationalType }
+func (n *RationalNode) SetType(t types.Type) {}
+func (n *RationalNode) LineNo() int          { return n.lineNo }
+
+func (n *RationalNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	return types.RationalType, nil
+}
+
+func (n *RationalNode) Copy() Node {
+	return n
+}
+
 type SymbolNode struct {
 	Val    string
 	lineNo int

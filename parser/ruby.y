@@ -32,8 +32,9 @@ func root(yylex yyLexer) *Root {
 %right <str> POW
 %right <str> BANG
 %token <str> NIL SYMBOL STRING
-%token <str> INT 
-%token <str> FLOAT 
+%token <str> INT
+%token <str> FLOAT
+%token <str> RATIONAL IMAGINARY
 %token <str> TRUE FALSE
 %token <str> CLASS MODULE DEF END IF IF_MOD UNLESS UNLESS_MOD BEGIN RESCUE RESCUE_MOD THEN ELSE WHILE WHILE_MOD RETURN YIELD SELF CONSTANT 
 %token <str> ENSURE ELSIF CASE WHEN UNTIL UNTIL_MOD FOR BREAK NEXT SUPER ALIAS DO DO_COND DO_BLOCK PRIVATE PROTECTED IN
@@ -1336,8 +1337,14 @@ simple_numeric:
   {
     $$ = &Float64Node{Val: $1, lineNo: currentLineNo}
   }
-//| tRATIONAL
-//| tIMAGINARY
+| RATIONAL
+  {
+    $$ = &RationalNode{Val: $1, lineNo: currentLineNo}
+  }
+| IMAGINARY
+  {
+    $$ = &ImaginaryNode{Val: $1, lineNo: currentLineNo}
+  }
 
 user_variable: 
   IDENT

@@ -341,12 +341,30 @@ func (l *Lexer) lexNumber() error {
 	// If we've already seen a decimal point, we've come back. Any further
 	// punctuation belongs to something else.
 	if l.State.Peek() == InFloat {
+		// Check for imaginary suffix on float: 2.5i
+		next, err = l.Peek()
+		if err == nil && next == 'i' {
+			l.Advance()
+			l.Emit(IMAGINARY)
+			return nil
+		}
 		l.Emit(FLOAT)
 		return err
 	}
 	next, err = l.Peek()
 	if err != nil && err != io.EOF {
 		return err
+	}
+	// Check for imaginary or rational suffix: 3i, 3r
+	if next == 'i' {
+		l.Advance()
+		l.Emit(IMAGINARY)
+		return nil
+	}
+	if next == 'r' {
+		l.Advance()
+		l.Emit(RATIONAL)
+		return nil
 	}
 	// If we see a decimal point, we hand over lexing to lexPunct. If we're looking
 	// at a float, we'll end up back above in the correct state; if not, we'll emit
