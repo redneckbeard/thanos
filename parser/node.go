@@ -16,10 +16,11 @@ func GetType(n Node, scope ScopeChain, class *Class) (t types.Type, err error) {
 	if t == nil {
 		if ident, ok := n.(*IdentNode); ok {
 			if loc := scope.ResolveVar(ident.Val); loc != BadLocal {
-				if loc.Type() == nil {
-					return nil, NewParseError(n, "No type inferred for local variable '%s'", ident.Val)
+				if loc.Type() != nil {
+					ident.SetType(loc.Type())
 				}
-				ident.SetType(loc.Type())
+				// If loc.Type() is nil, fall through to TargetType which
+				// checks Kernel methods and global methods as fallbacks.
 			} else if m, ok := globalMethodSet.Methods[ident.Val]; ok {
 				if err := m.Analyze(globalMethodSet); err != nil {
 					return nil, err

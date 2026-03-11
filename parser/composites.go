@@ -8,9 +8,10 @@ import (
 )
 
 type ArrayNode struct {
-	Args   ArgsNode
-	_type  types.Type
-	lineNo int
+	Args    ArgsNode
+	_type   types.Type
+	lineNo  int
+	isEmpty bool // tracks if this is an empty array needing type inference
 }
 
 func (n *ArrayNode) String() string       { return fmt.Sprintf("[%s]", n.Args) }
@@ -20,29 +21,57 @@ func (n *ArrayNode) LineNo() int          { return n.lineNo }
 
 func (n *ArrayNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	var inner types.Type
+	hasNil := false
 	for _, a := range n.Args {
+		if _, isNil := a.(*NilNode); isNil {
+			hasNil = true
+			continue
+		}
 		ta, _ := GetType(a, locals, class)
 		if splat, ok := a.(*SplatNode); ok {
 			ta = splat.Type().(types.Array).Element
 		}
 		if inner != nil && ta != inner {
-			return nil, NewParseError(n, "Heterogenous array membership detected adding %s", ta)
+			// Heterogeneous literal: collect all element types into a Tuple
+			elementTypes := make([]types.Type, len(n.Args))
+			for i, arg := range n.Args {
+				elementTypes[i], _ = GetType(arg, locals, class)
+			}
+			return types.NewTuple(elementTypes), nil
 		} else {
 			inner = ta
 		}
 	}
 	if inner == nil {
 		if len(n.Args) == 0 {
+			// Mark this as an empty array that needs type refinement
+			n.MarkAsEmptyArray()
 			inner = types.AnyType
+		} else if hasNil {
+			// All elements are nil — we can't infer a type
+			return nil, NewParseError(n, "Array of only nil values — cannot infer element type")
 		} else {
 			return nil, NewParseError(n, "No inner array type detected")
 		}
 	}
+	if hasNil {
+		inner = types.NewOptional(inner)
+	}
 	return types.NewArray(inner), nil
 }
 
+// MarkAsEmptyArray marks this array as empty and needing type inference
+func (n *ArrayNode) MarkAsEmptyArray() {
+	n.isEmpty = true
+}
+
+// IsEmpty returns true if this is an empty array needing type inference
+func (n *ArrayNode) IsEmpty() bool {
+	return n.isEmpty
+}
+
 func (n *ArrayNode) Copy() Node {
-	return &ArrayNode{n.Args.Copy().(ArgsNode), n._type, n.lineNo}
+	return &ArrayNode{n.Args.Copy().(ArgsNode), n._type, n.lineNo, n.isEmpty}
 }
 
 type KeyValuePair struct {
@@ -96,6 +125,9 @@ func (n *HashNode) SetType(t types.Type) { n._type = t }
 func (n *HashNode) LineNo() int          { return n.lineNo }
 
 func (n *HashNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	if len(n.Pairs) == 0 {
+		return types.NewHash(types.AnyType, types.AnyType), nil
+	}
 	var keyType, valueType types.Type
 	for _, kv := range n.Pairs {
 		if kv.Label != "" {
@@ -153,7 +185,19 @@ func (n *BracketAssignmentNode) SetType(t types.Type) { n._type = t }
 func (n *BracketAssignmentNode) LineNo() int          { return n.lineNo }
 
 func (n *BracketAssignmentNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
-	return GetType(n.Composite, locals, class)
+	t, err := GetType(n.Composite, locals, class)
+	if err != nil {
+		return nil, err
+	}
+	if h, ok := t.(types.Hash); ok && h.HasDefault && h.Key == types.AnyType {
+		if keyType, err := GetType(n.Args[0], locals, class); err == nil && keyType != types.AnyType {
+			refined := types.NewDefaultHash(keyType, h.Value)
+			if ident, ok := n.Composite.(*IdentNode); ok {
+				locals.RefineVariableType(ident.Val, refined)
+			}
+		}
+	}
+	return t, nil
 }
 
 func (n *BracketAssignmentNode) Copy() Node {
@@ -189,6 +233,15 @@ func (n *BracketAccessNode) TargetType(locals ScopeChain, class *Class) (types.T
 		}
 		return comp.Element, nil
 	case types.Hash:
+		if comp.HasDefault && comp.Key == types.AnyType {
+			// Refine key type based on first access
+			if keyType, err := GetType(n.Args[0], locals, class); err == nil && keyType != types.AnyType {
+				refined := types.NewDefaultHash(keyType, comp.Value)
+				if ident, ok := n.Composite.(*IdentNode); ok {
+					locals.RefineVariableType(ident.Val, refined)
+				}
+			}
+		}
 		return comp.Value, nil
 	case types.String:
 		return types.StringType, nil

@@ -84,7 +84,10 @@ func (c *Car) SetRegistration(registration string) string {
 	c.registration = registration
 	return c.registration
 }
+
 func main() {
+	// overriding a private method is fine and on the child class is then public
+	// only here to prove inheritance from Object
 	mapped := []string{}
 	for _, car := range []*Car{NewCar(10), NewCar(20), NewCar(30)} {
 		car.Drive(100)

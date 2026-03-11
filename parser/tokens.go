@@ -68,6 +68,7 @@ var tokenNames = map[int]string{
 	NEWLINE:       "NEWLINE",
 	NIL:           "NIL",
 	NOTMATCH:      "NOTMATCH",
+	ORASSIGN:      "ORASSIGN",
 	PIPE:          "PIPE",
 	PLUS:          "PLUS",
 	POW:           "POW",

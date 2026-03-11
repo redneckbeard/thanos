@@ -195,8 +195,10 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 		} else {
 			ret = &ReturnNode{Val: []Node{s.Right[0]}}
 		}
-		if _, err := GetType(ret, scope, class); err != nil {
+		if retType, err := GetType(ret, scope, class); err != nil {
 			return err
+		} else {
+			lastReturnedType = retType
 		}
 		b.Statements = append(b.Statements, ret)
 	default:

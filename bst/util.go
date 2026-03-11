@@ -68,6 +68,26 @@ func Int(i interface{}) *ast.BasicLit {
 
 type AssignFunc func(interface{}, interface{}) *ast.AssignStmt
 
+var opTokens = map[string]token.Token{
+	"+":  token.ADD,
+	"-":  token.SUB,
+	"*":  token.MUL,
+	"/":  token.QUO,
+	"%":  token.REM,
+	"&":  token.AND,
+	"|":  token.OR,
+	"^":  token.XOR,
+	"<<": token.SHL,
+	">>": token.SHR,
+}
+
+func TokenForOp(op string) token.Token {
+	if tok, ok := opTokens[op]; ok {
+		return tok
+	}
+	panic(fmt.Sprintf("unknown operator: %s", op))
+}
+
 var opAssignTokens = map[string]token.Token{
 	"+":  token.ADD_ASSIGN,
 	"-":  token.SUB_ASSIGN,

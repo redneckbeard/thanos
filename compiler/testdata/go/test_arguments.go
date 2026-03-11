@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/redneckbeard/thanos/stdlib"
+)
 
 func Pos_and_kw(foo string, bar bool) {
 	if bar {
@@ -22,9 +26,8 @@ func Splat(a int, c bool, b ...int) int {
 		return a
 	}
 }
-
-func Double_splat(foo int, bar map[string]int) int {
-	return foo + bar["baz"]
+func Double_splat(foo int, bar *stdlib.OrderedMap[string, int]) int {
+	return foo + bar.Data["baz"]
 }
 
 type Foo struct {
@@ -54,19 +57,30 @@ func main() {
 	Splat(9, false)
 	Splat(9, false, []int{1, 2}...)
 	Splat(9, false, append([]int{5}, []int{1, 2}...)...)
-	Double_splat(1, map[string]int{"bar": 2, "baz": 3})
-	Double_splat(1, map[string]int{"baz": 3})
-	Double_splat(1, map[string]int{"baz": 4})
-	hash_from_elsewhere := map[string]int{"foo": 1, "baz": 4}
-	hash_from_elsewhere_kwargs := map[string]int{}
-	for k, v := range hash_from_elsewhere {
+	om := stdlib.NewOrderedMap[string, int]()
+	om.Set("bar", 2)
+	om.Set("baz", 3)
+	Double_splat(1, om)
+	om1 := stdlib.NewOrderedMap[string, int]()
+	om1.Set("baz", 3)
+	Double_splat(1, om1)
+	om2 := stdlib.NewOrderedMap[string, int]()
+	om2.Set("baz", 4)
+	Double_splat(1, om2)
+	om3 := stdlib.NewOrderedMap[string, int]()
+	om3.Set("foo", 1)
+	om3.Set("baz", 4)
+	hash_from_elsewhere := om3
+	om4 := stdlib.NewOrderedMap[string, int]()
+	hash_from_elsewhere_kwargs := om4
+	for k, v := range hash_from_elsewhere.All() {
 		switch k {
 		case "foo":
 		default:
-			hash_from_elsewhere_kwargs[k] = v
+			hash_from_elsewhere_kwargs.Set(k, v)
 		}
 	}
-	Double_splat(hash_from_elsewhere["foo"], hash_from_elsewhere_kwargs)
+	Double_splat(hash_from_elsewhere.Data["foo"], hash_from_elsewhere_kwargs)
 	foo := []int{1, 2, 3}
 	a, b := foo[0], foo[1:len(foo)]
 	c, d, e := foo[0], foo[1], foo[2:len(foo)]

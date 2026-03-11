@@ -252,10 +252,14 @@ func (n *BreakNode) Copy() Node {
 }
 
 type NextNode struct {
+	Val    Node
 	lineNo int
 }
 
 func (n *NextNode) String() string {
+	if n.Val != nil {
+		return fmt.Sprintf("(next %s)", n.Val)
+	}
 	return fmt.Sprintf("(next)")
 }
 func (n *NextNode) Type() types.Type     { return types.NilType }
@@ -263,9 +267,99 @@ func (n *NextNode) SetType(t types.Type) {}
 func (n *NextNode) LineNo() int          { return n.lineNo }
 
 func (n *NextNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	if n.Val != nil {
+		if _, err := GetType(n.Val, locals, class); err != nil {
+			return nil, err
+		}
+	}
 	return types.NilType, nil
 }
 
 func (n *NextNode) Copy() Node {
-	return n
+	c := &NextNode{lineNo: n.lineNo}
+	if n.Val != nil {
+		c.Val = n.Val.Copy()
+	}
+	return c
+}
+
+type RescueClause struct {
+	ExceptionTypes []string
+	ExceptionVar   string
+	Body           Statements
+	lineNo         int
+}
+
+type BeginNode struct {
+	Body          Statements
+	RescueClauses []*RescueClause
+	EnsureBody    Statements
+	_type         types.Type
+	lineNo        int
+}
+
+func (n *BeginNode) String() string {
+	return fmt.Sprintf("(begin %s)", n.Body)
+}
+func (n *BeginNode) Type() types.Type     { return n._type }
+func (n *BeginNode) SetType(t types.Type) { n._type = t }
+func (n *BeginNode) LineNo() int          { return n.lineNo }
+
+func (n *BeginNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	if _, err := GetType(n.Body, locals, class); err != nil {
+		return nil, err
+	}
+	for _, clause := range n.RescueClauses {
+		if clause.ExceptionVar != "" {
+			locals.Set(clause.ExceptionVar, &RubyLocal{_type: types.RubyErrorType})
+		}
+		if _, err := GetType(clause.Body, locals, class); err != nil {
+			return nil, err
+		}
+	}
+	if n.EnsureBody != nil {
+		if _, err := GetType(n.EnsureBody, locals, class); err != nil {
+			return nil, err
+		}
+	}
+	return types.NilType, nil
+}
+
+func (n *BeginNode) Copy() Node {
+	copy := &BeginNode{
+		Body:   n.Body.Copy().(Statements),
+		_type:  n._type,
+		lineNo: n.lineNo,
+	}
+	for _, clause := range n.RescueClauses {
+		copy.RescueClauses = append(copy.RescueClauses, &RescueClause{
+			ExceptionTypes: clause.ExceptionTypes,
+			ExceptionVar:   clause.ExceptionVar,
+			Body:           clause.Body.Copy().(Statements),
+			lineNo:         clause.lineNo,
+		})
+	}
+	if n.EnsureBody != nil {
+		copy.EnsureBody = n.EnsureBody.Copy().(Statements)
+	}
+	return copy
+}
+
+type LambdaNode struct {
+	Block  *Block
+	_type  types.Type
+	lineNo int
+}
+
+func (n *LambdaNode) String() string       { return fmt.Sprintf("(lambda %s)", n.Block) }
+func (n *LambdaNode) Type() types.Type     { return n._type }
+func (n *LambdaNode) SetType(t types.Type) { n._type = t }
+func (n *LambdaNode) LineNo() int          { return n.lineNo }
+
+func (n *LambdaNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	return types.NewProc(), nil
+}
+
+func (n *LambdaNode) Copy() Node {
+	return &LambdaNode{Block: n.Block.Copy(), _type: n._type, lineNo: n.lineNo}
 }

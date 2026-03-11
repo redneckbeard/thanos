@@ -2,7 +2,9 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/redneckbeard/thanos/bst"
 	"github.com/redneckbeard/thanos/stdlib"
 	"github.com/redneckbeard/thanos/types"
 )
@@ -34,14 +36,17 @@ type Root struct {
 	Comments         map[int]Comment
 	moduleStack      *Stack[*Module]
 	TopLevelModules  []*Module
+	ModulePath       string // Go module path for imports (e.g., "tmpmod")
 	currentClass     *Class
 	currentMethod    *Method
 	inPrivateMethods bool
 	nextConstantType int
+	facades          types.FacadeConfig
 }
 
 func NewRoot() *Root {
 	globalMethodSet = NewMethodSet()
+	ResetGlobalVars()
 	p := &Root{
 		State:          &Stack[State]{},
 		StringStack:    &Stack[*StringNode]{},
@@ -102,8 +107,46 @@ func (r *Root) PushModule(name string, lineNo int) {
 func (r *Root) PopModule() *Module {
 	module := r.moduleStack.Pop()
 	r.MethodSetStack.Pop()
-	//classMethodSets[t.Instance.(types.Type)] = class.MethodSet
 	r.State.Pop()
+
+	// If the module has class methods (def self.x), create a type for resolution
+	pkgName := strings.ToLower(module.name)
+	if len(module.ClassMethods) > 0 || len(module.Classes) > 0 {
+		modClass := types.NewClass(module.name, "Object", nil, types.ClassRegistry)
+		modClass.UserDefined = true
+		modClass.Package = pkgName
+		for _, m := range module.ClassMethods {
+			// Insert module scope before method's locals (last element)
+			m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{module, m.Scope[len(m.Scope)-1]}...)
+			cm := m
+			funcName := pkgName + "." + GoName(m.Name)
+			modClass.Def(m.Name, types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					if cm.Body.ReturnType == nil {
+						for i, param := range cm.Params {
+							if i < len(args) {
+								param._type = args[i]
+								cm.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
+							}
+						}
+						cm.Body.InferReturnType(cm.Scope, nil)
+					}
+					return cm.ReturnType(), nil
+				},
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					t := types.Transform{
+						Expr: bst.Call(nil, funcName, types.UnwrapTypeExprs(args)...),
+					}
+					if modClass.PackagePath != "" {
+						t.Imports = []string{modClass.PackagePath}
+					}
+					return t
+				},
+			})
+		}
+		module._type = modClass
+	}
+
 	GetType(module, r.ScopeChain, nil)
 	r.ScopeChain = r.ScopeChain[:len(r.ScopeChain)-1]
 	r.ScopeChain.Set(module.Name(), module)
@@ -113,7 +156,13 @@ func (r *Root) PopModule() *Module {
 
 func (r *Root) PushClass(name string, lineNo int) {
 	r.State.Push(InClassBody)
-	cls := &Class{name: name, lineNo: lineNo, ivars: make(map[string]*IVar)}
+	// Check if the class already exists (open class / monkey patching)
+	if existing := r.findClass(name); existing != nil {
+		r.currentClass = existing
+		r.MethodSetStack.Push(existing.MethodSet)
+		return
+	}
+	cls := &Class{name: name, lineNo: lineNo, ivars: make(map[string]*IVar), cvars: make(map[string]*CVar)}
 	ms := NewMethodSet()
 	cls.MethodSet = ms
 	ms.Class = cls
@@ -121,21 +170,41 @@ func (r *Root) PushClass(name string, lineNo int) {
 	r.MethodSetStack.Push(ms)
 }
 
+func (r *Root) findClass(name string) *Class {
+	if parent := r.moduleStack.Peek(); parent != nil {
+		for _, cls := range parent.Classes {
+			if cls.Name() == name {
+				return cls
+			}
+		}
+	} else {
+		for _, cls := range r.Classes {
+			if cls.Name() == name {
+				return cls
+			}
+		}
+	}
+	return nil
+}
+
 func (r *Root) PopClass() *Class {
 	class := r.currentClass
 	r.MethodSetStack.Pop()
 	r.currentClass = nil
-	if parent := r.moduleStack.Peek(); parent != nil {
-		parent.Classes = append(parent.Classes, class)
-	} else {
-		r.Classes = append(r.Classes, class)
+	// Only add to class list if not already present (open class reopening)
+	if r.findClass(class.Name()) == nil {
+		if parent := r.moduleStack.Peek(); parent != nil {
+			parent.Classes = append(parent.Classes, class)
+		} else {
+			r.Classes = append(r.Classes, class)
+		}
 	}
 	r.inPrivateMethods = false
+	class.Module = r.moduleStack.Peek()
 	t := class.BuildType(r.ScopeChain)
 	classMethodSets[t.Instance.(types.Type)] = class.MethodSet
 	r.State.Pop()
 	r.ScopeChain.Set(class.Name(), class)
-	class.Module = r.moduleStack.Peek()
 	return class
 }
 
@@ -149,8 +218,14 @@ func (r *Root) ParseError() error {
 func (r *Root) AddMethod(m *Method) {
 	m.Body.ExplicitReturns = r.ExplicitReturns
 	r.ExplicitReturns = []*ReturnNode{}
-	ms := r.MethodSetStack.Peek()
-	ms.AddMethod(m)
+	if m.ClassMethod && r.currentClass != nil {
+		r.currentClass.ClassMethods = append(r.currentClass.ClassMethods, m)
+	} else if m.ClassMethod && r.moduleStack.Peek() != nil {
+		r.moduleStack.Peek().ClassMethods = append(r.moduleStack.Peek().ClassMethods, m)
+	} else {
+		ms := r.MethodSetStack.Peek()
+		ms.AddMethod(m)
+	}
 	r.currentMethod = nil
 }
 
@@ -176,6 +251,15 @@ func (r *Root) AddCall(c *MethodCall) {
 				return
 			}
 		}
+	} else if c.MethodName == "include" && r.currentClass != nil {
+		// Handle `include` immediately during parsing so cls.Includes is
+		// populated before BuildType runs in PopClass.
+		if len(c.Args) == 1 {
+			if constNode, ok := c.Args[0].(*ConstantNode); ok {
+				r.currentClass.Includes = append(r.currentClass.Includes, constNode.Val)
+			}
+		}
+		return
 	} else if method, found := r.MethodSetStack.Peek().Methods[c.MethodName]; found {
 		if err := method.AnalyzeArguments(r.MethodSetStack.Peek().Class, c, nil); err != nil {
 			r.AddError(err)
@@ -232,7 +316,154 @@ func (r *Root) AnalyzeMethodSet(ms *MethodSet, rcvr types.Type) error {
 	return err
 }
 
+func (r *Root) expandStructDefinitions() {
+	var remaining []Node
+	for _, stmt := range r.Statements {
+		assign, ok := stmt.(*AssignmentNode)
+		if !ok || len(assign.Left) != 1 || len(assign.Right) != 1 {
+			remaining = append(remaining, stmt)
+			continue
+		}
+		constNode, isConst := assign.Left[0].(*ConstantNode)
+		if !isConst {
+			remaining = append(remaining, stmt)
+			continue
+		}
+		call, isCall := assign.Right[0].(*MethodCall)
+		if !isCall || call.MethodName != "new" {
+			remaining = append(remaining, stmt)
+			continue
+		}
+		rcvr, isConstRcvr := call.Receiver.(*ConstantNode)
+		if !isConstRcvr || rcvr.Val != "Struct" {
+			remaining = append(remaining, stmt)
+			continue
+		}
+		// Found: Point = Struct.new(:x, :y)
+		className := constNode.Val
+		r.PushClass(className, assign.LineNo())
+		cls := r.currentClass
+		// Create attr_accessor for each symbol argument
+		for _, arg := range call.Args {
+			if sym, ok := arg.(*SymbolNode); ok {
+				name := sym.Val[1:] // strip leading ':'
+				ivar := &IVar{Name: name, Readable: true, Writeable: true}
+				cls.AddIVar(name, ivar)
+			}
+		}
+		// Build field name set for ident→ivar rewriting
+		fieldNames := make(map[string]bool)
+		for _, arg := range call.Args {
+			if sym, ok := arg.(*SymbolNode); ok {
+				fieldNames[sym.Val[1:]] = true
+			}
+		}
+		// Create initialize method with params for each field
+		scope := NewScope("initialize")
+		paramList := NewParamList()
+		var bodyStmts Statements
+		for _, arg := range call.Args {
+			if sym, ok := arg.(*SymbolNode); ok {
+				name := sym.Val[1:]
+				paramList.AddParam(&Param{Name: name})
+				bodyStmts = append(bodyStmts, &AssignmentNode{
+					Left:  []Node{&IVarNode{Val: "@" + name, Class: cls}},
+					Right: []Node{&IdentNode{Val: name}},
+				})
+			}
+		}
+		method := &Method{
+			Name:      "initialize",
+			Locals:    scope,
+			Scope:     ScopeChain{scope},
+			ParamList: paramList,
+			Body: &Body{
+				Statements: bodyStmts,
+			},
+		}
+		cls.MethodSet.AddMethod(method)
+
+		// Extract methods from block if present: Struct.new(:x, :y) do def ... end end
+		if call.Block != nil {
+			globalMS := r.MethodSetStack.Peek()
+			for _, blockStmt := range call.Block.Body.Statements {
+				if m, ok := blockStmt.(*Method); ok {
+					// Remove from global MethodSet
+					delete(globalMS.Methods, m.Name)
+					newOrder := make([]string, 0, len(globalMS.Order))
+					for _, name := range globalMS.Order {
+						if name != m.Name {
+							newOrder = append(newOrder, name)
+						}
+					}
+					globalMS.Order = newOrder
+					// Rewrite bare ident references to ivar references
+					rewriteIdentsToIVars(m.Body.Statements, fieldNames, cls)
+					// Add to class MethodSet
+					cls.MethodSet.AddMethod(m)
+				}
+			}
+		}
+
+		r.PopClass()
+		// Don't add the assignment to remaining statements
+	}
+	r.Statements = remaining
+}
+
+// rewriteIdentsToIVars rewrites IdentNode references matching field names to IVarNode
+// references in a Struct method body. This handles the Ruby pattern where Struct methods
+// can reference fields as bare identifiers (which call the getter).
+func rewriteIdentsToIVars(stmts Statements, fieldNames map[string]bool, cls *Class) {
+	for i, stmt := range stmts {
+		stmts[i] = rewriteNode(stmt, fieldNames, cls)
+	}
+}
+
+func rewriteNode(n Node, fields map[string]bool, cls *Class) Node {
+	switch node := n.(type) {
+	case *IdentNode:
+		if fields[node.Val] {
+			return &IVarNode{Val: "@" + node.Val, Class: cls, lineNo: node.lineNo}
+		}
+	case *StringNode:
+		for idx, interps := range node.Interps {
+			for j, interp := range interps {
+				node.Interps[idx][j] = rewriteNode(interp, fields, cls)
+			}
+		}
+	case *MethodCall:
+		if node.Receiver != nil {
+			node.Receiver = rewriteNode(node.Receiver, fields, cls)
+		}
+		for j, arg := range node.Args {
+			node.Args[j] = rewriteNode(arg, fields, cls)
+		}
+	case *InfixExpressionNode:
+		node.Left = rewriteNode(node.Left, fields, cls)
+		node.Right = rewriteNode(node.Right, fields, cls)
+	case *AssignmentNode:
+		for j, right := range node.Right {
+			node.Right[j] = rewriteNode(right, fields, cls)
+		}
+	case *ReturnNode:
+		for j, val := range node.Val {
+			node.Val[j] = rewriteNode(val, fields, cls)
+		}
+	case *Condition:
+		node.Condition = rewriteNode(node.Condition, fields, cls)
+		rewriteIdentsToIVars(node.True, fields, cls)
+		if node.False != nil {
+			if falseStmts, ok := node.False.(Statements); ok {
+				rewriteIdentsToIVars(falseStmts, fields, cls)
+			}
+		}
+	}
+	return n
+}
+
 func (r *Root) Analyze() error {
+	r.expandStructDefinitions()
 	if len(r.Errors) > 0 {
 		for _, err := range r.Errors {
 			if parseError, ok := err.(*ParseError); ok && parseError.terminal {
@@ -259,6 +490,23 @@ func (r *Root) Analyze() error {
 		}
 	}
 
+
+	// Analyze module body statements (constants, etc.) and module classes
+	for _, mod := range r.TopLevelModules {
+		modScope := r.ScopeChain.Extend(mod)
+		if len(mod.Statements) > 0 {
+			if _, err := GetType(mod.Statements, modScope, nil); err != nil {
+				return err
+			}
+		}
+		for i := len(mod.Classes) - 1; i >= 0; i-- {
+			cls := mod.Classes[i]
+			if err := r.AnalyzeMethodSet(cls.MethodSet, cls.Type()); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Work backwards through class declarations so that child classes are
 	// analyzed before parents and method calls on inherited methods propagate
 	// upward
@@ -271,6 +519,11 @@ func (r *Root) Analyze() error {
 	if err := r.AnalyzeMethodSet(r.MethodSetStack.Peek(), nil); err != nil {
 		return err
 	}
+
+	// Before the second pass, clear cached types on statements that
+	// contain unresolved inner calls (e.g., mixin methods whose block
+	// params couldn't be typed in the first pass).
+	r.clearUnresolvedTypes(r.Statements)
 
 	if len(r.Statements) > 0 {
 		if err := (&Body{Statements: r.Statements}).InferReturnType(r.ScopeChain, nil); err != nil {
@@ -285,6 +538,38 @@ func (r *Root) Analyze() error {
 		}
 	}
 	return nil
+}
+
+// clearUnresolvedTypes walks statements and clears cached types on MethodCalls
+// that wrap inner calls with nil types (e.g., mixin methods on user-defined
+// types that couldn't be resolved in the first pass).
+func (r *Root) clearUnresolvedTypes(stmts []Node) {
+	for _, stmt := range stmts {
+		r.clearUnresolvedNode(stmt)
+	}
+}
+
+func (r *Root) clearUnresolvedNode(n Node) bool {
+	switch node := n.(type) {
+	case *MethodCall:
+		childNeedsReval := false
+		for _, arg := range node.Args {
+			if r.clearUnresolvedNode(arg) {
+				childNeedsReval = true
+			}
+		}
+		if node.Receiver != nil {
+			if r.clearUnresolvedNode(node.Receiver) {
+				childNeedsReval = true
+			}
+		}
+		// If this call itself has nil type, or a child was cleared, propagate
+		if node.Type() == nil || childNeedsReval {
+			node.SetType(nil)
+			return true
+		}
+	}
+	return false
 }
 
 func (n *Root) String() string {

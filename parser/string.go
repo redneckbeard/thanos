@@ -63,6 +63,7 @@ type StringNode struct {
 	Interps      map[int][]Node
 	cached       bool
 	Kind         StringKind
+	Flags        string // Regex modifier flags (e.g., "i", "mx")
 	lineNo       int
 	delim        string
 	_type        types.Type
@@ -85,12 +86,38 @@ func (n *StringNode) OrderedInterps() []Node {
 func (n *StringNode) GoString() string {
 	switch n.Kind {
 	case Regexp:
-		return strings.ReplaceAll(n.FmtString("`"), "(?<", "(?P<")
+		pattern := strings.ReplaceAll(n.FmtString("`"), "(?<", "(?P<")
+		if n.Flags != "" {
+			goFlags := rubyToGoRegexpFlags(n.Flags)
+			// Insert (?flags) after opening backtick
+			pattern = "`(?"+goFlags+")" + pattern[1:]
+		}
+		return pattern
 	case SingleQuote, RawWords:
 		return n.FmtString("`")
 	default:
 		return n.FmtString(`"`)
 	}
+}
+
+// rubyToGoRegexpFlags converts Ruby regex flags to Go regexp inline flags.
+// Ruby m (multiline, dot matches \n) → Go s
+// Ruby i (case-insensitive) → Go i
+// Ruby x (extended/free-spacing) → Go x
+// Ruby o (interpolate once) and s (EUC-JP) are ignored.
+func rubyToGoRegexpFlags(flags string) string {
+	var goFlags strings.Builder
+	for _, f := range flags {
+		switch f {
+		case 'i':
+			goFlags.WriteRune('i')
+		case 'm':
+			goFlags.WriteRune('s')
+		case 'x':
+			goFlags.WriteRune('x')
+		}
+	}
+	return goFlags.String()
 }
 
 func (n *StringNode) FmtString(delim string) string {

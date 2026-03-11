@@ -1,3 +1,3 @@
 module github.com/redneckbeard/thanos/stdlib
 
-go 1.18
+go 1.23

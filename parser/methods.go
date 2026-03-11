@@ -3,6 +3,7 @@ package parser
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -31,8 +32,11 @@ func (ms *MethodSet) AddMethod(m *Method) {
 func (ms *MethodSet) AddCall(c *MethodCall) {
 	ms.Calls[c.MethodName] = append(ms.Calls[c.MethodName], c)
 	cls := ms.Class
-	if cls.Parent() != nil {
-		cls.Parent().MethodSet.AddCall(c)
+	// Only propagate to parent if this class doesn't define the method itself
+	if cls != nil && cls.Parent() != nil {
+		if _, defined := ms.Methods[c.MethodName]; !defined {
+			cls.Parent().MethodSet.AddCall(c)
+		}
 	}
 }
 
@@ -54,6 +58,7 @@ const (
 	ExplicitBlock
 	Splat
 	DoubleSplat
+	Destructured
 )
 
 type Param struct {
@@ -63,6 +68,7 @@ type Param struct {
 	_type    types.Type
 	Default  Node
 	Required bool
+	Nested   []*Param
 }
 
 func (p *Param) Type() types.Type {
@@ -156,13 +162,15 @@ type Method struct {
 	Name     string
 	Body     *Body
 	*ParamList
-	Locals   *SimpleScope
-	Scope    ScopeChain
-	Root     *Root
-	Block    *BlockParam
-	lineNo   int
-	Private  bool
-	analyzed bool
+	Locals    *SimpleScope
+	Scope     ScopeChain
+	Root      *Root
+	Block     *BlockParam
+	lineNo    int
+	Private     bool
+	ClassMethod bool
+	analyzed    bool
+	analyzing   bool
 }
 
 func NewMethod(name string, r *Root) *Method {
@@ -211,11 +219,30 @@ func (m *Method) ReturnType() types.Type {
 	return m.Body.ReturnType
 }
 
-func (m *Method) GoName() string {
-	name := strings.TrimRight(m.Name, "!")
-	if !m.Private {
-		name = strings.Title(name)
+var operatorGoNames = map[string]string{
+	"<=>": "Spaceship",
+	"<":   "Lt",
+	">":   "Gt",
+	"<=":  "Lte",
+	">=":  "Gte",
+	"==":  "Eq",
+	"+":   "Plus",
+	"-":   "Minus",
+	"*":   "Times",
+	"/":   "Div",
+	"%":   "Mod",
+	"<<":  "Lshift",
+	">>":  "Rshift",
+	"[]":  "Index",
+	"[]=": "IndexSet",
+}
+
+func GoName(rubyName string) string {
+	if goName, ok := operatorGoNames[rubyName]; ok {
+		return goName
 	}
+	name := strings.TrimRight(rubyName, "!")
+	name = strings.Title(name)
 	if setterPatt.MatchString(name) {
 		name = "Set" + strings.TrimRight(name, "=")
 	}
@@ -224,6 +251,14 @@ func (m *Method) GoName() string {
 		if !interrogPrefix.MatchString(name) {
 			name = "Is" + name
 		}
+	}
+	return name
+}
+
+func (m *Method) GoName() string {
+	name := GoName(m.Name)
+	if m.Private {
+		name = strings.ToLower(name[:1]) + name[1:]
 	}
 	return name
 }
@@ -242,19 +277,25 @@ func (m *Method) AddParam(p *Param) error {
 }
 
 func (m *Method) Analyze(ms *MethodSet) error {
+	if DebugLevel() >= 5 {
+		fmt.Fprintf(os.Stderr, "DEBUG Method.Analyze: %s, calls=%d\n", m.Name, len(ms.Calls[m.Name]))
+	}
 	for _, c := range ms.Calls[m.Name] {
 		if err := m.AnalyzeArguments(ms.Class, c, nil); err != nil {
 			return err
 		}
 	}
 	for _, param := range m.Params {
+		if DebugLevel() >= 5 {
+			fmt.Fprintf(os.Stderr, "DEBUG   param %s type=%v\n", param.Name, param.Type())
+		}
 		if param.Type() == nil {
 			name := m.Name
 			if ms.Class != nil {
 				name = ms.Class.Name() + "#" + name
 			}
 			doubleSplat := m.DoubleSplatParam()
-			if doubleSplat != nil && param.Kind == Keyword {
+			if doubleSplat != nil && doubleSplat.Type() != nil && param.Kind == Keyword {
 				m.Locals.Set(param.Name, &RubyLocal{_type: doubleSplat.Type().(types.Hash).Value})
 			} else {
 				return NewParseError(m, "unable to detect type signature of method '%s' because it is never called", name)
@@ -263,17 +304,81 @@ func (m *Method) Analyze(ms *MethodSet) error {
 			m.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
 		}
 	}
+	// Register block param in locals so yield-desugared blk.call() can resolve
+	if m.Block != nil {
+		m.Locals.Set(m.Block.Name, &RubyLocal{_type: types.NewProc()})
+	}
 	if err := m.Body.InferReturnType(m.Scope, ms.Class); err != nil {
 		return err
+	}
+	// After analysis, extract yield arg types to populate BlockParam
+	if m.Block != nil && len(m.Block.Params) == 0 {
+		m.extractYieldArgTypes()
 	}
 	for _, c := range ms.Calls[m.Name] {
 		c.Method = m
 		if c.Type() == nil {
 			c.SetType(m.ReturnType())
 		}
+		// Type caller's block params from method's yield arg types
+		if c.Block != nil && m.Block != nil && len(m.Block.Params) > 0 {
+			for i, p := range c.Block.Params {
+				if i < len(m.Block.Params) && m.Block.Params[i].Type() != nil {
+					p._type = m.Block.Params[i].Type()
+				}
+			}
+		}
 	}
 	m.analyzed = true
 	return nil
+}
+
+// extractYieldArgTypes walks the method body to find blk.call() patterns
+// and populates the BlockParam with the yield argument types.
+func (m *Method) extractYieldArgTypes() {
+	var walk func(nodes Statements)
+	walk = func(nodes Statements) {
+		for _, node := range nodes {
+			if DebugLevel() >= 5 {
+				fmt.Fprintf(os.Stderr, "DEBUG extractYield walk: %T %s\n", node, node)
+				if mc, ok2 := node.(*MethodCall); ok2 && mc.Receiver != nil {
+					fmt.Fprintf(os.Stderr, "DEBUG extractYield   receiver: %T %s type=%v\n", mc.Receiver, mc.Receiver, mc.Receiver.Type())
+				}
+			}
+			if mc, ok := node.(*MethodCall); ok {
+				if mc.MethodName == "call" {
+					if ident, ok := mc.Receiver.(*IdentNode); ok && ident.Val == m.Block.Name {
+						if DebugLevel() >= 5 {
+							fmt.Fprintf(os.Stderr, "DEBUG extractYield: found yield, args=%d\n", len(mc.Args))
+							for i, arg := range mc.Args {
+								fmt.Fprintf(os.Stderr, "DEBUG extractYield:   arg[%d] type=%v\n", i, arg.Type())
+							}
+						}
+						for i, arg := range mc.Args {
+							if arg.Type() != nil {
+								name := fmt.Sprintf("arg%d", i)
+								if DebugLevel() >= 5 {
+									fmt.Fprintf(os.Stderr, "DEBUG extractYield: adding param %s type=%v to BlockParam (len before=%d)\n", name, arg.Type(), len(m.Block.Params))
+								}
+								m.Block.AddParam(&Param{Name: name, _type: arg.Type()})
+								if DebugLevel() >= 5 {
+									fmt.Fprintf(os.Stderr, "DEBUG extractYield: BlockParam now has %d params\n", len(m.Block.Params))
+								}
+							}
+						}
+						return
+					}
+				}
+				// Check inside blocks of method calls
+				if mc.Block != nil {
+					walk(mc.Block.Body.Statements)
+				}
+			} else if ret, ok := node.(*ReturnNode); ok {
+				walk(Statements(ret.Val))
+			}
+		}
+	}
+	walk(m.Body.Statements)
 }
 
 func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeChain) error {
@@ -379,9 +484,10 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 }
 
 type Block struct {
-	Body   *Body
-	Scope  ScopeChain
-	Method *Method
+	Body       *Body
+	Scope      ScopeChain
+	Method     *Method
+	SymbolProc string // Non-empty for &:method_name blocks
 	*ParamList
 }
 
@@ -439,6 +545,8 @@ func (n *MethodCall) SetType(t types.Type) { n._type = t }
 func (n *MethodCall) LineNo() int          { return n.lineNo }
 
 func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
+	// Extract &:symbol from args and convert to a synthetic block
+	c.extractSymbolToProc()
 	receiverType := c.ReceiverType(scope, class)
 	switch t := receiverType.(type) {
 	case *types.Class:
@@ -462,6 +570,17 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 		if c.MethodName == "call" {
 			localName := c.Receiver.(*IdentNode).Val
 			if local := scope.ResolveVar(localName); local != BadLocal {
+				// yield-desugared block params are RubyLocals with Proc type
+				if _, ok := local.(*RubyLocal); ok {
+					// Type the args but return NilType — yield return type
+					// is determined by the caller's block
+					for _, arg := range c.Args {
+						if _, err := GetType(arg, scope, class); err != nil {
+							return nil, err
+						}
+					}
+					return types.NilType, nil
+				}
 				blk := local.(*Block)
 				for i, arg := range c.Args {
 					if t, err := GetType(arg, scope, class); err != nil {
@@ -486,12 +605,26 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			}
 		}
 	}
+	// Safe navigation operator: unwrap Optional for method resolution
+	safeNav := false
+	if c.Op == "&." {
+		if opt, ok := receiverType.(types.Optional); ok {
+			receiverType = opt.Element
+			safeNav = true
+		}
+	}
 	if c.Receiver != nil {
 		if receiverType == nil {
 			return nil, fmt.Errorf("Method '%s' called on '%s' but type of '%s' is not inferred", c.MethodName, c.Receiver, c.Receiver)
 		}
 		if !receiverType.HasMethod(c.MethodName) {
 			if ms, ok := classMethodSets[receiverType]; ok && ms.Class != nil {
+				if DebugLevel() >= 5 {
+					fmt.Fprintf(os.Stderr, "DEBUG ivar lookup for %s on %s, ivars=%d\n", c.MethodName, receiverType, len(ms.Class.IVars(nil)))
+					for _, iv := range ms.Class.IVars(nil) {
+						fmt.Fprintf(os.Stderr, "  DEBUG ivar: name=%s readable=%v\n", iv.Name, iv.Readable)
+					}
+				}
 				for _, ivar := range ms.Class.IVars(nil) {
 					if c.MethodName == ivar.Name && ivar.Readable && len(c.Args) == 0 {
 						c.Getter = true
@@ -501,16 +634,83 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 						return ivar.Type(), nil
 					}
 				}
+			} else if DebugLevel() >= 5 {
+				fmt.Fprintf(os.Stderr, "DEBUG classMethodSets lookup FAILED for %s (type %T)\n", receiverType, receiverType)
 			}
 			return nil, NewParseError(c, "No known method '%s' on %s", c.MethodName, receiverType)
 		}
 	}
+	// Handle class-level directives before arg type resolution, since their
+	// args (symbols, constants) may not be resolvable as types.
+	if c.Receiver == nil && class != nil {
+		switch c.MethodName {
+		case "attr_reader":
+			class.AddIVars(c.Args, true, false)
+			delete(class.MethodSet.Calls, c.MethodName)
+			return nil, nil
+		case "attr_writer":
+			class.AddIVars(c.Args, false, true)
+			delete(class.MethodSet.Calls, c.MethodName)
+			return nil, nil
+		case "attr_accessor":
+			class.AddIVars(c.Args, true, true)
+			delete(class.MethodSet.Calls, c.MethodName)
+			return nil, nil
+		case "alias_method":
+			if len(c.Args) == 2 {
+				newName := strings.TrimLeft(c.Args[0].(*SymbolNode).Val, ":")
+				oldName := strings.TrimLeft(c.Args[1].(*SymbolNode).Val, ":")
+				class.Aliases = append(class.Aliases, Alias{NewName: newName, OldName: oldName})
+			}
+			delete(class.MethodSet.Calls, c.MethodName)
+			return nil, nil
+		case "include":
+			// Already handled during parsing in AddCall
+			delete(class.MethodSet.Calls, c.MethodName)
+			return nil, nil
+		}
+	}
+
 	argTypes := []types.Type{}
-	for _, a := range c.Args {
-		if t, err := GetType(a, scope, class); err != nil {
-			return nil, err
-		} else {
-			argTypes = append(argTypes, t)
+	// When the MethodSpec has KwargsSpec, reorder arg types to match:
+	// [positional..., kwarg1, kwarg2, ...] in KwargsSpec declaration order.
+	var kwargsSpec []types.KwargSpec
+	if receiverType != nil {
+		if spec, hasSpec := receiverType.GetMethodSpec(c.MethodName); hasSpec {
+			kwargsSpec = spec.KwargsSpec
+		}
+	}
+	if len(kwargsSpec) > 0 {
+		kwargTypes := map[string]types.Type{}
+		for _, a := range c.Args {
+			if kv, ok := a.(*KeyValuePair); ok {
+				if t, err := GetType(kv.Value, scope, class); err != nil {
+					return nil, err
+				} else {
+					kwargTypes[kv.Label] = t
+				}
+			} else {
+				if t, err := GetType(a, scope, class); err != nil {
+					return nil, err
+				} else {
+					argTypes = append(argTypes, t)
+				}
+			}
+		}
+		for _, ks := range kwargsSpec {
+			if t, ok := kwargTypes[ks.Name]; ok {
+				argTypes = append(argTypes, t)
+			} else {
+				argTypes = append(argTypes, nil)
+			}
+		}
+	} else {
+		for _, a := range c.Args {
+			if t, err := GetType(a, scope, class); err != nil {
+				return nil, err
+			} else {
+				argTypes = append(argTypes, t)
+			}
 		}
 	}
 
@@ -529,20 +729,7 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			}
 		}
 	} else if c.Receiver == nil {
-		//TODO push into class methods when class method resolution is implemented
 		switch c.MethodName {
-		case "attr_reader":
-			class.AddIVars(c.Args, true, false)
-			delete(class.MethodSet.Calls, c.MethodName)
-			return nil, nil
-		case "attr_writer":
-			class.AddIVars(c.Args, false, true)
-			delete(class.MethodSet.Calls, c.MethodName)
-			return nil, nil
-		case "attr_accessor":
-			class.AddIVars(c.Args, true, true)
-			delete(class.MethodSet.Calls, c.MethodName)
-			return nil, nil
 		default:
 			method = globalMethodSet.Methods[c.MethodName]
 			if method == nil {
@@ -556,41 +743,166 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 		//TODO should be consolidated with AnalyzeArguments/AnalyzeMethodSet
 		c.Method = method
 		method.AnalyzeArguments(class, c, scope)
+		// Guard against re-entrant analysis (e.g., list.each calls user's each
+		// which calls @items.each — avoid infinite recursion).
+		if method.analyzing {
+			if method.Name == "initialize" {
+				if cls, ok := receiverType.(*types.Class); ok {
+					return cls.Instance.(types.Type), nil
+				}
+				return receiverType, nil
+			}
+			if rt := method.ReturnType(); rt != nil {
+				return rt, nil
+			}
+			return types.NilType, nil
+		}
+		// Type block params from the method's BlockParam (yield arg types).
+		// This must run AFTER the unanalyzed guard above, since
+		// extractYieldArgTypes populates method.Block.Params during
+		// AnalyzeMethodSet, which runs between the first and second passes.
 		if c.Block != nil {
 			c.Block.Scope = scope.Extend(NewScope("block"))
 			c.Block.Method = method
-			method.Locals.Set(method.Block.Name, c.Block)
+			if method.Block != nil {
+				method.Locals.Set(method.Block.Name, c.Block)
+				for i, p := range c.Block.Params {
+					if i < len(method.Block.Params) && method.Block.Params[i].Type() != nil {
+						p._type = method.Block.Params[i].Type()
+						c.Block.Scope.Set(p.Name, &RubyLocal{_type: p._type})
+					}
+				}
+				if c.Block.Body != nil {
+					c.Block.Body.InferReturnType(c.Block.Scope, nil)
+				}
+			}
 		}
-		// set block in scope here
+		method.analyzing = true
 		if err := method.Body.InferReturnType(method.Scope, class); err != nil {
+			method.analyzing = false
 			return nil, err
 		} else {
+			method.analyzing = false
 			if method.Name == "initialize" {
-				return receiverType.(*types.Class).Instance.(types.Type), nil
+				if cls, ok := receiverType.(*types.Class); ok {
+					return cls.Instance.(types.Type), nil
+				}
+				// receiverType is already an Instance (e.g., from super call)
+				return receiverType, nil
 			}
 			return method.ReturnType(), nil
 		}
 	} else if c.Receiver == nil {
 		return nil, NewParseError(c, "Attempted to call undefined method '%s'", c.MethodName)
 	} else {
+		// For mixin-provided methods on user-defined types, defer analysis
+		// until the class's methods have been analyzed (so extractYieldArgTypes
+		// can populate block param types for getElementType resolution).
+		if ms, ok := classMethodSets[receiverType]; ok && ms.Class != nil {
+			allAnalyzed := true
+			for _, m := range ms.Methods {
+				if !m.analyzed {
+					allAnalyzed = false
+					break
+				}
+			}
+			if !allAnalyzed {
+				return nil, nil
+			}
+		}
 		// This is all a special case for thanos-defined methods
 		if c.Block != nil {
 			blockScope := NewScope("block")
 			blockArgTypes := receiverType.BlockArgTypes(c.MethodName, argTypes)
 			for i, p := range c.Block.Params {
-				blockScope.Set(p.Name, &RubyLocal{_type: blockArgTypes[i]})
+				if p.Kind == Destructured {
+					// Unpack composite type into nested params
+					compositeType := blockArgTypes[i]
+					if h, ok := compositeType.(types.Hash); ok {
+						if len(p.Nested) >= 1 {
+							p.Nested[0]._type = h.Key
+							blockScope.Set(p.Nested[0].Name, &RubyLocal{_type: h.Key})
+						}
+						if len(p.Nested) >= 2 {
+							p.Nested[1]._type = h.Value
+							blockScope.Set(p.Nested[1].Name, &RubyLocal{_type: h.Value})
+						}
+					}
+				} else {
+					local := &RubyLocal{_type: blockArgTypes[i]}
+					if arr, ok := blockArgTypes[i].(types.Array); ok && arr.Element == types.AnyType {
+						local.MarkAsRefinable()
+					}
+					blockScope.Set(p.Name, local)
+				}
 			}
 			err := c.Block.Body.InferReturnType(scope.Extend(blockScope), nil)
 			if err != nil {
 				return nil, err
 			}
 			blockRetType = c.Block.Body.ReturnType
+			// Propagate refined block param types back to argTypes.
+			// When a block param was refinable (e.g. empty array) and got
+			// refined during block body inference, update the corresponding
+			// method arg type so MethodReturnType sees the refined type.
+			for i, p := range c.Block.Params {
+				if p.Kind == Destructured {
+					continue
+				}
+				local, found := blockScope.Get(p.Name)
+				if !found {
+					continue
+				}
+				refined := local.Type()
+				origType := blockArgTypes[i]
+				if refined == nil || refined == origType {
+					continue
+				}
+				// Find the argType that matches the original unrefined type
+				for j, at := range argTypes {
+					if at == origType {
+						argTypes[j] = refined
+						c.Args[j].SetType(refined)
+						break
+					}
+				}
+			}
 		}
 	}
 
 	if t, err := receiverType.MethodReturnType(c.MethodName, blockRetType, argTypes); err != nil {
 		return nil, NewParseError(c, err.Error())
 	} else {
+		// Check if this method can refine variable types (e.g., << on empty arrays)
+		if c.Receiver != nil {
+			if ident, ok := c.Receiver.(*IdentNode); ok {
+				// Try to get the method spec and call RefineVariable if it exists
+				if spec, hasSpec := receiverType.GetMethodSpec(c.MethodName); hasSpec && spec.RefineVariable != nil {
+					spec.RefineVariable(ident.Val, t, scope)
+				}
+			}
+			// Refine hash value type when a refining method (push, <<) is called
+			// on a hash-accessed element, e.g. h["key"].push("val") refines
+			// Hash{K, Array{AnyType}} → Hash{K, Array{String}}
+			if ba, ok := c.Receiver.(*BracketAccessNode); ok {
+				if spec, hasSpec := receiverType.GetMethodSpec(c.MethodName); hasSpec && spec.RefineVariable != nil {
+					if ident, ok := ba.Composite.(*IdentNode); ok {
+						if h, isHash := ba.Composite.Type().(types.Hash); isHash {
+							if t != receiverType {
+								refined := types.NewHash(h.Key, t)
+								if h.HasDefault {
+									refined = types.NewDefaultHash(h.Key, t)
+								}
+								scope.RefineVariableType(ident.Val, refined)
+							}
+						}
+					}
+				}
+			}
+		}
+		if safeNav {
+			return types.NewOptional(t), nil
+		}
 		return t, nil
 	}
 }
@@ -616,6 +928,9 @@ func (n *MethodCall) Copy() Node {
 func (n *MethodCall) RequiresTransform() bool {
 	if n.Receiver == nil {
 		return false // for now, will have some built-in top level funcs
+	}
+	if n.Receiver.Type() == nil {
+		return false
 	}
 
 	return n.Receiver.Type().HasMethod(n.MethodName)

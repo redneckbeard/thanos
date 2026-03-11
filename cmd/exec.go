@@ -35,14 +35,15 @@ var execCmd = &cobra.Command{
 			fmt.Println(err)
 			return
 		}
-		compiled, err := compiler.Compile(program)
+		result, err := compiler.Compile(program)
 		if err != nil {
 			fmt.Println(err)
-			if compiled != "" {
-				fmt.Println(compiled)
+			if result != nil {
+				fmt.Println(result.MainFile())
 			}
 			return
 		}
+		compiled := result.MainFile()
 		if strings.Contains(compiled, "github.com/redneckbeard/thanos/stdlib") {
 			if _, err := os.Open("go.mod"); err != nil {
 				color.Red("Generated Go source has a dependency on github.com/redneckbeard/thanos/stdlib, but the current directory has no go.mod file. Run `go mod init $mymodule` and `go get github.com/redneckbeard/thanos/stdlib@latest` and try again.")

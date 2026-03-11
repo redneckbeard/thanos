@@ -16,7 +16,7 @@ func root(yylex yyLexer) *Root {
 %}
 
 %nonassoc <str> LOWEST
-%right <str> ASSIGN MODASSIGN MULASSIGN ADDASSIGN SUBASSIGN DIVASSIGN LSHIFTASSIGN RSHIFTASSIGN
+%right <str> ASSIGN MODASSIGN MULASSIGN ADDASSIGN SUBASSIGN DIVASSIGN LSHIFTASSIGN RSHIFTASSIGN ORASSIGN
 %right <str>  QMARK COLON
 %nonassoc <str> DOT2 DOT3 
 %left <str> LOGICALOR
@@ -43,7 +43,7 @@ func root(yylex yyLexer) *Root {
 %token <str> ANDDOT DOT LBRACE LBRACEBLOCK RBRACE NEWLINE COMMA DOUBLESPLAT
 %token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND WORDSBEG RAWWORDSBEG XSTRINGBEG RAWXSTRINGBEG
 %token <str> SEMICOLON LBRACKET LBRACKETSTART RBRACKET LPAREN LPARENSTART RPAREN HASHROCKET
-%token <str> SCOPE
+%token <str> SCOPE LAMBDA
 
 
 %type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do raw_string_beg class module comment call_op
@@ -52,7 +52,7 @@ func root(yylex yyLexer) *Root {
 %type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head mlhs_inner for_var
 %type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args mrhs mrhs_arg
 %type <param> f_arg_item f_kw f_opt f_block_arg f_rest_arg f_kwrest
-%type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg opt_f_block_arg
+%type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg opt_f_block_arg f_marg_list
 %type <body> bodystmt
 %type <when> when
 %type <whens> case_body cases
@@ -60,6 +60,10 @@ func root(yylex yyLexer) *Root {
 %type <meth> method_signature
 %type <kv> assoc
 %type <kvs> assocs assoc_list
+%type <rescue_clause> rescue_clause
+%type <rescue_clauses> opt_rescue
+%type <node_list> opt_ensure
+%type <str_list> rescue_types
 
 %union{
  args ArgsNode
@@ -72,7 +76,10 @@ func root(yylex yyLexer) *Root {
  node_list Statements
  param *Param
  params []*Param
+ rescue_clause *RescueClause
+ rescue_clauses []*RescueClause
  root *Root
+ str_list []string
  regexp string
  when *WhenNode
  whens []*WhenNode
@@ -137,9 +144,16 @@ stmts:
     }
   }
 
-stmt: 
-//  kALIAS fitem
-  stmt IF_MOD expr_value
+stmt:
+  ALIAS fname fname
+  {
+    $$ = &AliasNode{NewName: $2, OldName: $3, lineNo: currentLineNo}
+  }
+| ALIAS SYMBOL SYMBOL
+  {
+    $$ = &AliasNode{NewName: $2[1:], OldName: $3[1:], lineNo: currentLineNo}
+  }
+| stmt IF_MOD expr_value
   {
     $$ = &Condition{Condition: $3, True: Statements{$1}, lineNo: currentLineNo}
   }
@@ -602,7 +616,7 @@ opt_paren_args:
   }
 | paren_args
 
-opt_call_args: 
+opt_call_args:
   {
     $$ = ArgsNode{}
   }
@@ -610,9 +624,17 @@ opt_call_args:
 | args COMMA
 //| args tCOMMA assocs tCOMMA
 //| assocs tCOMMA
+| AND SYMBOL
+  {
+    $$ = ArgsNode{&SymbolToProcNode{MethodName: strings.TrimPrefix($2, ":"), lineNo: currentLineNo}}
+  }
+| args COMMA AND SYMBOL
+  {
+    $$ = append($1, &SymbolToProcNode{MethodName: strings.TrimPrefix($4, ":"), lineNo: currentLineNo})
+  }
 
 
-call_args: 
+call_args:
 //command |
   args //opt_block_arg
   {
@@ -622,15 +644,15 @@ call_args:
   {
     for _, kv := range $1 {
       $$ = append($$, kv)
-    } 
-  } 
+    }
+  }
 | args COMMA assocs //opt_block_arg
   {
     for _, kv := range $3 {
       $1 = append($1, kv)
-    } 
+    }
     $$ = $1
-  } 
+  }
 //| block_arg
 
 args: 
@@ -659,7 +681,7 @@ mrhs_arg:
   }
 
 
-command_args: 
+command_args:
   {
     if yyrcvr.Lookahead() == LBRACKETSTART || yyrcvr.Lookahead() == LPARENSTART {
       top := yylex.(*Lexer).cmdArg.Pop()
@@ -671,22 +693,7 @@ command_args:
   }
   call_args //Ruby implementation includes some lookahead here
   {
-/*
- # call_args can be followed by tLBRACE_ARG (that does cmdarg.push(0) in the lexer)  
- # but the push must be done after cmdarg.pop() in the parser.                       
- # So this code does cmdarg.pop() to pop 0 pushed by tLBRACE_ARG,                    
- # cmdarg.pop() to pop 1 pushed by command_args,                                     
- # and cmdarg.push(0) to restore back the flag set by tLBRACE_ARG.                   
- last_token = @last_token[0]                                                         
- lookahead = last_token == :tLBRACE_ARG                                              
- if lookahead                                                                        
-   top = @lexer.cmdarg.pop                                                           
-   @lexer.cmdarg.pop                                                                 
-   @lexer.cmdarg.push(top)                                                           
- else                                                                                
-   @lexer.cmdarg.pop                                                                 
- end                                                                                 
-*/
+    yylex.(*Lexer).cmdArg.Pop()
     yylex.(*Lexer).cmdArg.Pop()
     $$ = $2
   }
@@ -723,7 +730,10 @@ primary:
    $$ = $1
  }
 // | tFID
-// | kBEGIN
+| BEGIN compstmt opt_rescue opt_ensure END
+  {
+    $$ = &BeginNode{Body: $2, RescueClauses: $3, EnsureBody: $4, lineNo: currentLineNo}
+  }
 | LPARENSTART stmt rparen
   {
     $$ = $2
@@ -765,6 +775,17 @@ primary:
     call.SetBlock($2)
     $$ = call
    }
+| METHODIDENT
+  {
+    // Bare predicate/bang method call with no args: get?, empty?, save!
+    call := &MethodCall{MethodName: $1, lineNo: currentLineNo}
+    if root(yylex).currentClass != nil {
+      root(yylex).currentClass.MethodSet.AddCall(call)
+    } else {
+      root(yylex).AddCall(call)
+    }
+    $$ = call
+  }
 | method_call
 | method_call brace_block
  {
@@ -777,7 +798,27 @@ primary:
    }
    $$ = call
  }
-//| tLAMBDA
+| LAMBDA LPARENSTART f_args RPAREN LBRACEBLOCK compstmt RBRACE
+  {
+    blk := &Block{Body: &Body{Statements: $6}, ParamList: NewParamList()}
+    for _, p := range $3 {
+      blk.AddParam(p)
+    }
+    $$ = &LambdaNode{Block: blk, lineNo: currentLineNo}
+  }
+| LAMBDA LBRACEBLOCK compstmt RBRACE
+  {
+    blk := &Block{Body: &Body{Statements: $3}, ParamList: NewParamList()}
+    $$ = &LambdaNode{Block: blk, lineNo: currentLineNo}
+  }
+| LAMBDA LPARENSTART f_args RPAREN DO compstmt END
+  {
+    blk := &Block{Body: &Body{Statements: $6}, ParamList: NewParamList()}
+    for _, p := range $3 {
+      blk.AddParam(p)
+    }
+    $$ = &LambdaNode{Block: blk, lineNo: currentLineNo}
+  }
 | IF expr_value then compstmt if_tail END
   {
     $$ = &Condition{Condition: $2, True: $4, False: $5, lineNo: currentLineNo}
@@ -837,7 +878,15 @@ primary:
   }
 | NEXT
   {
-    $$ = &NextNode{lineNo: currentLineNo}  
+    $$ = &NextNode{lineNo: currentLineNo}
+  }
+| NEXT LPARENSTART args rparen
+  {
+    if len($3) == 1 {
+      $$ = &NextNode{Val: $3[0], lineNo: currentLineNo}
+    } else {
+      $$ = &NextNode{lineNo: currentLineNo}
+    }
   }
 //| kREDO
 //| kRETRY
@@ -857,7 +906,53 @@ then:
     $$ = $2
   }
 
-do: 
+opt_rescue:
+  {
+    $$ = []*RescueClause{}
+  }
+| opt_rescue rescue_clause
+  {
+    $$ = append($1, $2)
+  }
+
+rescue_clause:
+  RESCUE HASHROCKET IDENT then compstmt
+  {
+    $$ = &RescueClause{ExceptionVar: $3, Body: $5, lineNo: currentLineNo}
+  }
+| RESCUE rescue_types HASHROCKET IDENT then compstmt
+  {
+    $$ = &RescueClause{ExceptionTypes: $2, ExceptionVar: $4, Body: $6, lineNo: currentLineNo}
+  }
+| RESCUE rescue_types then compstmt
+  {
+    $$ = &RescueClause{ExceptionTypes: $2, Body: $4, lineNo: currentLineNo}
+  }
+| RESCUE then compstmt
+  {
+    $$ = &RescueClause{Body: $3, lineNo: currentLineNo}
+  }
+
+rescue_types:
+  CONSTANT
+  {
+    $$ = []string{$1}
+  }
+| rescue_types COMMA CONSTANT
+  {
+    $$ = append($1, $3)
+  }
+
+opt_ensure:
+  {
+    $$ = nil
+  }
+| ENSURE compstmt
+  {
+    $$ = $2
+  }
+
+do:
   term
 | DO_COND
 
@@ -1137,10 +1232,16 @@ string_interp:
     $$ = ""
   }
 
-regexp: 
-  regex_beg string_contents regex_end //REGEXPOPT
+regexp:
+  regex_beg string_contents regex_end
 	{
 		regexp := root(yylex).StringStack.Pop()
+    $$ = regexp
+	}
+| regex_beg string_contents regex_end REGEXPOPT
+	{
+		regexp := root(yylex).StringStack.Pop()
+		regexp.Flags = $4
     $$ = regexp
 	}
 
@@ -1168,7 +1269,7 @@ regex_end:
 //qsym_list: # nothing
 //| qsym_list tSTRING_CONTENT tSPACE
 
-method_signature: 
+method_signature:
   DEF fname f_arglist
   {
     method := NewMethod($2, root(yylex))
@@ -1176,6 +1277,22 @@ method_signature:
     method.lineNo = currentLineNo
 
     for _, p := range $3 {
+      if err := method.AddParam(p); err != nil {
+        root(yylex).AddError(err)
+      }
+    }
+
+    root(yylex).State.Push(InMethodDefinition)
+    $$ = method
+    yylex.(*Lexer).resetExpr = true
+  }
+| DEF SELF DOT fname f_arglist
+  {
+    method := NewMethod($4, root(yylex))
+    method.ClassMethod = true
+    method.lineNo = currentLineNo
+
+    for _, p := range $5 {
       if err := method.AddParam(p); err != nil {
         root(yylex).AddError(err)
       }
@@ -1373,12 +1490,25 @@ f_args:
 //| tIDENTIFIER
 //f_arg_asgn: f_norm_arg
 
-f_arg_item: 
-  IDENT 
-  { 
-    $$ = &Param{Name: $1, Kind: Positional} 
+f_marg_list:
+  IDENT
+  {
+    $$ = []*Param{{Name: $1, Kind: Positional}}
+  }
+| f_marg_list COMMA IDENT
+  {
+    $$ = append($1, &Param{Name: $3, Kind: Positional})
+  }
+
+f_arg_item:
+  IDENT
+  {
+    $$ = &Param{Name: $1, Kind: Positional}
   } // f_arg_asgn
-//| tLPAREN f_margs rparen
+| LPARENSTART f_marg_list rparen
+  {
+    $$ = &Param{Kind: Destructured, Nested: $2}
+  }
 
 f_arg: 
   f_arg_item
@@ -1529,7 +1659,7 @@ terms:
 
 none: { $$ = nil }
 
-op_asgn: MODASSIGN | MULASSIGN | ADDASSIGN | SUBASSIGN | DIVASSIGN | LSHIFTASSIGN | RSHIFTASSIGN
+op_asgn: MODASSIGN | MULASSIGN | ADDASSIGN | SUBASSIGN | DIVASSIGN | LSHIFTASSIGN | RSHIFTASSIGN | ORASSIGN
 
 private:
   PRIVATE

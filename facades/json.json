@@ -1,0 +1,23 @@
+{
+  "json": {
+    "go_imports": ["github.com/redneckbeard/thanos/shims"],
+    "modules": {
+      "JSON": {
+        "methods": {
+          "generate": {
+            "call": ["shims.JSONGenerate"],
+            "returns": "string"
+          },
+          "pretty_generate": {
+            "call": ["shims.JSONPrettyGenerate"],
+            "returns": "string"
+          },
+          "dump": {
+            "call": ["shims.JSONGenerate"],
+            "returns": "string"
+          }
+        }
+      }
+    }
+  }
+}

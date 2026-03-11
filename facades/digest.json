@@ -1,0 +1,87 @@
+{
+  "digest": {
+    "go_imports": ["github.com/redneckbeard/thanos/shims"],
+    "modules": {
+      "Digest::MD5": {
+        "methods": {
+          "hexdigest": {
+            "call": ["shims.DigestMD5Hexdigest"],
+            "returns": "string"
+          },
+          "digest": {
+            "call": ["shims.DigestMD5Digest"],
+            "returns": "string"
+          },
+          "base64digest": {
+            "call": ["shims.DigestMD5Base64digest"],
+            "returns": "string"
+          }
+        }
+      },
+      "Digest::SHA1": {
+        "methods": {
+          "hexdigest": {
+            "call": ["shims.DigestSHA1Hexdigest"],
+            "returns": "string"
+          },
+          "digest": {
+            "call": ["shims.DigestSHA1Digest"],
+            "returns": "string"
+          },
+          "base64digest": {
+            "call": ["shims.DigestSHA1Base64digest"],
+            "returns": "string"
+          }
+        }
+      },
+      "Digest::SHA256": {
+        "methods": {
+          "hexdigest": {
+            "call": ["shims.DigestSHA256Hexdigest"],
+            "returns": "string"
+          },
+          "digest": {
+            "call": ["shims.DigestSHA256Digest"],
+            "returns": "string"
+          },
+          "base64digest": {
+            "call": ["shims.DigestSHA256Base64digest"],
+            "returns": "string"
+          }
+        }
+      },
+      "Digest::SHA384": {
+        "methods": {
+          "hexdigest": {
+            "call": ["shims.DigestSHA384Hexdigest"],
+            "returns": "string"
+          },
+          "digest": {
+            "call": ["shims.DigestSHA384Digest"],
+            "returns": "string"
+          },
+          "base64digest": {
+            "call": ["shims.DigestSHA384Base64digest"],
+            "returns": "string"
+          }
+        }
+      },
+      "Digest::SHA512": {
+        "methods": {
+          "hexdigest": {
+            "call": ["shims.DigestSHA512Hexdigest"],
+            "returns": "string"
+          },
+          "digest": {
+            "call": ["shims.DigestSHA512Digest"],
+            "returns": "string"
+          },
+          "base64digest": {
+            "call": ["shims.DigestSHA512Base64digest"],
+            "returns": "string"
+          }
+        }
+      }
+    }
+  }
+}

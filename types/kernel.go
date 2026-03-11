@@ -2,6 +2,7 @@ package types
 
 import (
 	"go/ast"
+	"go/token"
 
 	"github.com/redneckbeard/thanos/bst"
 )
@@ -25,7 +26,8 @@ func (t kernel) MethodReturnType(m string, b Type, args []Type) (Type, error) {
 }
 
 func (t kernel) BlockArgTypes(m string, args []Type) []Type {
-	return t.proto.MustResolve(m, false).blockArgs(t, args)
+	spec := t.proto.MustResolve(m, false)
+	return spec.BlockArgs(t, args)
 }
 
 func (t kernel) TransformAST(m string, rcvr ast.Expr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
@@ -70,6 +72,7 @@ func init() {
 		},
 		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
 			stmts := []ast.Stmt{}
+			imports := []string{"fmt"}
 			// `puts` inserts newlines after every argument, so we have one print function call for each here
 			for _, arg := range args {
 				// For any args that are interpolated strings, at this point we've
@@ -86,13 +89,24 @@ func init() {
 						continue
 					}
 				}
-				stmts = append(stmts, &ast.ExprStmt{
-					X: bst.Call("fmt", "Println", arg.Expr),
-				})
+				printArg := arg.Expr
+				if _, isOpt := arg.Type.(Optional); isOpt {
+					printArg = &ast.StarExpr{X: arg.Expr}
+				}
+				if arg.Type == FloatType {
+					stmts = append(stmts, &ast.ExprStmt{
+						X: bst.Call("fmt", "Println", bst.Call("stdlib", "FormatFloat", printArg)),
+					})
+					imports = append(imports, "github.com/redneckbeard/thanos/stdlib")
+				} else {
+					stmts = append(stmts, &ast.ExprStmt{
+						X: bst.Call("fmt", "Println", printArg),
+					})
+				}
 			}
 			return Transform{
 				Stmts:   stmts,
-				Imports: []string{"fmt"},
+				Imports: imports,
 			}
 		},
 	})
@@ -109,6 +123,69 @@ func init() {
 			}
 		},
 	})
+	KernelType.Def("raise", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return NilType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			var panicArg ast.Expr
+			switch len(args) {
+			case 1:
+				// raise "message" → panic(&stdlib.RuntimeError{RubyError: stdlib.RubyError{Msg: msg}})
+				panicArg = &ast.UnaryExpr{
+					Op: token.AND,
+					X: &ast.CompositeLit{
+						Type: bst.Dot("stdlib", "RuntimeError"),
+						Elts: []ast.Expr{
+							&ast.KeyValueExpr{
+								Key: it.Get("StandardError"),
+								Value: &ast.CompositeLit{
+									Type: bst.Dot("stdlib", "StandardError"),
+									Elts: []ast.Expr{
+										&ast.KeyValueExpr{
+											Key: it.Get("RubyError"),
+											Value: &ast.CompositeLit{
+												Type: bst.Dot("stdlib", "RubyError"),
+												Elts: []ast.Expr{
+													&ast.KeyValueExpr{
+														Key:   it.Get("Msg"),
+														Value: args[0].Expr,
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+			case 2:
+				// raise ErrorClass, "message" → panic(&stdlib.ErrorClass{...Msg: msg})
+				className := "RuntimeError"
+				if ident, ok := args[0].Expr.(*ast.Ident); ok {
+					className = ident.Name
+				}
+				panicArg = buildExceptionLiteral(className, args[1].Expr, it)
+			default:
+				// bare raise → panic(&stdlib.RuntimeError{})
+				panicArg = &ast.UnaryExpr{
+					Op: token.AND,
+					X: &ast.CompositeLit{
+						Type: bst.Dot("stdlib", "RuntimeError"),
+					},
+				}
+			}
+			return Transform{
+				Stmts: []ast.Stmt{
+					&ast.ExprStmt{
+						X: bst.Call(nil, "panic", panicArg),
+					},
+				},
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
 	KernelType.Def("require", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			return BoolType, nil
@@ -117,4 +194,68 @@ func init() {
 			return Transform{}
 		},
 	})
+	KernelType.Def("require_relative", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{}
+		},
+	})
+}
+
+// buildExceptionLiteral creates &stdlib.ClassName{...{RubyError: stdlib.RubyError{Msg: msg}}}
+func buildExceptionLiteral(className string, msgExpr ast.Expr, it bst.IdentTracker) ast.Expr {
+	// Build the nested struct literal chain based on the exception hierarchy
+	innermost := &ast.CompositeLit{
+		Type: bst.Dot("stdlib", "RubyError"),
+		Elts: []ast.Expr{
+			&ast.KeyValueExpr{
+				Key:   it.Get("Msg"),
+				Value: msgExpr,
+			},
+		},
+	}
+
+	parent, hasParent := ExceptionParents[className]
+	if !hasParent {
+		// It's StandardError itself or unknown — wrap directly with RubyError
+		return &ast.UnaryExpr{
+			Op: token.AND,
+			X: &ast.CompositeLit{
+				Type: bst.Dot("stdlib", className),
+				Elts: []ast.Expr{
+					&ast.KeyValueExpr{
+						Key:   it.Get("RubyError"),
+						Value: innermost,
+					},
+				},
+			},
+		}
+	}
+
+	// For types like ArgumentError whose parent is StandardError:
+	// &stdlib.ArgumentError{StandardError: stdlib.StandardError{RubyError: stdlib.RubyError{Msg: msg}}}
+	parentLit := &ast.CompositeLit{
+		Type: bst.Dot("stdlib", parent),
+		Elts: []ast.Expr{
+			&ast.KeyValueExpr{
+				Key:   it.Get("RubyError"),
+				Value: innermost,
+			},
+		},
+	}
+
+	return &ast.UnaryExpr{
+		Op: token.AND,
+		X: &ast.CompositeLit{
+			Type: bst.Dot("stdlib", className),
+			Elts: []ast.Expr{
+				&ast.KeyValueExpr{
+					Key:   it.Get(parent),
+					Value: parentLit,
+				},
+			},
+		},
+	}
 }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/alecthomas/chroma/quick"
@@ -26,14 +27,23 @@ var compileCmd = &cobra.Command{
 			color.Red(err.Error())
 			return
 		}
-		compiled, _ := compiler.Compile(program)
+		result, _ := compiler.Compile(program)
 		if Target == "" {
 			color.Green(strings.Repeat("-", 20))
-			quick.Highlight(os.Stdout, compiled, "go", "terminal256", "monokai")
+			for path, src := range result.Files {
+				if len(result.Files) > 1 {
+					color.Green("// === %s ===", path)
+				}
+				quick.Highlight(os.Stdout, src, "go", "terminal256", "monokai")
+			}
 		} else {
-			err = os.WriteFile(Target, []byte(compiled), 0644)
-			if err != nil {
-				color.Red(err.Error())
+			for path, src := range result.Files {
+				fullPath := filepath.Join(Target, path)
+				os.MkdirAll(filepath.Dir(fullPath), 0755)
+				err = os.WriteFile(fullPath, []byte(src), 0644)
+				if err != nil {
+					color.Red(err.Error())
+				}
 			}
 		}
 	},

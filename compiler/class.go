@@ -20,11 +20,16 @@ func (g *GoProgram) CompileModule(mod *parser.Module) []ast.Decl {
 		decls = append(decls, g.CompileClass(cls)...)
 	}
 
+	// Compile module class methods (def self.x) as standalone functions
+	for _, m := range mod.ClassMethods {
+		decls = append(decls, g.CompileClassMethod(m, nil, mod.Name())...)
+	}
+
 	return decls
 }
 
 func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
-	className := globalIdents.Get(c.QualifiedName())
+	className := globalIdents.Get(g.localName(c.QualifiedName()))
 	decls := []ast.Decl{}
 
 	structFields := []*ast.Field{}
@@ -39,6 +44,15 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 		})
 	}
 	g.addConstants(c.Constants)
+
+	// Emit package-level vars for class variables (@@var)
+	for _, cvar := range c.CVars() {
+		if cvar.Type() != nil {
+			varName := strings.ToLower(c.Name()[:1]) + c.Name()[1:] + strings.Title(cvar.Name)
+			g.addGlobalVar(globalIdents.Get(varName), g.it.Get(cvar.Type().GoType()), nil)
+		}
+	}
+
 	decls = append(decls, &ast.GenDecl{
 		Tok: token.TYPE,
 		Specs: []ast.Spec{
@@ -109,7 +123,7 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 	})
 
 	constructor := &ast.FuncDecl{
-		Name: g.it.Get(fmt.Sprintf("New%s", c.QualifiedName())),
+		Name: g.it.Get(fmt.Sprintf("New%s", g.localName(c.QualifiedName()))),
 		Type: signature,
 		Body: g.BlockStack.Peek(),
 	}
@@ -126,20 +140,78 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 		}
 	}
 
+	// Compile class methods (def self.x) as standalone functions
+	for _, m := range c.ClassMethods {
+		decls = append(decls, g.CompileClassMethod(m, c)...)
+	}
+
 	if hasToS {
 		decls = append(decls, g.stringMethod(c))
+	}
+
+	for _, alias := range c.Aliases {
+		if orig, ok := c.MethodSet.Methods[alias.OldName]; ok {
+			decls = append(decls, g.compileAlias(alias, orig, c))
+		}
 	}
 
 	return decls
 }
 
+func (g *GoProgram) cvarGoName(n *parser.CVarNode) string {
+	className := strings.ToLower(n.Class.Name()[:1]) + n.Class.Name()[1:]
+	return className + strings.Title(n.NormalizedVal())
+}
+
+func (g *GoProgram) compileAlias(alias parser.Alias, orig *parser.Method, c *parser.Class) ast.Decl {
+	rcvr := strings.ToLower(c.Name()[:1])
+
+	// Build args to forward
+	var args []ast.Expr
+	params := g.GetFuncParams(orig.Params)
+	for _, p := range orig.Params {
+		args = append(args, g.it.Get(p.Name))
+	}
+
+	call := bst.Call(g.it.Get(rcvr), orig.GoName(), args...)
+
+	var body []ast.Stmt
+	if orig.ReturnType() != nil && orig.ReturnType() != types.NilType {
+		body = []ast.Stmt{&ast.ReturnStmt{Results: []ast.Expr{call}}}
+	} else {
+		body = []ast.Stmt{&ast.ExprStmt{X: call}}
+	}
+
+	goName := parser.GoName(alias.NewName)
+
+	return &ast.FuncDecl{
+		Name: g.it.Get(goName),
+		Type: &ast.FuncType{
+			Params: &ast.FieldList{List: params},
+			Results: &ast.FieldList{
+				List: g.GetReturnType(orig.ReturnType()),
+			},
+		},
+		Body: &ast.BlockStmt{List: body},
+		Recv: &ast.FieldList{
+			List: []*ast.Field{
+				{
+					Names: []*ast.Ident{g.it.Get(rcvr)},
+					Type:  &ast.StarExpr{X: g.it.Get(c.Type().GoType())},
+				},
+			},
+		},
+	}
+}
+
 func (g *GoProgram) addConstants(constants []*parser.Constant) {
 	for _, constant := range constants {
+		name := g.localName(constant.QualifiedName())
 		switch constant.Val.Type() {
 		case types.IntType, types.SymbolType, types.FloatType, types.StringType, types.BoolType:
-			g.addConstant(g.it.Get(constant.QualifiedName()), g.CompileExpr(constant.Val))
+			g.addConstant(g.it.Get(name), g.CompileExpr(constant.Val))
 		default:
-			g.addGlobalVar(g.it.Get(constant.QualifiedName()), g.it.Get(constant.Val.Type().GoType()), g.CompileExpr(constant.Val))
+			g.addGlobalVar(g.it.Get(name), g.it.Get(constant.Val.Type().GoType()), g.CompileExpr(constant.Val))
 		}
 	}
 }
@@ -170,7 +242,7 @@ func (g *GoProgram) stringMethod(cls *parser.Class) ast.Decl {
 				{
 					Names: []*ast.Ident{g.it.Get(rcvr)},
 					Type: &ast.StarExpr{
-						X: g.it.Get(cls.QualifiedName()),
+						X: g.it.Get(g.localName(cls.QualifiedName())),
 					},
 				},
 			},

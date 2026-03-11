@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"math"
+
+	"github.com/redneckbeard/thanos/stdlib"
 )
 
 type Foo struct {
@@ -90,6 +92,6 @@ func main() {
 	NewBaz().B(1.5, 2)
 	quux := NewQuux()
 	if quux.A() {
-		fmt.Println(quux.B(2.0, 4))
+		fmt.Println(stdlib.FormatFloat(quux.B(2.0, 4)))
 	}
 }

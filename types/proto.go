@@ -15,6 +15,15 @@ import (
 // means all the stuff that comes in Enumerable, which involves doing things
 // with blocks that in theory _could_ be done with anonymous functions in Go
 // but translates most efficiently and idiomatically to simple for loops.
+// KwargSpec describes a single keyword argument accepted by a MethodSpec.
+// Transforms receive kwargs appended after positional args in KwargsSpec order.
+// A zero TypeExpr (Expr == nil) means the kwarg was not provided by the caller.
+type KwargSpec struct {
+	Name    string
+	Type    Type
+	Default ast.Expr // nil = kwarg not provided
+}
+
 type MethodSpec struct {
 	// When inferring the return types for methods that take a block, we must
 	// consider the return type of the block (since blocks cannot explicitly
@@ -31,16 +40,37 @@ type MethodSpec struct {
 	// types of the args will be so that we can use them to seed inference of the
 	// return type of the block.
 	blockArgs    func(Type, []Type) []Type
-	TransformAST TransformFunc
+	TransformAST     TransformFunc
+	TransformStmtAST TransformFunc
+	// RefineVariable allows methods to update the type of their receiver variable
+	// This is used for operations like << on empty arrays to refine Array(AnyType) to concrete types
+	RefineVariable RefineVariableFunc
+	// KwargsSpec declares named keyword arguments this method accepts.
+	// Transforms receive [positional..., kwarg1, kwarg2, ...] where kwargs
+	// are in KwargsSpec declaration order. Missing kwargs have zero TypeExpr.
+	KwargsSpec []KwargSpec
+}
+
+func (ms *MethodSpec) SetBlockArgs(f func(Type, []Type) []Type) {
+	ms.blockArgs = f
+}
+
+func (ms *MethodSpec) BlockArgs(r Type, args []Type) []Type {
+	if ms.blockArgs == nil {
+		return nil
+	}
+	return ms.blockArgs(r, args)
 }
 
 type ReturnTypeFunc func(receiverType Type, blockReturnType Type, args []Type) (Type, error)
 type TransformFunc func(TypeExpr, []TypeExpr, *Block, bst.IdentTracker) Transform
+type RefineVariableFunc func(receiverName string, newType Type, scope interface{})
 
 type Transform struct {
-	Stmts   []ast.Stmt
-	Expr    ast.Expr
-	Imports []string
+	Stmts      []ast.Stmt
+	Expr       ast.Expr
+	Imports    []string
+	Finalizers []ast.Stmt // appended to end of main (e.g., http.ListenAndServe)
 }
 
 type proto struct {
@@ -139,6 +169,10 @@ func (p *proto) MakeAlias(existingMethod, newMethod string, classMethod bool) {
 }
 
 func (p *proto) IsMultiple() bool { return false }
+
+func (p *proto) GetMethodSpec(m string) (MethodSpec, bool) {
+	return p.Resolve(m, false)
+}
 
 func (p *proto) GenerateMethods(iface interface{}, exclusions ...string) {
 	t := reflect.TypeOf(iface)

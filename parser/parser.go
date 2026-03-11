@@ -18,40 +18,66 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/redneckbeard/thanos/facades"
 	"github.com/redneckbeard/thanos/types"
 )
 
 func ParseFile(filename string) (*Root, error) {
-	var f *os.File
-	if filename == "" {
-		f = os.Stdin
-	} else {
+	if filename != "" {
+		// Use multi-file parser for file-based input (handles require_relative)
 		dir, err := os.Getwd()
 		if err != nil {
 			panic(err)
 		}
 		path := filepath.Join(dir, filename)
-		f, err = os.Open(path)
-		if err != nil {
-			panic(err)
-		}
+		return ParseProgram(path)
 	}
-	if b, err := io.ReadAll(f); err != nil {
+	// stdin fallback
+	b, err := io.ReadAll(os.Stdin)
+	if err != nil {
 		return nil, err
-	} else {
-		return ParseBytes(b)
 	}
+	return ParseBytes(b)
 }
 
 func ParseString(s string) (*Root, error) {
 	return ParseBytes([]byte(s))
 }
 
+// loadAndRegisterFacades loads built-in facades, registers them in the type
+// system, and returns any scoped namespaces (for :: resolution).
+func loadAndRegisterFacades() []types.FacadeNamespace {
+	allFacades, err := facades.LoadBuiltins()
+	if err != nil {
+		return nil
+	}
+	var allNamespaces []types.FacadeNamespace
+	for requireName, lib := range allFacades {
+		namespaces := types.RegisterFacade(requireName, lib)
+		allNamespaces = append(allNamespaces, namespaces...)
+	}
+	types.ClassRegistry.Initialize()
+	return allNamespaces
+}
+
 func ParseBytes(b []byte) (*Root, error) {
 	types.ClassRegistry.Initialize()
+
+	// Load built-in facades so that gauntlet tests and stdin input
+	// can use facade-provided modules (e.g., Base64, Digest::SHA256).
+	namespaces := loadAndRegisterFacades()
+
 	parser := yyNewParser()
 	l := NewLexer(b)
 	parser.Parse(l)
+
+	// Register facade namespaces in scope for :: resolution
+	registerFacadeNamespaces(l.Root, namespaces)
+
+	// Strip `require` calls that match facades and inject scope entries.
+	allFacades, _ := facades.LoadBuiltins()
+	stripRequires(l.Root, allFacades)
+
 	if err := l.Root.Analyze(); err != nil {
 		return l.Root, err
 	}

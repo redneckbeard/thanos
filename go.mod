@@ -1,6 +1,6 @@
 module github.com/redneckbeard/thanos
 
-go 1.18
+go 1.23
 
 require (
 	github.com/alecthomas/chroma v0.10.0

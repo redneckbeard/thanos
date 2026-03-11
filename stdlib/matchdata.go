@@ -57,6 +57,17 @@ func (md *MatchData) Names() []string {
 	return names
 }
 
+// Sub replaces the first match of patt in s with repl (Ruby's String#sub).
+func Sub(s string, patt *regexp.Regexp, repl string) string {
+	loc := patt.FindStringIndex(s)
+	if loc == nil {
+		return s
+	}
+	converted := ConvertFromGsub(patt, repl)
+	replaced := patt.ReplaceAllString(s[loc[0]:loc[1]], converted)
+	return s[:loc[0]] + replaced + s[loc[1]:]
+}
+
 func ConvertFromGsub(patt *regexp.Regexp, sub string) string {
 	for i, name := range patt.SubexpNames() {
 		namedSub := fmt.Sprintf(`\k<%s>`, name)

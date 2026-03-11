@@ -168,6 +168,18 @@ func init() {
 		},
 	})
 
+	ObjectType.Def("to_json", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return StringType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("shims", "JSONGenerate", rcvr.Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/shims"},
+			}
+		},
+	})
+
 	// Deprecated and unsupported methods, or general uselessness
 	noops := []string{"taint", "untaint", "trust", "untrust", "itself"}
 	for _, noop := range noops {

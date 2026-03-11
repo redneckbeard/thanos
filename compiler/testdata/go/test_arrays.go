@@ -26,6 +26,9 @@ func Squares_plus_one(a []int) []int {
 func Double_third(a []int) int {
 	return a[2] * 2
 }
+func Last_element(a []int) int {
+	return a[len(a)-1]
+}
 func Length_is_size(a []int) bool {
 	return len(a) == len(a)
 }
@@ -33,16 +36,28 @@ func Swap_positions(a bool, b int) (int, bool) {
 	return b, a
 }
 func main() {
-	arr := Make_arr(1, 2, 3)
+	mapped := []int{}
+	for _, x := range []int{1, 2, 3} {
+		mapped = append(mapped, x*2)
+	}
 	selected := []int{}
-	for _, x := range Squares_plus_one([]int{1, 2, 3, 4}) {
-		if x%2 == 0 {
+	for _, x := range mapped {
+		if x > 2 {
 			selected = append(selected, x)
 		}
 	}
-	qpo := len(selected)
+	chained := selected
+	arr := Make_arr(1, 2, 3)
+	selected1 := []int{}
+	for _, x := range Squares_plus_one([]int{1, 2, 3, 4}) {
+		if x%2 == 0 {
+			selected1 = append(selected1, x)
+		}
+	}
+	qpo := len(selected1)
 	total := Sum([]int{1, 2, 3, 4})
 	doubled := Double_third([]int{1, 2, 3})
+	last := Last_element([]int{1, 2, 3})
 	foo := Length_is_size([]int{1, 2, 3})
 	i, b := Swap_positions(true, 10)
 }

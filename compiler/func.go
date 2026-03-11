@@ -86,6 +86,45 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) []ast.Decl {
 	return decls
 }
 
+func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix ...string) []ast.Decl {
+	decls := []ast.Decl{}
+
+	g.State.Push(InFuncDeclaration)
+	g.ScopeChain = m.Scope
+	g.pushTracker()
+	defer func() {
+		g.State.Pop()
+		g.popTracker()
+	}()
+
+	params := g.GetFuncParams(m.Params)
+
+	signature := &ast.FuncType{
+		Params: &ast.FieldList{
+			List: params,
+		},
+		Results: &ast.FieldList{
+			List: g.GetReturnType(m.ReturnType()),
+		},
+	}
+
+	owner := ""
+	if len(prefix) > 0 {
+		owner = prefix[0]
+	} else if c != nil {
+		owner = c.Name()
+	}
+	funcName := owner + parser.GoName(m.Name)
+	decl := &ast.FuncDecl{
+		Type: signature,
+		Body: g.CompileBlockStmt(m.Body.Statements),
+		Name: g.it.Get(funcName),
+	}
+
+	decls = append(decls, decl)
+	return decls
+}
+
 func (g *GoProgram) GetFuncParams(rubyParams []*parser.Param) []*ast.Field {
 	params := []*ast.Field{}
 	var splat *parser.Param
@@ -122,6 +161,9 @@ func (g *GoProgram) GetFuncParams(rubyParams []*parser.Param) []*ast.Field {
 
 func (g *GoProgram) GetReturnType(t types.Type) []*ast.Field {
 	fields := []*ast.Field{}
+	if t == nil || t == types.NilType {
+		return fields
+	}
 	if t.IsMultiple() {
 		multiple := t.(types.Multiple)
 		for _, t := range multiple {

@@ -157,6 +157,7 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 		  end`, "(for [x] in [1, 2, 3, 4] ((Kernel.puts(x))))"},
 		{"def x(*n); return n[0]; end; x(5)", `(def x(*n) (return n[0]))
 (x(5))`},
+		{`def each; @items.each do |x| yield x; end; end`, `(def each(&blk) (@items.each(block = (|x| (blk.call(x))))))`},
 	}
 
 	for i, tt := range tests {
@@ -1353,10 +1354,11 @@ func TestMethodParamInferenceErrors(t *testing.T) {
 				end
 			end
 			foo(1, 2)`, "line 2: Different branches of conditional returned different types: (if (bar == baz) true (else 7))"},
-		{`def foo(bar, baz)
-		    [bar, baz]
-			end
-			foo(1, true)`, "line 2: Heterogenous array membership detected adding BoolType"},
+		// Heterogeneous array literals now produce Tuple types (valid at parse time, may fail at compile time)
+		// {`def foo(bar, baz)
+		//     [bar, baz]
+		// 		end
+		// 		foo(1, true)`, "line 2: Heterogenous array membership detected adding BoolType"},
 		{`def foo(bar)
 		    bar[0] = true
 			end

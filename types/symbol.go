@@ -50,4 +50,13 @@ func (t Symbol) Alias(existingMethod, newMethod string) {
 
 func init() {
 	SymbolType.Def("==", simpleComparisonOperatorSpec(token.EQL))
+	SymbolType.Def("to_s", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return StringType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			// Symbols are already strings in Go, so to_s is identity
+			return Transform{Expr: rcvr.Expr}
+		},
+	})
 }

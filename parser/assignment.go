@@ -44,10 +44,19 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			localName = lhs.Val
 			GetType(lhs, scope, class)
 		case *BracketAssignmentNode:
-			if ident, ok := lhs.Composite.(*IdentNode); ok {
-				localName = ident.Val
+			// Bracket assignments modify an element, not the variable itself.
+			// Resolve the composite type and trigger key refinement if needed.
+			if _, err := GetType(lhs, scope, class); err != nil {
+				return nil, err
 			}
+			n.Reassignment = true
+			typelist = append(typelist, lhs.Type())
+			continue
 		case *IVarNode:
+			GetType(lhs, scope, class)
+		case *CVarNode:
+			GetType(lhs, scope, class)
+		case *GVarNode:
 			GetType(lhs, scope, class)
 		case *ConstantNode:
 			localName = lhs.Val
@@ -142,6 +151,15 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 					return nil, NewParseError(n, err.Error())
 				}
 			}
+		case *CVarNode:
+			lft.SetType(assignedType)
+			n.Reassignment = true
+			if class != nil {
+				class.AddCVar(lft.NormalizedVal(), &CVar{Name: lft.NormalizedVal(), _type: assignedType})
+			}
+		case *GVarNode:
+			lft.SetType(assignedType)
+			n.Reassignment = true
 		case *ConstantNode:
 			lft.SetType(assignedType)
 			if scope.Current().TakesConstants() {
@@ -165,13 +183,46 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			}
 			n.SetterCall = true
 		default:
+			// Store lambda blocks directly in scope so .call() resolution works
+			if i < len(n.Right) {
+				if lambda, ok := n.Right[i].(*LambdaNode); ok {
+					lambdaScope := scope.Extend(NewScope("lambda"))
+					lambda.Block.Scope = lambdaScope
+					method := &Method{
+						Name:      localName,
+						ParamList: lambda.Block.ParamList,
+						Locals:    NewScope(localName),
+						Scope:     lambdaScope,
+						Body:      lambda.Block.Body,
+						Block:     &BlockParam{Name: localName, ParamList: lambda.Block.ParamList},
+					}
+					lambda.Block.Method = method
+					scope.Set(localName, lambda.Block)
+					typelist = append(typelist, assignedType)
+					continue
+				}
+			}
 			local := scope.ResolveVar(localName)
 			if _, ok := local.(*IVar); ok || local == BadLocal {
-				scope.Set(localName, &RubyLocal{_type: assignedType})
+				newLocal := &RubyLocal{_type: assignedType}
+				// Mark empty arrays and default hashes as refinable for type inference
+				if arrayType, ok := assignedType.(types.Array); ok && arrayType.Element == types.AnyType {
+					newLocal.MarkAsRefinable()
+				}
+				if hashType, ok := assignedType.(types.Hash); ok && hashType.HasDefault && hashType.Key == types.AnyType {
+					newLocal.MarkAsRefinable()
+				}
+				scope.Set(localName, newLocal)
 			} else {
 				if local.Type() == nil {
 					loc := local.(*RubyLocal)
 					loc.SetType(assignedType)
+					if arrayType, ok := assignedType.(types.Array); ok && arrayType.Element == types.AnyType {
+						loc.MarkAsRefinable()
+					}
+					if hashType, ok := assignedType.(types.Hash); ok && hashType.HasDefault && hashType.Key == types.AnyType {
+						loc.MarkAsRefinable()
+					}
 				} else {
 					n.Reassignment = true
 				}
@@ -180,6 +231,11 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 						if arr.Element != assignedType {
 							return nil, NewParseError(n, "Attempted to assign %s member to %s", assignedType, arr)
 						}
+					} else if opt, ok := local.Type().(types.Optional); ok && opt.Element.Equals(assignedType) {
+						// Allow assigning inner type T to Optional(T) variable (e.g., x ||= default)
+						// Variable keeps its Optional type
+					} else if _, ok := assignedType.(types.Optional); ok {
+						// Allow upgrading to Optional
 					} else {
 						return nil, NewParseError(n, "tried assigning type %s to local %s in scope %s but had previously assigned type %s", assignedType, localName, scope.Name(), local.Type())
 					}

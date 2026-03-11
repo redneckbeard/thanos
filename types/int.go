@@ -95,13 +95,25 @@ func init() {
 	//`Integer#-@`
 	//`Integer#[]`
 	//`Integer#^`
-	//TODO why does this break? IntType.Alias("magnitude", "abs")
 	//`Integer#abs2`
 	//`Integer#allbits?`
 	//`Integer#angle`
 	//`Integer#anybits?`
 	//`Integer#arg`
-	//`Integer#between?`
+	IntType.Def("between?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(
+					bst.Binary(rcvr.Expr, token.GEQ, args[0].Expr),
+					token.LAND,
+					bst.Binary(rcvr.Expr, token.LEQ, args[1].Expr),
+				),
+			}
+		},
+	})
 	//`Integer#bit_length`
 	//`Integer#ceil`
 	//`Integer#chr`
@@ -115,14 +127,28 @@ func init() {
 			}
 		},
 	})
-	//`Integer#clamp`
-	//`Integer#coerce`
-	//`Integer#conj`
-	//`Integer#conjugate`
-	//`Integer#denominator`
-	//`Integer#digits`
-	//`Integer#div`
-	//`Integer#divmod`
+	IntType.Def("clamp", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "Clamp", rcvr.Expr, args[0].Expr, args[1].Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
+	IntType.Def("digits", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return NewArray(IntType), nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "Digits", rcvr.Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
 	IntType.Def("downto", MethodSpec{
 		blockArgs: func(r Type, args []Type) []Type {
 			return []Type{r}
@@ -161,8 +187,28 @@ func init() {
 	//`Integer#fdiv`
 	//`Integer#finite?`
 	//`Integer#floor`
-	//`Integer#gcd`
-	//`Integer#gcdlcm`
+	IntType.Def("gcd", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "Gcd", rcvr.Expr, args[0].Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
+	IntType.Def("lcm", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "Lcm", rcvr.Expr, args[0].Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
 	//`Integer#i`
 	//`Integer#imag`
 	//`Integer#imaginary`
@@ -196,7 +242,17 @@ func init() {
 	//`Integer#ord`
 	//`Integer#phase`
 	//`Integer#polar`
-	//`Integer#pow`
+	IntType.Def("pow", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call(nil, "int", bst.Call("math", "Pow", bst.Call(nil, "float64", rcvr.Expr), bst.Call(nil, "float64", args[0].Expr))),
+				Imports: []string{"math"},
+			}
+		},
+	})
 	//`Integer#pred`
 	//`Integer#quo`
 	//`Integer#rationalize`
@@ -240,8 +296,24 @@ func init() {
 		},
 	})
 	//`Integer#to_c`
-	//`Integer#to_f`
-	//`Integer#to_i`
+	IntType.Def("to_f", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return FloatType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Call(nil, "float64", rcvr.Expr),
+			}
+		},
+	})
+	IntType.Def("to_i", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{Expr: rcvr.Expr}
+		},
+	})
 	//`Integer#to_int`
 	//`Integer#to_r`
 	IntType.Def("to_s", MethodSpec{
@@ -263,6 +335,31 @@ func init() {
 	})
 	//`Integer#truncate`
 	//`Integer#upto`
+	IntType.Def("step", MethodSpec{
+		blockArgs: func(r Type, args []Type) []Type {
+			return []Type{r}
+		},
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return NilType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			funcLit := &ast.FuncLit{
+				Type: &ast.FuncType{
+					Params: &ast.FieldList{
+						List: []*ast.Field{{
+							Names: []*ast.Ident{blk.Args[0].(*ast.Ident)},
+							Type:  ast.NewIdent("int"),
+						}},
+					},
+				},
+				Body: &ast.BlockStmt{List: blk.Statements},
+			}
+			return Transform{
+				Stmts:   []ast.Stmt{&ast.ExprStmt{X: bst.Call("stdlib", "Step", rcvr.Expr, args[0].Expr, args[1].Expr, funcLit)}},
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
 	IntType.Def("upto", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			return BoolType, nil

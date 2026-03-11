@@ -1,0 +1,32 @@
+{
+  "csv": {
+    "go_imports": ["github.com/redneckbeard/thanos/csv"],
+    "modules": {},
+    "types": {
+      "CSV::Row": {
+        "go_type": "*csv.Row",
+        "methods": {
+          "[]":      {"call": "Get",     "returns": "string"},
+          "[]=":     {"call": "Set",     "returns": "nil"},
+          "headers": {"call": "Headers", "returns": "[]string"},
+          "fields":  {"call": "Fields",  "returns": "[]string"},
+          "to_h":    {"call": "ToHash",  "returns": "{string: string}", "returns_go": "map[string]string"},
+          "to_csv":  {"call": "ToCsv",   "returns": "string"},
+          "delete":  {"call": "Delete",  "returns": "[]string"}
+        }
+      },
+      "CSV::Table": {
+        "go_type": "*csv.Table",
+        "methods": {
+          "[]":      {"call": "Get",      "returns": "CSV::Row"},
+          "headers": {"call": "Headers",  "returns": "[]string"},
+          "length":  {"call": "Len",      "returns": "int"},
+          "size":    {"call": "Len",      "returns": "int"},
+          "to_a":    {"call": "ToArray",  "returns": "[][]string"},
+          "to_csv":  {"call": "ToCsv",    "returns": "string"},
+          "each":    {"iterate": "ToSlice", "yields": "CSV::Row"}
+        }
+      }
+    }
+  }
+}

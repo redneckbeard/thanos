@@ -34,6 +34,30 @@ func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types
 		if t, err := tl.MethodReturnType(n.Operator, nil, []types.Type{tr}); err != nil {
 			return nil, NewParseError(n, err.Error())
 		} else {
+			// Check if this method can refine variable types (e.g., << on empty arrays)
+			if ident, ok := n.Left.(*IdentNode); ok {
+				// Try to get the method spec and call RefineVariable if it exists
+				if spec, hasSpec := tl.GetMethodSpec(n.Operator); hasSpec && spec.RefineVariable != nil {
+					spec.RefineVariable(ident.Val, t, locals)
+				}
+			}
+			// Refine hash value type when mutating a hash-accessed element
+			// e.g. h["key"] << "val" refines Hash{K, Array{AnyType}} → Hash{K, Array{String}}
+			if ba, ok := n.Left.(*BracketAccessNode); ok {
+				if spec, hasSpec := tl.GetMethodSpec(n.Operator); hasSpec && spec.RefineVariable != nil {
+					if ident, ok := ba.Composite.(*IdentNode); ok {
+						if h, isHash := ba.Composite.Type().(types.Hash); isHash {
+							if t != tl {
+								refined := types.NewHash(h.Key, t)
+								if h.HasDefault {
+									refined = types.NewDefaultHash(h.Key, t)
+								}
+								locals.RefineVariableType(ident.Val, refined)
+							}
+						}
+					}
+				}
+			}
 			return t, nil
 		}
 	}

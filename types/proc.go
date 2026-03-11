@@ -42,6 +42,10 @@ func (t *Proc) TransformAST(m string, rcvr ast.Expr, args []TypeExpr, blk *Block
 	return t.Instance.MustResolve(m).TransformAST(TypeExpr{Expr: rcvr, Type: t}, args, blk, it)
 }
 
+func (t *Proc) GetMethodSpec(m string) (MethodSpec, bool) {
+	return t.Instance.Resolve(m)
+}
+
 func init() {
 	ProcClass.Instance.Def("call", MethodSpec{
 		blockArgs: func(r Type, args []Type) []Type {

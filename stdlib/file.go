@@ -25,6 +25,19 @@ func MakeSplitFunc(separator string, chomp bool) bufio.SplitFunc {
 	}
 }
 
+func FileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func IsDirectory(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
+
 var OpenModes = map[string]int{
 	"r":  os.O_RDONLY,
 	"r+": os.O_RDWR,

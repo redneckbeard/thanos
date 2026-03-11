@@ -6,11 +6,15 @@ import (
 	"go/ast"
 	"go/format"
 	"go/token"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/redneckbeard/thanos/bst"
 	"github.com/redneckbeard/thanos/parser"
+	"github.com/redneckbeard/thanos/types"
 )
 
 type State string
@@ -23,25 +27,121 @@ const (
 	InBlockBody         State = "InBlockBody"
 )
 
-var globalIdents = make(bst.IdentTracker)
+var globalIdents = bst.NewIdentTracker()
 
-type GoProgram struct {
-	State        *parser.Stack[State]
-	ScopeChain   parser.ScopeChain
-	Imports      map[string]bool
-	CurrentLhs   []parser.Node
-	BlockStack   *parser.Stack[*ast.BlockStmt]
-	GlobalVars   []*ast.ValueSpec
-	Constants    []*ast.ValueSpec
-	TrackerStack []bst.IdentTracker
-	it           bst.IdentTracker
-	currentRcvr  *ast.Ident
+// fmtPiece is either a literal text segment or an interpolation slot.
+type fmtPiece struct {
+	text     string   // non-empty for literal text
+	arg      ast.Expr // non-nil for interpolation slots
+	fallback string   // verb from Ruby type (only for interp slots)
 }
 
-func Compile(p *parser.Root) (string, error) {
-	globalIdents = make(bst.IdentTracker)
-	g := &GoProgram{State: &parser.Stack[State]{}, Imports: make(map[string]bool), BlockStack: &parser.Stack[*ast.BlockStmt]{}}
+// deferredSprintf represents a fmt.Sprintf call whose format verbs need
+// to be resolved after all transforms (including Remap) have run.
+type deferredSprintf struct {
+	fmtLit  *ast.BasicLit    // the format string literal to rewrite
+	pieces  []fmtPiece
+	delim   string           // " or `
+	tracker bst.IdentTracker // the tracker active when this was created
+}
+
+type GoProgram struct {
+	State           *parser.Stack[State]
+	ScopeChain      parser.ScopeChain
+	Imports         map[string]bool
+	CurrentLhs      []parser.Node
+	BlockStack      *parser.Stack[*ast.BlockStmt]
+	GlobalVars      []*ast.ValueSpec
+	Constants       []*ast.ValueSpec
+	TrackerStack    []bst.IdentTracker
+	Warnings        []string
+	Finalizers      []ast.Stmt
+	deferredInterps []deferredSprintf
+	it              bst.IdentTracker
+	currentRcvr     *ast.Ident
+	cs              *commentState
+	orderSafeHashes map[string]bool
+	modulePrefix    string // non-empty when compiling a module into its own package
+}
+
+// localName strips the module prefix from a qualified name when compiling
+// inside a module package. Handles both Ruby prefixes ("FooBaz" → "Baz")
+// and Go package qualifiers ("geometry.Pi" → "Pi").
+func (g *GoProgram) localName(qualifiedName string) string {
+	if g.modulePrefix != "" {
+		// Strip Go package qualifier (e.g., "geometry." from "geometry.Pi")
+		pkgDot := strings.ToLower(g.modulePrefix) + "."
+		if strings.HasPrefix(qualifiedName, pkgDot) {
+			return strings.TrimPrefix(qualifiedName, pkgDot)
+		}
+		// Strip Ruby module prefix (e.g., "Foo" from "FooBaz")
+		return strings.TrimPrefix(qualifiedName, g.modulePrefix)
+	}
+	return qualifiedName
+}
+
+// localizeExpr strips self-package qualifiers from idents in an expression
+// when compiling inside a module package.
+func (g *GoProgram) localizeExpr(expr ast.Expr) ast.Expr {
+	if g.modulePrefix == "" || expr == nil {
+		return expr
+	}
+	pkgDot := strings.ToLower(g.modulePrefix) + "."
+	ast.Inspect(expr, func(n ast.Node) bool {
+		if ident, ok := n.(*ast.Ident); ok {
+			if strings.HasPrefix(ident.Name, pkgDot) {
+				ident.Name = strings.TrimPrefix(ident.Name, pkgDot)
+			}
+		}
+		return true
+	})
+	return expr
+}
+
+func (g *GoProgram) Warn(lineNo int, msg string) {
+	g.Warnings = append(g.Warnings, fmt.Sprintf("warning: line %d: %s", lineNo, msg))
+}
+
+// CompileResult holds the output of a compilation — one or more Go source files.
+// For simple programs, only "main.go" is present. When Ruby modules are used,
+// each module produces a separate Go package in its own subdirectory.
+type CompileResult struct {
+	Files map[string]string // relative path -> Go source
+}
+
+// MainFile returns the main.go source for backward compatibility.
+func (r *CompileResult) MainFile() string {
+	return r.Files["main.go"]
+}
+
+func Compile(p *parser.Root) (*CompileResult, error) {
+	globalIdents = bst.NewIdentTracker()
+	g := &GoProgram{State: &parser.Stack[State]{}, ScopeChain: p.ScopeChain, Imports: make(map[string]bool), BlockStack: &parser.Stack[*ast.BlockStmt]{}}
+	g.cs = newCommentState(p.Comments)
+	g.orderSafeHashes = parser.MarkOrderSafeHashes(p.ScopeChain)
 	g.pushTracker()
+
+	// Set PackagePath on module classes so transforms can emit correct imports
+	if p.ModulePath == "" {
+		p.ModulePath = "tmpmod"
+	}
+	for _, mod := range p.TopLevelModules {
+		pkgName := strings.ToLower(mod.Name())
+		pkgPath := p.ModulePath + "/" + pkgName
+		if mod.Type() != nil {
+			if cls, ok := mod.Type().(*types.Class); ok {
+				cls.PackagePath = pkgPath
+			}
+		}
+		// Also set on classes within the module
+		for _, innerCls := range mod.Classes {
+			if innerCls.Type() != nil {
+				if cls, ok := innerCls.Type().(*types.Class); ok {
+					cls.PackagePath = pkgPath
+				}
+			}
+		}
+	}
 
 	f := &ast.File{
 		Name: ast.NewIdent("main"),
@@ -56,6 +156,10 @@ func Compile(p *parser.Root) (string, error) {
 	}
 
 	for _, mod := range p.TopLevelModules {
+		// Modules with classes or class methods become their own packages
+		if len(mod.ClassMethods) > 0 || len(mod.Classes) > 0 {
+			continue
+		}
 		decls = append(decls, g.CompileModule(mod)...)
 	}
 
@@ -63,20 +167,51 @@ func Compile(p *parser.Root) (string, error) {
 		decls = append(decls, g.CompileClass(class)...)
 	}
 
+	// Emit package-level vars for global variables ($var)
+	for name, t := range parser.GlobalVars() {
+		if t != nil {
+			g.addGlobalVar(globalIdents.Get(name), g.it.Get(t.GoType()), nil)
+		}
+	}
+
+	// Reserve lines for package decl, imports, other top-level decls.
+	// The exact line numbers will be adjusted at the end.
+	// Start the main function body at a high offset to leave room for
+	// top-level declarations that are assembled after compilation.
+	g.cs.goLine = 1000
+
 	mainFunc := &ast.FuncDecl{
-		Name: ast.NewIdent("main"),
+		Name: &ast.Ident{Name: "main", NamePos: g.cs.pos(g.cs.goLine)},
 		Type: &ast.FuncType{
+			Func:   g.cs.pos(g.cs.goLine),
 			Params: &ast.FieldList{},
 		},
 	}
 
 	g.newBlockStmt()
 	g.pushTracker()
+	hasComments := len(p.Comments) > 0
 	for _, stmt := range p.Statements {
-		g.CompileStmt(stmt)
+		if hasComments {
+			beforeLen := len(g.BlockStack.Peek().List)
+			g.CompileStmt(stmt)
+			for _, goStmt := range g.BlockStack.Peek().List[beforeLen:] {
+				g.cs.stmtLines[goStmt] = stmt.LineNo()
+			}
+		} else {
+			g.CompileStmt(stmt)
+		}
 	}
 	g.popTracker()
 	mainFunc.Body = g.BlockStack.Peek()
+	if hasComments {
+		mainFunc.Body.Lbrace = g.cs.pos(1000)
+		g.cs.stampBlockWithComments(mainFunc.Body)
+	}
+	// Append any finalizer statements
+	if len(g.Finalizers) > 0 {
+		mainFunc.Body.List = append(mainFunc.Body.List, g.Finalizers...)
+	}
 	g.BlockStack.Pop()
 
 	decls = append(decls, mainFunc)
@@ -122,15 +257,124 @@ func Compile(p *parser.Root) (string, error) {
 
 	f.Decls = append(topDecls, decls...)
 
+	g.finalizeDeferredInterps()
+
+	fset := token.NewFileSet()
+	if hasComments {
+		// Position top-level declarations before the main function body.
+		topLine := 2
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == "main" {
+				continue
+			}
+			topLine++
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil {
+				fd.Type.Func = g.cs.pos(topLine)
+				fd.Name.NamePos = g.cs.pos(topLine)
+				fd.Body.Lbrace = g.cs.pos(topLine)
+				for _, s := range fd.Body.List {
+					topLine++
+					setStmtPos(s, g.cs.pos(topLine))
+				}
+				topLine++
+				fd.Body.Rbrace = g.cs.pos(topLine)
+			} else if gd, ok := d.(*ast.GenDecl); ok {
+				gd.TokPos = g.cs.pos(topLine)
+				if len(gd.Specs) > 1 {
+					gd.Lparen = g.cs.pos(topLine)
+					topLine += len(gd.Specs)
+					gd.Rparen = g.cs.pos(topLine)
+				}
+			}
+		}
+		f.Package = g.cs.pos(1)
+		f.Name = &ast.Ident{Name: "main", NamePos: g.cs.pos(1)}
+		f.Comments = g.cs.comments
+		fset = g.cs.fset
+	}
+
+	mainSrc, err := formatAndImports(f, fset)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &CompileResult{Files: map[string]string{"main.go": mainSrc}}
+
+	// Compile each top-level module into its own package
+	for _, mod := range p.TopLevelModules {
+		if len(mod.ClassMethods) == 0 && len(mod.Classes) == 0 {
+			continue
+		}
+		pkgName := strings.ToLower(mod.Name())
+		modG := &GoProgram{
+			State:        &parser.Stack[State]{},
+			ScopeChain:   p.ScopeChain,
+			Imports:      make(map[string]bool),
+			BlockStack:   &parser.Stack[*ast.BlockStmt]{},
+			modulePrefix: mod.Name(),
+		}
+		modG.pushTracker()
+
+		modDecls := []ast.Decl{}
+		modG.addConstants(mod.Constants)
+		for _, cls := range mod.Classes {
+			modDecls = append(modDecls, modG.CompileClass(cls)...)
+		}
+		for _, m := range mod.ClassMethods {
+			modDecls = append(modDecls, modG.CompileClassMethod(m, nil)...)
+		}
+
+		modFile := &ast.File{
+			Name: ast.NewIdent(pkgName),
+		}
+
+		// Add imports, constants, global vars at the top
+		modTopDecls := []ast.Decl{}
+		modImportSpecs := []ast.Spec{}
+		for imp := range modG.Imports {
+			modImportSpecs = append(modImportSpecs, &ast.ImportSpec{Path: bst.String(imp)})
+		}
+		if len(modImportSpecs) > 0 {
+			modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.IMPORT, Specs: modImportSpecs})
+		}
+		for _, spec := range modG.Constants {
+			modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.CONST, Specs: []ast.Spec{spec}})
+		}
+		for _, spec := range modG.GlobalVars {
+			modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.VAR, Specs: []ast.Spec{spec}})
+		}
+		modFile.Decls = append(modTopDecls, modDecls...)
+
+		modSrc, err := formatAndImports(modFile, token.NewFileSet())
+		if err != nil {
+			return nil, fmt.Errorf("error compiling module %s: %w", mod.Name(), err)
+		}
+		filePath := pkgName + "/" + pkgName + ".go"
+		result.Files[filePath] = modSrc
+	}
+
+	for _, w := range g.Warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
+
+	return result, nil
+}
+
+func formatAndImports(f *ast.File, fset *token.FileSet) (string, error) {
 	var in, out bytes.Buffer
-	err := format.Node(&in, token.NewFileSet(), f)
+	err := format.Node(&in, fset, f)
 	if err != nil {
 		return "", fmt.Errorf("Error converting AST to []byte: %s", err.Error())
 	}
 
 	intermediate := in.String()
 
-	cmd := exec.Command("goimports")
+	goimportsPath, err := exec.LookPath("goimports")
+	if err != nil {
+		home, _ := os.UserHomeDir()
+		goimportsPath = filepath.Join(home, "go", "bin", "goimports")
+	}
+	cmd := exec.Command(goimportsPath)
 	cmd.Stdin = &in
 	cmd.Stdout = &out
 	err = cmd.Run()
@@ -138,7 +382,6 @@ func Compile(p *parser.Root) (string, error) {
 		fmt.Println(intermediate)
 		return intermediate, fmt.Errorf("Error running gofmt: %s", err.Error())
 	}
-
 	return out.String(), nil
 }
 
@@ -157,7 +400,7 @@ func (g *GoProgram) newBlockStmt() *ast.BlockStmt {
 }
 
 func (g *GoProgram) pushTracker() {
-	g.it = make(bst.IdentTracker)
+	g.it = bst.NewIdentTracker()
 	g.TrackerStack = append(g.TrackerStack, g.it)
 }
 
@@ -175,8 +418,13 @@ func (g *GoProgram) appendToCurrentBlock(stmts ...ast.Stmt) {
 	currentBlock.List = append(currentBlock.List, stmts...)
 }
 
+
 func (g *GoProgram) AddImports(packages ...string) {
 	for _, pkg := range packages {
+		// Skip self-imports when compiling inside a module package
+		if g.modulePrefix != "" && strings.HasSuffix(pkg, "/"+strings.ToLower(g.modulePrefix)) {
+			continue
+		}
 		if _, present := g.Imports[pkg]; !present {
 			g.Imports[pkg] = true
 		}
@@ -184,11 +432,14 @@ func (g *GoProgram) AddImports(packages ...string) {
 }
 
 func (g *GoProgram) addGlobalVar(name *ast.Ident, typeExpr ast.Expr, val ast.Expr) {
-	g.GlobalVars = append(g.GlobalVars, &ast.ValueSpec{
-		Names:  []*ast.Ident{name},
-		Type:   typeExpr,
-		Values: []ast.Expr{val},
-	})
+	spec := &ast.ValueSpec{
+		Names: []*ast.Ident{name},
+		Type:  typeExpr,
+	}
+	if val != nil {
+		spec.Values = []ast.Expr{val}
+	}
+	g.GlobalVars = append(g.GlobalVars, spec)
 }
 
 func (g *GoProgram) addConstant(name *ast.Ident, val ast.Expr) {
@@ -196,6 +447,24 @@ func (g *GoProgram) addConstant(name *ast.Ident, val ast.Expr) {
 		Names:  []*ast.Ident{name},
 		Values: []ast.Expr{val},
 	})
+}
+
+// isOrderSafe checks whether a hash variable can use native map[K]V
+// instead of *stdlib.OrderedMap[K,V].
+func (g *GoProgram) isOrderSafe(varName string) bool {
+	return g.orderSafeHashes[varName]
+}
+
+// hashLhsIsOrderSafe checks if the current LHS variable (during assignment
+// compilation) is an order-safe hash.
+func (g *GoProgram) hashLhsIsOrderSafe() bool {
+	if len(g.CurrentLhs) != 1 {
+		return false
+	}
+	if ident, ok := g.CurrentLhs[0].(*parser.IdentNode); ok {
+		return g.isOrderSafe(ident.Val)
+	}
+	return false
 }
 
 func (g *GoProgram) mapToExprs(nodes []parser.Node) []ast.Expr {

@@ -1,0 +1,51 @@
+{
+  "securerandom": {
+    "go_imports": ["github.com/redneckbeard/thanos/shims"],
+    "modules": {
+      "SecureRandom": {
+        "methods": {
+          "hex": {
+            "call": ["shims.SecureRandomHex"],
+            "returns": "string"
+          },
+          "bytes": {
+            "call": ["shims.SecureRandomBytes"],
+            "returns": "string"
+          },
+          "random_bytes": {
+            "call": ["shims.SecureRandomBytes"],
+            "returns": "string"
+          },
+          "base64": {
+            "call": ["shims.SecureRandomBase64"],
+            "returns": "string"
+          },
+          "urlsafe_base64": {
+            "call": ["shims.SecureRandomURLSafeBase64"],
+            "returns": "string"
+          },
+          "uuid": {
+            "call": ["shims.SecureRandomUUID"],
+            "returns": "string"
+          },
+          "random_number": {
+            "call": ["shims.SecureRandomNumber"],
+            "returns": "int"
+          },
+          "alphanumeric": {
+            "call": ["shims.SecureRandomAlphanumeric"],
+            "returns": "string"
+          },
+          "rand": {
+            "call": ["shims.SecureRandomNumber"],
+            "returns": "int"
+          },
+          "gen_random": {
+            "call": ["shims.SecureRandomBytes"],
+            "returns": "string"
+          }
+        }
+      }
+    }
+  }
+}

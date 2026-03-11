@@ -1,0 +1,36 @@
+{
+  "net/http": {
+    "go_imports": ["github.com/redneckbeard/thanos/net_http"],
+    "modules": {},
+    "types": {
+      "Net::HTTPResponse": {
+        "go_type": "*net_http.Response",
+        "methods": {
+          "body":    {"call": "Body",      "returns": "string"},
+          "code":    {"call": "Code",      "returns": "string"},
+          "message": {"call": "Message",   "returns": "string"},
+          "[]":      {"call": "GetHeader", "returns": "string"}
+        }
+      },
+      "Net::HTTPClient": {
+        "go_type": "*net_http.Client",
+        "methods": {
+          "get":     {"call": "Get",       "returns": "Net::HTTPResponse"},
+          "post":    {"call": "Post",      "returns": "Net::HTTPResponse"},
+          "put":     {"call": "Put",       "returns": "Net::HTTPResponse"},
+          "patch":   {"call": "Patch",     "returns": "Net::HTTPResponse"},
+          "delete":  {"call": "Delete",    "returns": "Net::HTTPResponse"},
+          "head":    {"call": "Head",      "returns": "Net::HTTPResponse"},
+          "request": {"call": "DoRequest", "returns": "Net::HTTPResponse"}
+        }
+      },
+      "Net::HTTPRequest": {
+        "go_type": "*net_http.Request",
+        "methods": {
+          "[]":      {"call": "GetHeader", "returns": "string"},
+          "[]=":     {"call": "SetHeader", "returns": "nil"}
+        }
+      }
+    }
+  }
+}

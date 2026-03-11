@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/redneckbeard/thanos/stdlib"
+)
 
 func main() {
 	x := 100
@@ -33,7 +37,12 @@ func main() {
 	}
 	var k string
 	var v int
-	for k, v = range map[string]int{"foo": 1, "bar": 2, "baz": 3, "quux": 4} {
+	om := stdlib.NewOrderedMap[string, int]()
+	om.Set("foo", 1)
+	om.Set("bar", 2)
+	om.Set("baz", 3)
+	om.Set("quux", 4)
+	for k, v = range om.All() {
 		if k == "foo" || v == 10 {
 			continue
 		}

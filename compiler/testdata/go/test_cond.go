@@ -93,7 +93,10 @@ func Switch_on_regexps(x string) int {
 		return 3
 	}
 }
+
 func main() {
+	// since we infer the type signature of the method at compile time, the following condition becomes essentially tautological and can just be compiled away entirely
+	// In Go, this now has to get expanded to several expressions with ||
 	baz := Cond_return(2, 4)
 	quux := Cond_assignment(1, 3, false)
 	zoo := Cond_invoke()

@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/redneckbeard/thanos/bst"
@@ -35,8 +36,11 @@ func (n *IVarNode) LineNo() int { return n.lineNo }
 func (n *IVarNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if class != nil {
 		n.Class = class
-		if spec, exists := n.Class.ivars[n.NormalizedVal()]; exists {
-			return spec.Type(), nil
+		name := n.NormalizedVal()
+		for cls := class; cls != nil; cls = cls.Parent() {
+			if spec, exists := cls.ivars[name]; exists {
+				return spec.Type(), nil
+			}
 		}
 	}
 	return nil, NewParseError(n, "Unable to connect to the mothership")
@@ -53,29 +57,67 @@ func (n *IVarNode) NormalizedVal() string {
 }
 
 func (n *IVarNode) IVar() *IVar {
-	if ivar, exists := n.Class.ivars[n.NormalizedVal()]; exists {
-		return ivar
+	name := n.NormalizedVal()
+	for cls := n.Class; cls != nil; cls = cls.Parent() {
+		if ivar, exists := cls.ivars[name]; exists {
+			return ivar
+		}
 	}
 	return nil
 }
 
 type CVarNode struct {
 	Val    string
+	Class  *Class
 	_type  types.Type
 	lineNo int
 }
 
 func (n *CVarNode) String() string       { return n.Val }
 func (n *CVarNode) Type() types.Type     { return n._type }
-func (n *CVarNode) SetType(t types.Type) { n._type = t }
-func (n *CVarNode) LineNo() int          { return n.lineNo }
+func (n *CVarNode) SetType(t types.Type) {
+	n._type = t
+	if n.Class != nil {
+		name := n.NormalizedVal()
+		if cvar, exists := n.Class.cvars[name]; exists {
+			cvar._type = t
+		}
+	}
+}
+func (n *CVarNode) LineNo() int { return n.lineNo }
 
 func (n *CVarNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
-	return nil, nil
+	if class != nil {
+		n.Class = class
+		name := n.NormalizedVal()
+		// Walk up inheritance chain
+		for cls := class; cls != nil; cls = cls.Parent() {
+			if cvar, exists := cls.cvars[name]; exists {
+				return cvar.Type(), nil
+			}
+		}
+		// First reference — register on current class with nil type (will be set by assignment)
+		class.AddCVar(name, &CVar{Name: name})
+		return nil, nil
+	}
+	return nil, NewParseError(n, "Class variable used outside of a class")
 }
 
 func (n *CVarNode) Copy() Node {
 	return n
+}
+
+func (n *CVarNode) NormalizedVal() string {
+	return strings.TrimSpace(strings.TrimLeft(n.Val, "@"))
+}
+
+type CVar struct {
+	Name  string
+	_type types.Type
+}
+
+func (cvar *CVar) Type() types.Type {
+	return cvar._type
 }
 
 type IVar struct {
@@ -132,15 +174,16 @@ type Namespace interface {
 }
 
 type Module struct {
-	name       string
-	Statements Statements
-	MethodSet  *MethodSet
-	_type      types.Type
-	lineNo     int
-	Parent     *Module
-	Constants  []*Constant
-	Modules    []*Module
-	Classes    []*Class
+	name         string
+	Statements   Statements
+	MethodSet    *MethodSet
+	_type        types.Type
+	lineNo       int
+	Parent       *Module
+	Constants    []*Constant
+	Modules      []*Module
+	Classes      []*Class
+	ClassMethods []*Method
 }
 
 func (mod *Module) String() string {
@@ -167,7 +210,7 @@ func (mod *Module) LineNo() int          { return mod.lineNo }
 func (mod *Module) Copy() Node           { return mod }
 
 func (mod *Module) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
-	GetType(mod.Statements, scope, nil)
+	GetType(mod.Statements, scope.Extend(mod), nil)
 	return nil, nil
 }
 
@@ -223,6 +266,11 @@ func (mod *Module) Get(name string) (Local, bool) {
 
 func (mod *Module) Set(string, Local) {}
 
+type Alias struct {
+	NewName string
+	OldName string
+}
+
 type Class struct {
 	name, Superclass string
 	Statements       Statements
@@ -232,9 +280,14 @@ type Class struct {
 	Body             Body
 	ivars            map[string]*IVar
 	ivarOrder        []string
+	cvars            map[string]*CVar
+	cvarOrder        []string
 	Constants        []*Constant
 	Module           *Module
 	Private          bool
+	Aliases          []Alias
+	Includes         []string
+	ClassMethods     []*Method
 }
 
 func (cls *Class) String() string {
@@ -282,22 +335,58 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 		super = cls.Superclass
 	}
 	class := types.NewClass(cls.name, super, nil, types.ClassRegistry)
-	class.Prefix = outerScope.Prefix()
 	class.UserDefined = true
+	// If this class is inside a module, it lives in the module's Go package
+	if cls.Module != nil {
+		class.Package = strings.ToLower(cls.Module.Name())
+		class.Prefix = "" // no prefix needed — package provides the namespace
+	} else {
+		class.Prefix = outerScope.Prefix()
+	}
 	for _, name := range cls.MethodSet.Order {
 		m := cls.MethodSet.Methods[name]
 		cls.GenerateMethod(m, class)
+	}
+
+	// Register class methods (def self.x) on the Class type itself
+	for _, m := range cls.ClassMethods {
+		m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{cls, m.Scope[len(m.Scope)-1]}...)
+		cm := m // capture for closure
+		funcName := cls.name + GoName(m.Name)
+		class.Def(m.Name, types.MethodSpec{
+			ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+				if cm.Body.ReturnType == nil {
+					// Lazy analysis: set param types from call args and infer body
+					for i, param := range cm.Params {
+						if i < len(args) {
+							param._type = args[i]
+							cm.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
+						}
+					}
+					cm.Body.InferReturnType(cm.Scope, cls)
+				}
+				return cm.ReturnType(), nil
+			},
+			TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+				return types.Transform{
+					Expr: bst.Call(nil, funcName, types.UnwrapTypeExprs(args)...),
+				}
+			},
+		})
 	}
 
 	class.Instance.Def("initialize", types.MethodSpec{
 		ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
 			return class.Instance.(types.Type), nil
 		},
-		//blockArgs    func(Type, []Type) []Type
 		TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-			return types.Transform{
-				Expr: bst.Call(nil, class.Constructor(), types.UnwrapTypeExprs(args)...),
+			t := types.Transform{
+				Expr: bst.Call(nil, class.ExternalConstructor(), types.UnwrapTypeExprs(args)...),
 			}
+			if class.PackagePath != "" {
+				t.Imports = []string{class.PackagePath}
+			}
+			return t
 		},
 	})
 	cls._type = class
@@ -306,6 +395,10 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 	// the call and the method doesn't even exist here.
 	for name, list := range cls.MethodSet.Calls {
 		if _, defined := cls.MethodSet.Methods[name]; !defined {
+			// Check if this is an inherited method before bouncing to global
+			if _, _, inherited := cls.GetAncestorMethod(name); inherited {
+				continue
+			}
 			for _, call := range list {
 				if _, ok := call.Receiver.(*SelfNode); ok {
 					call.Receiver = nil
@@ -317,6 +410,58 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 
 	GetType(cls.Statements, outerScope.Extend(cls), cls)
 
+	for _, alias := range cls.Aliases {
+		if orig, ok := cls.MethodSet.Methods[alias.OldName]; ok {
+			goName := GoName(alias.NewName)
+			class.Instance.Def(alias.NewName, types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					return orig.ReturnType(), nil
+				},
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					return types.Transform{
+						Expr: bst.Call(rcvr.Expr, goName, types.UnwrapTypeExprs(args)...),
+					}
+				},
+			})
+		}
+	}
+
+	// Apply module mixins from `include` statements
+	for _, modName := range cls.Includes {
+		if mixin, ok := types.MixinRegistry[modName]; ok {
+			// Verify required methods are defined
+			allRequired := true
+			for _, req := range mixin.RequiredMethods {
+				if cls.MethodSet.Methods[req] == nil {
+					allRequired = false
+					break
+				}
+			}
+			if allRequired {
+				// Register synthetic calls to required methods so the analyzer infers their types
+				for _, req := range mixin.RequiredMethods {
+					syntheticCall := &MethodCall{
+						Receiver:   &SelfNode{_type: class.Instance.(types.Type), lineNo: cls.lineNo},
+						MethodName: req,
+						lineNo:     cls.lineNo,
+					}
+					// Only add synthetic arg for methods with positional params
+					// (e.g., <=> for Comparable needs an arg, but each for Enumerable does not)
+					if m := cls.MethodSet.Methods[req]; m != nil && len(m.PositionalParams()) > 0 {
+						syntheticCall.Args = ArgsNode{&SelfNode{_type: class.Instance.(types.Type), lineNo: cls.lineNo}}
+					}
+					cls.MethodSet.AddCall(syntheticCall)
+				}
+				ctx := types.MixinContext{}
+				// For Enumerable, provide lazy element type resolution
+				if eachMethod, ok := cls.MethodSet.Methods["each"]; ok {
+					ctx["eachMethod"] = eachMethod
+				}
+				mixin.Apply(class.Instance.(types.Instance), ctx)
+			}
+		}
+	}
+
 	return class
 }
 
@@ -325,20 +470,36 @@ func (cls *Class) GenerateMethod(m *Method, class *types.Class) {
 	m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{cls, m.Scope[len(m.Scope)-1]}...)
 	// track internal calls to own methods here where receiver is implicit
 	for _, c := range cls.MethodSet.Calls[m.Name] {
-		c.Receiver = &SelfNode{_type: class.Instance.(types.Type), lineNo: c.lineNo}
+		if c.Receiver == nil {
+			c.Receiver = &SelfNode{_type: class.Instance.(types.Type), lineNo: c.lineNo}
+		}
 	}
-	class.Instance.Def(m.Name, types.MethodSpec{
+	spec := types.MethodSpec{
 		ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
 			return m.ReturnType(), nil
 		},
-
-		//blockArgs    func(Type, []Type) []Type
 		TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+			callArgs := types.UnwrapTypeExprs(args)
+			if blk != nil {
+				callArgs = append(callArgs, blk.FuncLit(it))
+			}
 			return types.Transform{
-				Expr: bst.Call(rcvr.Expr, m.GoName(), types.UnwrapTypeExprs(args)...),
+				Expr: bst.Call(rcvr.Expr, m.GoName(), callArgs...),
 			}
 		},
-	})
+	}
+	if m.Block != nil {
+		spec.SetBlockArgs(func(receiverType types.Type, args []types.Type) []types.Type {
+			blockArgTypes := []types.Type{}
+			for _, p := range m.Block.Params {
+				if p.Type() != nil {
+					blockArgTypes = append(blockArgTypes, p.Type())
+				}
+			}
+			return blockArgTypes
+		})
+	}
+	class.Instance.Def(m.Name, spec)
 }
 
 func (cls *Class) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
@@ -374,6 +535,18 @@ func (cls *Class) Get(name string) (Local, bool) {
 		if constant.Name() == name {
 			return constant, true
 		}
+	}
+	// Check parent class methods
+	if parent, m, ok := cls.GetAncestorMethod(name); ok && len(m.Params) == 0 {
+		classType, _ := types.ClassRegistry.Get(parent.name)
+		call := &MethodCall{
+			Receiver:   &SelfNode{_type: classType.Instance.(types.Type)},
+			Method:     m,
+			MethodName: m.Name,
+			_type:      m.ReturnType(),
+		}
+		GetType(call, ScopeChain{cls}, cls)
+		return call, true
 	}
 	return BadLocal, false
 }
@@ -456,6 +629,9 @@ func (cls *Class) AddIVars(args ArgsNode, readable, writeable bool) {
 }
 func (cls *Class) AddIVar(name string, ivar *IVar) error {
 	if existing, ok := cls.ivars[name]; ok {
+		if DebugLevel() >= 5 {
+			fmt.Fprintf(os.Stderr, "DEBUG AddIVar(%s) existing: type=%v readable=%v | new: type=%v readable=%v\n", name, existing.Type(), existing.Readable, ivar.Type(), ivar.Readable)
+		}
 		if existing.Type() != ivar.Type() {
 			return fmt.Errorf("Attempted to set @%s on %s with %s but already was assigned %s", name, cls.Name(), ivar.Type(), existing.Type())
 		} else if existing.Readable == ivar.Readable && existing.Writeable == ivar.Writeable {
@@ -526,6 +702,22 @@ func (cls *Class) AddIVar(name string, ivar *IVar) error {
 		cls.GenerateMethod(method, cls.Type().(*types.Class))
 	}
 	return nil
+}
+
+func (cls *Class) AddCVar(name string, cvar *CVar) {
+	if _, ok := cls.cvars[name]; !ok {
+		cls.cvars[name] = cvar
+		cls.cvarOrder = append(cls.cvarOrder, name)
+	}
+}
+
+func (cls *Class) CVars() []*CVar {
+	cvars := []*CVar{}
+	for _, name := range cls.cvarOrder {
+		cvar := cls.cvars[name]
+		cvars = append(cvars, cvar)
+	}
+	return cvars
 }
 
 func (cls *Class) IVars(skip map[string]bool) []*IVar {
@@ -621,6 +813,8 @@ func (n *ScopeAccessNode) ReceiverName() string {
 		return node.Val
 	case *Module:
 		return node.Name()
+	case *ScopeAccessNode:
+		return node.ReceiverName() + node.Constant
 	default:
 		panic(NewParseError(n, "Scope operator (::) used on type other than a possible class/module. While technically valid Ruby, nobody really does this and the grammar shouldn't allow it."))
 

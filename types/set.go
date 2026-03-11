@@ -49,6 +49,10 @@ func (t Set) Resolve(m string) (MethodSpec, bool) {
 	return t.Instance.Resolve(m)
 }
 
+func (t Set) GetMethodSpec(m string) (MethodSpec, bool) {
+	return t.Instance.Resolve(m)
+}
+
 func (t Set) MustResolve(m string) MethodSpec {
 	return t.Instance.MustResolve(m)
 }
@@ -113,20 +117,7 @@ func init() {
 			return r, nil
 		},
 		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
-			var transformedFinal *ast.ExprStmt
-			finalStatement := blk.Statements[len(blk.Statements)-1]
-			switch f := finalStatement.(type) {
-			case *ast.ReturnStmt:
-				transformedFinal = &ast.ExprStmt{
-					X: f.Results[0],
-				}
-			case *ast.ExprStmt:
-				transformedFinal = f
-			default:
-				panic("Encountered an unexpected node type")
-			}
-
-			blk.Statements[len(blk.Statements)-1] = transformedFinal
+			stripBlockReturn(blk)
 
 			loop := &ast.RangeStmt{
 				Key:   blk.Args[0],

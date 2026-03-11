@@ -2,6 +2,7 @@ package types
 
 import (
 	"go/ast"
+	"go/token"
 
 	"github.com/redneckbeard/thanos/bst"
 )
@@ -48,4 +49,153 @@ func (t Float) Alias(existingMethod, newMethod string) {
 }
 
 func init() {
+	FloatType.Def("ceil", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: &ast.CallExpr{
+					Fun:  it.Get("int"),
+					Args: []ast.Expr{bst.Call("math", "Ceil", rcvr.Expr)},
+				},
+				Imports: []string{"math"},
+			}
+		},
+	})
+	FloatType.Def("floor", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: &ast.CallExpr{
+					Fun:  it.Get("int"),
+					Args: []ast.Expr{bst.Call("math", "Floor", rcvr.Expr)},
+				},
+				Imports: []string{"math"},
+			}
+		},
+	})
+	FloatType.Def("round", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: &ast.CallExpr{
+					Fun:  it.Get("int"),
+					Args: []ast.Expr{bst.Call("math", "Round", rcvr.Expr)},
+				},
+				Imports: []string{"math"},
+			}
+		},
+	})
+	FloatType.Def("to_i", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: &ast.CallExpr{
+					Fun:  it.Get("int"),
+					Args: []ast.Expr{rcvr.Expr},
+				},
+			}
+		},
+	})
+	FloatType.Def("to_s", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return StringType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("strconv", "FormatFloat", rcvr.Expr, &ast.BasicLit{Kind: token.CHAR, Value: "'f'"}, &ast.UnaryExpr{Op: token.SUB, X: bst.Int(1)}, bst.Int(64)),
+				Imports: []string{"strconv"},
+			}
+		},
+	})
+	FloatType.Def("zero?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.EQL, &ast.BasicLit{Kind: token.FLOAT, Value: "0.0"}),
+			}
+		},
+	})
+	FloatType.Def("infinite?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("math", "IsInf", rcvr.Expr, bst.Int(0)),
+				Imports: []string{"math"},
+			}
+		},
+	})
+	FloatType.Def("finite?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(
+					bst.Call("math", "IsInf", rcvr.Expr, bst.Int(0)),
+					token.EQL,
+					ast.NewIdent("false"),
+				),
+				Imports: []string{"math"},
+			}
+		},
+	})
+	FloatType.Def("abs", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return FloatType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("math", "Abs", rcvr.Expr),
+				Imports: []string{"math"},
+			}
+		},
+	})
+	FloatType.Def("between?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(
+					bst.Binary(rcvr.Expr, token.GEQ, args[0].Expr),
+					token.LAND,
+					bst.Binary(rcvr.Expr, token.LEQ, args[1].Expr),
+				),
+			}
+		},
+	})
+	FloatType.Def("clamp", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return FloatType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "Clamp", rcvr.Expr, args[0].Expr, args[1].Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
+	FloatType.Def("nan?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("math", "IsNaN", rcvr.Expr),
+				Imports: []string{"math"},
+			}
+		},
+	})
 }

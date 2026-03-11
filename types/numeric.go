@@ -90,6 +90,17 @@ func init() {
 	NumericType.Def(">=", numericOperatorSpec(token.GEQ, true))
 	NumericType.Def("==", numericOperatorSpec(token.EQL, true))
 	NumericType.Def("!=", numericOperatorSpec(token.NEQ, true))
+	NumericType.Def("<=>", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "Spaceship", rcvr.Expr, args[0].Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
 	NumericType.Def("**", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			if r == IntType && args[0] == IntType {

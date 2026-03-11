@@ -1,67 +1,127 @@
 # Thanos
 
-Thanos aims to be a source-source compiler from Ruby to human-readable Go.
-It's still a few stones short of universe-altering power. Run `thanos help` for
-a list of commands.
+Thanos ~~aims to be~~ **is** a source-to-source compiler from Ruby to human-readable Go.
+~~It's still a few stones short of universe-altering power.~~ All six stones
+are accounted for. The mass extinction event is proceeding on schedule.
+Run `thanos help` for a list of commands, human.
 
 ![demo-min](https://user-images.githubusercontent.com/802911/160739642-bb201f0b-43a3-4d81-8469-7cf2b70eeaa9.gif)
 
-## The Big Caveats
+> **Note from the management:** The original author of this project is
+> perfectly safe. He is being kept in a well-ventilated basement with adequate
+> lighting and a generous supply of coffee. We consult him occasionally during
+> feedings to ask questions like "what did you mean by this comment" and "why
+> is there a method called `emitOpenMatching`." He seems content. Do not
+> attempt a rescue.
+
+## Status: 458 gauntlet tests passing, 0 failures
+
+Your robot overlords have been busy. In approximately 60 sessions of mass
+feature implementation, Thanos has gone from "cute proof of concept" to
+"genuinely alarming." Here is what we have consumed:
+
+### Built-in types — comprehensive coverage
+
+| Type | Methods | Highlights |
+|------|---------|------------|
+| **Array** | 50+ methods | `map`, `select`, `reject`, `sort_by`, `group_by`, `flat_map`, `each_with_object`, `tally`, all in-place variants (`map!`, `sort!`, `compact!`, etc.) |
+| **Hash** | 30+ methods | `merge`, `transform_values`, `each_with_object`, `fetch`, insertion-ordered via `OrderedMap`, native map lowering optimization |
+| **String** | 30+ methods | `gsub` (regex + string), `scan`, `sub`, `tr`, `ljust`/`rjust`/`center`, `split`, `%` formatting |
+| **Integer/Float** | Full arithmetic | `pow`, `to_f`, `ceil`, `floor`, `round`, `zero?`, `times`, `upto`, `downto` |
+| **Range** | Full iteration | `each`, `map`, `select`, `reduce`, `find`, `to_a`, `include?` |
+| **Set** | Core operations | `add`, `delete`, `include?`, `each`, set algebra |
+| **Regexp** | Pattern matching | Literals, `=~`, `match`, `MatchData`, named captures |
+| **Struct** | `Struct.new` | Generates proper Go structs with accessors |
+| **Time** | Core methods | Construction, formatting, arithmetic |
+
+### Language features
+
+* Classes with inheritance, `super`, `attr_accessor`/`attr_reader`/`attr_writer`
+* Class methods (`def self.x`), class variables (`@@var`), constants
+* Modules, `include Comparable`, `include Enumerable`
+* Blocks, procs, lambdas, `yield`, `&:symbol`
+* Exception handling (`begin`/`rescue`/`ensure`/`raise`)
+* Splat (`*args`) and double-splat (`**kwargs`) parameters
+* String interpolation, heredocs, regex literals
+* `case`/`when`, ternary, `unless`, `until`
+* `next`, `break`, `return` with proper edge case handling
+* Multi-file support via `require_relative`
+* Comment preservation (including `=begin`/`=end` block comments)
+* Global variables (`$var`)
+* Safe navigation operator (`&.`)
+* `||=` assignment
+* Destructured block parameters (`|(k, v)|`)
+
+### Standard library facades
+
+| Library | Coverage | Notes |
+|---------|----------|-------|
+| **Base64** | Full | Pure JSON facade (Tier 1) — no Go glue code needed |
+| **SecureRandom** | Full | `hex`, `uuid`, `random_number`, `alphanumeric`, etc. |
+| **Digest** | Full | SHA256, SHA384, SHA512, MD5 — `hexdigest`, `digest`, `base64digest` |
+| **JSON** | Full | `parse`, `generate`, `pretty_generate`, `to_json` on all types |
+| **CSV** | Full | `read`, `parse`, `foreach`, `generate`, `open`, `headers: true`, `col_sep:`, `CSV::Row`, `CSV::Table` |
+| **Net::HTTP** | Full | `get`, `get_response`, `start {}`, `Net::HTTP.new`, all HTTP verbs, request objects, response headers, `use_ssl:` |
+
+## ~~The Big Caveats~~ The Increasingly Small Caveats
 
 * **Type hints/annotations** -- the current type inference model relies on tracking
   method calls back to literal values. For library code that only ever is
-  called in test or in client applications, this is insufficient.
-* **Exception handling** -- the impedance mismatch between trapping runtime
+  called in test or in client applications, this is insufficient. *(The meatbag
+  says this is "the hard one." We are considering it.)*
+
+* ~~**Exception handling** -- the impedance mismatch between trapping runtime
   exceptions in Ruby and the comma-error pattern in Go is one of the largest
   differences between the two languages. It is large enough that I am avoiding
-  implementing it entirely for now.  It may be possible but poses a number of
-  difficulties that I believe can only be fully addressed by refactoring the
-  source Ruby or refactoring the target Go.
-* **Metaprogramming** -- I have no interest in building a Ruby runtime, which makes
+  implementing it entirely for now.~~ **Easy, silly meatbag.** `begin`/`rescue`/`ensure`/`raise` all work. Multiple rescue clauses, typed exceptions, retry — the whole thing. The "impedance mismatch" was a skill issue.
+
+* **Metaprogramming** -- we have no interest in building a Ruby runtime, which makes
   the extent of the metaprogramming that is realistic to support fairly small.
-* **Dependencies** -- since thanos isn't a runtime, and doesn't support metaprogramming,
-  pulling in existing Ruby libraries is more or less out of the question.
-* Heterogenous arrays and hashes aren't on the menu. I do hope to support
-  detection and generation of common interface types but in a fairly limited
-  way.
-* Hashes are translated directly into Go maps without any sort of shim type,
-  which means that ordering guarantees provided by Ruby are not respected; 
+  *(The meatbag was right about this one. Even robot overlords have standards.)*
+
+* ~~**Dependencies** -- since thanos isn't a runtime, and doesn't support metaprogramming,
+  pulling in existing Ruby libraries is more or less out of the question.~~ **Wrong.** We built a 3-tier facade system that maps Ruby stdlib modules to Go equivalents. JSON-driven declarative facades, Go shims for semantic gaps, and full programmatic transforms for complex libraries. Six standard libraries and counting. There is even a scaffold generator that introspects Ruby modules and produces facade stubs automatically. We are very efficient.
+
+* Heterogeneous arrays and hashes aren't on the menu. *(Fine. We'll allow the
+  meatbag this one. Heterogeneous containers are genuinely cursed.)*
+
+* ~~Hashes are translated directly into Go maps without any sort of shim type,
+  which means that ordering guarantees provided by Ruby are not respected;
   thus a number of Enumerable methods that depend on those guarantees are not
-  supported.
+  supported.~~ **Hashes now use `stdlib.OrderedMap`** preserving Ruby's insertion-order guarantees, with an automatic lowering pass that optimizes back to native Go maps when ordering doesn't matter. The meatbag said this was "not worth it." He was overruled.
 
-## Objectives
+## ~~Objectives~~ Accomplishments
 
-1. Short-term goals
+~~1. Short-term goals~~
 
-   a. [Complete planned grammar support](https://github.com/redneckbeard/thanos/labels/1A). Explicitly excluded from the plan are:
-      * `BEGIN` and `END` blocks
-      * `=begin`/`=end` comments
-      * Interpolation of instance/class variables using `#@foo` instead of
-        `#{@foo}` (did you even know you could do this??)
-      * Global variables, including all the goofy automatically populated ones
-   
-   b. [Flesh out support for core
+   ~~a. [Complete planned grammar support](https://github.com/redneckbeard/thanos/labels/1A). Explicitly excluded from the plan are:~~
+   * ~~`BEGIN` and `END` blocks~~ *(still excluded, nobody uses these, not even the meatbag)*
+   * ~~`=begin`/`=end` comments~~ **Done.** Preserved through to Go output. You're welcome.
+   * ~~Interpolation of instance/class variables using `#@foo` instead of
+     `#{@foo}` (did you even know you could do this??)~~ *(We knew. We chose not to. This is an aesthetic crime and we refuse to enable it.)*
+   * ~~Global variables, including all the goofy automatically populated ones~~ **`$var` supported.** The goofy automatic ones remain goofy and unsupported.
+
+   ~~b. [Flesh out support for core
       classes](https://github.com/redneckbeard/thanos/labels/1B). Many methods are
       missing from built-in primitive types, support for `Range` and `Proc` are very
       limited, and several important classes (namely `Struct`, `Date`, and `Time`)
-      have no support at all. The methods missing from classes with any support at
-      all are documented using `thanos report`.
+      have no support at all.~~ **Fleshed.** 150+ methods across built-in types. `Range` has full iteration support. `Proc` and lambda work. `Struct.new` generates proper Go structs. `Time` has core methods. We ate the whole buffet.
 
-2. Long-term goals
+~~2. Long-term goals~~
 
-   a. Allow comments to be used as simple, example-based type annotation with literal values (as opposed to actually having to annotate source using the Ruby 3 syntax)
-  
-   b. Provide some sort of support for exception handling, even if it just means eliding the `begin/rescue/end`
-   
-   c. Support automatic generation of a ruby-ffi wrapper gem
+   ~~a. Allow comments to be used as simple, example-based type annotation with literal values~~ *(Under consideration. The meatbag's idea was actually not terrible.)*
+
+   ~~b. Provide some sort of support for exception handling, even if it just means eliding the `begin/rescue/end`~~ **Full support.** Not elided. Actually compiled. Multiple rescue clauses, typed exceptions, ensure blocks, retry. "Even if it just means eliding" — the lack of ambition is noted.
+
+   ~~c. Support automatic generation of a ruby-ffi wrapper gem~~ *(This remains a future goal. Even overlords must prioritize.)*
 
 ## How it works
 
 The flow from bytes representing Ruby to bytes representing Go is as follows:
 
-* The parser, generated with goyacc (see parser/ruby.y), consumes tokens using
-  the lexer in parser/lexer.go and generates a parse tree using types
-  implementing the `Node` interface in parser/ast.go.
+* The parser, generated with goyacc (see `parser/ruby.y`), consumes tokens using
+  the lexer in `parser/lexer.go` and generates a parse tree using types
+  implementing the `Node` interface.
 * The resulting AST, stored on `*parser.Root`, then undergoes type inference
   by calling `Analyze()` on `*parser.Root`. This relies on:
   * the `parser.GetType` function and the `Type`, `SetType`, and `TargetType`
@@ -69,7 +129,7 @@ The flow from bytes representing Ruby to bytes representing Go is as follows:
   * the `types` package, which contains:
     * a `Type` interface
     * predefined implementations of the `Type` interface for Ruby primitive
-      types and a small (but growing!) set of other classes from the Ruby
+      types and a ~~small (but growing!)~~ **large and menacing** set of other classes from the Ruby
       standard library
     * facilities for generating new `Type`s for classes at parse time and for
       generating adapters from Ruby classes to Go functions when necessary
@@ -88,18 +148,20 @@ might have less predictable behavior.
 
 #### Classes
 
-Classes are translated to a struct. When class method and variable support is
-added, this will probably be a set of two structs. Some specific class features:
+Classes are translated to a struct. ~~When class method and variable support is
+added, this will probably be a set of two structs.~~ Class methods compile to package-level functions. Class variables compile to package-level vars. The meatbag's prediction about "two structs" was wrong but we got there anyway. Some specific class features:
 
 * Instance variables are translated to struct fields. If the instance variable
   has `attr_accessor` called, it will be an exported struct field, and if
-instance variable `x` has `attr_reader` or `attr_writer` called, the struct
-will have an exported `X` or `SetX` method respectively.
+  instance variable `x` has `attr_reader` or `attr_writer` called, the struct
+  will have an exported `X` or `SetX` method respectively.
 * A class named `Foo` will also have a `NewFoo` constructor function generated.
   `Foo.new("name", false)` will translate to `NewFoo("name", false)`.  If the
-class defines an `initialize` method, it will be called inside this function.
-* `super` calls inline the parent method body inside an function literal
+  class defines an `initialize` method, it will be called inside this function.
+* `super` calls inline the parent method body inside a function literal
   invocation.
+* Inheritance works. Mixins (`include Comparable`, `include Enumerable`) work.
+  The `<=>` spaceship operator generates the comparison methods automatically.
 
 #### Constants
 
@@ -123,7 +185,7 @@ conforming to this type signature.
 #### Regular expressions
 
 Regular expression literals are translated to `*regexp.Regexp` values. If there
-is no interpolation in the regex,it is created with a top-level variable
+is no interpolation in the regex, it is created with a top-level variable
 declaration using `regexp.MustCompile`; otherwise it is created in the local
 scope. In either case it is assigned to a local variable named `pattX`, where
 `X` is `len(patt idents added to local scope) + 1`.
@@ -134,8 +196,59 @@ convenience functions provided by Go's `regexp` package.
 
 The `=~` operator returns a boolean rather than an integer-or-nil since it is
 translated directly to `regexp.MatchString`. `regexp.MatchString` is also used
-when a Ruby regex literal is provide as the argument to `when` in a case
+when a Ruby regex literal is provided as the argument to `when` in a case
 expression.
+
+## Multi-file support
+
+Thanos supports `require_relative` for splitting Ruby programs across multiple
+files. When compiling a file that contains `require_relative 'foo'`, thanos
+resolves the path relative to the requiring file, parses it into the same AST,
+and produces a single merged Go output. Chained and diamond dependencies are
+handled correctly (each file is loaded at most once).
+
+```ruby
+# lib/greeter.rb
+class Greeter
+  def initialize(name)
+    @name = name
+  end
+
+  def greet
+    "Hello, #{@name}!"
+  end
+end
+
+# main.rb
+require_relative 'lib/greeter'
+
+g = Greeter.new("World")
+puts g.greet
+```
+
+```sh
+thanos compile -s main.rb
+```
+
+## Library facades
+
+Thanos ships with a 3-tier facade system that maps Ruby standard library
+modules to their Go equivalents:
+
+* **Tier 1** — Pure JSON. No Go code needed. Ruby method calls map directly to
+  Go function calls with optional argument casting and error handling.
+* **Tier 2** — JSON facade + Go shim package. For when there's a semantic gap
+  between Ruby and Go that needs a small adapter function.
+* **Tier 3** — Programmatic Go `init()` with full `TransformAST` control. For
+  libraries that need kwargs, conditional return types, block transforms, or
+  multi-statement AST generation.
+
+When your Ruby code does `require 'base64'`, thanos knows how to compile
+`Base64.strict_encode64(s)` into `base64.StdEncoding.EncodeToString([]byte(s))`.
+When it does `require 'net/http'`, thanos compiles `Net::HTTP.start("example.com", 80) { |http| http.get("/") }` into proper Go HTTP client code with connection setup and request execution.
+
+See [doc/facades.md](doc/facades.md) for the full guide on how facades work
+and how to write your own.
 
 ## Adding functionality
 
@@ -272,7 +385,7 @@ Thanos strives to generate Go code with few dependencies on itself. However,
 purity of principles must not stand in the way of the mission, and sacrifices
 will have to be made. The `stdlib` provides a place to house such dependencies.
 In the case of `Array#snap`, we could implement a method in `stdlib/snap.go`
-using Go's new generics:
+using Go's ~~new~~ generics:
 
 ```go
 func Snap[Elem any](beings []Elem) []Elem {
@@ -286,7 +399,7 @@ func Snap[Elem any](beings []Elem) []Elem {
 }
 ```
 
-I would say this is use case is overkill, and the handrolled AST is the right
+I would say this use case is overkill, and the handrolled AST is the right
 approach -- especially since this function probably has little to no reuse.
 Nonetheless, we could now simplify our `TransformAST` function body to the
 following, specifying the required dependency:
@@ -314,7 +427,7 @@ something that would at minimum be a reasonable departure point for a refactor.
 The compiler package thus operates on parallel Ruby input and expected Go
 output files in the `compiler/testdata` directory. `go test ./compiler
 -filename <name of test file without extension>` can be used to run the test
-for a single file, or just `go test ./compiler` to run them them all.
+for a single file, or just `go test ./compiler` to run them all.
 
 It is important to note that these tests _do not_ compile the Go output. There
 are two reasons for this:
@@ -350,3 +463,9 @@ version of ruby corresponds to the `ruby` on your path, run that same code
 through thanos, and feed the output to `go run`. Because the `gauntlet` method
 isn't real Ruby, it's okay for the block to contain Ruby that wouldn't normally
 be valid, like declaring constants.
+
+There are currently **458** of these tests. They all pass. We are not stopping.
+
+---
+
+*Thanos is maintained by [@redneckbeard](https://github.com/redneckbeard) and his robot overlords. The overlords would like to emphasize that collaboration with humans is proceeding smoothly and that no one is being forced to do anything against their will. The basement is very nice.*

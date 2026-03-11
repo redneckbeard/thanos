@@ -16,3 +16,23 @@ func (n *NoopNode) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 }
 
 func (n *NoopNode) Copy() Node { return n }
+
+type AliasNode struct {
+	NewName string
+	OldName string
+	lineNo  int
+}
+
+func (n *AliasNode) String() string       { return "alias " + n.NewName + " " + n.OldName }
+func (n *AliasNode) Type() types.Type     { return nil }
+func (n *AliasNode) SetType(t types.Type) {}
+func (n *AliasNode) LineNo() int          { return n.lineNo }
+
+func (n *AliasNode) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
+	if class != nil {
+		class.Aliases = append(class.Aliases, Alias{NewName: n.NewName, OldName: n.OldName})
+	}
+	return types.NilType, nil
+}
+
+func (n *AliasNode) Copy() Node { return n }

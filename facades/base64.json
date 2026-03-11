@@ -1,0 +1,41 @@
+{
+  "base64": {
+    "go_imports": ["encoding/base64", "github.com/redneckbeard/thanos/shims"],
+    "modules": {
+      "Base64": {
+        "methods": {
+          "encode64": {
+            "call": ["base64.StdEncoding.EncodeToString", "shims.AppendNewline"],
+            "args": [{"cast": "[]byte"}],
+            "returns": "string"
+          },
+          "decode64": {
+            "call": ["base64.StdEncoding.DecodeString", "string"],
+            "ignore_error": true,
+            "returns": "string"
+          },
+          "strict_encode64": {
+            "call": ["base64.StdEncoding.EncodeToString"],
+            "args": [{"cast": "[]byte"}],
+            "returns": "string"
+          },
+          "strict_decode64": {
+            "call": ["base64.StdEncoding.DecodeString", "string"],
+            "ignore_error": true,
+            "returns": "string"
+          },
+          "urlsafe_encode64": {
+            "call": ["base64.URLEncoding.EncodeToString"],
+            "args": [{"cast": "[]byte"}],
+            "returns": "string"
+          },
+          "urlsafe_decode64": {
+            "call": ["base64.URLEncoding.DecodeString", "string"],
+            "ignore_error": true,
+            "returns": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"os"
 	"testing"
+
+	"github.com/redneckbeard/thanos/bst"
 )
 
 type Foo struct{}
@@ -31,7 +33,7 @@ func TestGenerateMethods(t *testing.T) {
 	if retType != IntType {
 		t.Fatal("Expected ReturnType method to return IntType")
 	}
-	transform := funcOneSpec.TransformAST(TypeExpr{}, []TypeExpr{}, nil, nil)
+	transform := funcOneSpec.TransformAST(TypeExpr{}, []TypeExpr{}, nil, bst.NewIdentTracker())
 	selector := transform.Expr.(*ast.CallExpr).Fun.(*ast.Ident).Name
 	if selector != "FuncOne" {
 		t.Fatal("Expected CallExpr to have FuncOne as selector")
@@ -42,7 +44,7 @@ func TestGenerateMethods(t *testing.T) {
 	if retType != FloatType {
 		t.Fatal("Expected ReturnType method to return FloatType")
 	}
-	transform = funcTwoSpec.TransformAST(TypeExpr{}, []TypeExpr{}, nil, nil)
+	transform = funcTwoSpec.TransformAST(TypeExpr{}, []TypeExpr{}, nil, bst.NewIdentTracker())
 	selector = transform.Expr.(*ast.CallExpr).Fun.(*ast.Ident).Name
 	if selector != "FuncTwo" {
 		t.Fatal("Expected CallExpr to have FuncTwo as selector")
@@ -59,7 +61,7 @@ func TestGenerateMethodsImports(t *testing.T) {
 	file.GenerateMethods(&os.File{})
 
 	createSpec := file.MustResolve("name", false)
-	transform := createSpec.TransformAST(TypeExpr{}, []TypeExpr{}, nil, nil)
+	transform := createSpec.TransformAST(TypeExpr{}, []TypeExpr{}, nil, bst.NewIdentTracker())
 
 	if len(transform.Imports) < 1 || transform.Imports[0] != "os" {
 		t.Fatal("don't have an import", transform.Imports)

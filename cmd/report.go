@@ -52,7 +52,7 @@ var reportCmd = &cobra.Command{
 			}
 		} else {
 			for i, name := range types.ClassRegistry.Names() {
-				if name != "Kernel" && name != "Boolean" {
+				if name != "Kernel" && name != "Boolean" && name != "Optional" {
 					report(name)
 					if i < len(types.ClassRegistry.Names())-1 {
 						fmt.Println("")

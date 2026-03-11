@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"strings"
 	"unicode"
 )
 
@@ -40,6 +42,7 @@ var validPuncts = map[string]int{
 	"+=":  ADDASSIGN,
 	"-":   MINUS,
 	"-=":  SUBASSIGN,
+	"->":  LAMBDA,
 	"/":   SLASH,
 	"/=":  DIVASSIGN,
 	":":   COLON,
@@ -59,6 +62,7 @@ var validPuncts = map[string]int{
 	">>=": RSHIFTASSIGN,
 	"|":   PIPE,
 	"||":  LOGICALOR,
+	"||=": ORASSIGN,
 }
 
 var keywords = map[string]int{
@@ -166,6 +170,25 @@ func NewLexer(buf []byte) *Lexer {
 	return l
 }
 
+// NewLexerWithRoot creates a lexer that shares an existing Root. Used for
+// multi-file support where require_relative'd files are parsed into the
+// same Root as the entry file.
+func NewLexerWithRoot(buf []byte, root *Root) *Lexer {
+	l := &Lexer{
+		Buffer:        bytes.NewBuffer(buf),
+		lineNo:        1,
+		stream:        make(chan Token),
+		Root:          root,
+		State:         &Stack[LexState]{},
+		StringDelim:   &Stack[rune]{},
+		cond:          NewStackState("cond"),
+		cmdArg:        NewStackState("cmdarg"),
+		spaceConsumed: true,
+	}
+	go l.Tokenize()
+	return l
+}
+
 func (l *Lexer) Lex(lval *yySymType) int {
 	token := <-l.stream
 	lval.str = token.Literal
@@ -205,6 +228,9 @@ func (l *Lexer) ResetBuffer() {
 }
 
 func (l *Lexer) Emit(t int) {
+	if DebugLevel() >= 5 {
+		log.Printf("EMIT line=%d type=%d literal=%q resetExpr=%v lastToken=%d", l.lineNo, t, string(l.read), l.resetExpr, l.lastToken)
+	}
 	l.resetExpr = false
 	if l.gauntlet {
 		l.rawSource = append(l.rawSource, l.read...)
@@ -220,9 +246,6 @@ func (l *Lexer) Emit(t int) {
 }
 
 func (l *Lexer) AtExprStart() bool {
-	if l.resetExpr {
-		return true
-	}
 	midExprTokens := []int{
 		NIL, SYMBOL, STRING, INT, FLOAT, TRUE, FALSE, DEF, END, SELF, CONSTANT,
 		IVAR, CVAR, GVAR, METHODIDENT, IDENT, DO,
@@ -233,6 +256,10 @@ func (l *Lexer) AtExprStart() bool {
 		if l.lastToken == tok {
 			return false
 		}
+	}
+
+	if l.resetExpr {
+		return true
 	}
 
 	return true
@@ -277,7 +304,7 @@ func (l *Lexer) Tokenize() {
 func (l *Lexer) lexWhitespace() error {
 	chr, _, err := l.Advance()
 	if chr == '\n' {
-		if !l.skipNewline {
+		if !l.skipNewline && !l.nextNonSpaceIs('.') {
 			l.Emit(NEWLINE)
 		}
 		l.lineNo++
@@ -289,6 +316,21 @@ func (l *Lexer) lexWhitespace() error {
 	}
 	l.spaceConsumed = true
 	return err
+}
+
+// nextNonSpaceIs peeks ahead past whitespace (spaces, tabs, newlines) to check
+// if the next meaningful character matches. Used to suppress NEWLINE tokens
+// before continuation dots in multiline method chains.
+func (l *Lexer) nextNonSpaceIs(target rune) bool {
+	remaining := l.Bytes()
+	for _, b := range remaining {
+		r := rune(b)
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		return r == target
+	}
+	return false
 }
 
 func (l *Lexer) lexNumber() error {
@@ -348,6 +390,10 @@ func (l *Lexer) lexPunct() error {
 			if l.AtExprStart() {
 				return l.lexPercentLiteral()
 			}
+		case '=':
+			if next == 'b' && (l.lastToken == 0 || l.lastToken == NEWLINE || l.lastToken == COMMENT) {
+				return l.lexBlockComment()
+			}
 		}
 	}
 
@@ -391,7 +437,11 @@ func (l *Lexer) lexPunct() error {
 		return err
 	case '{':
 		l.State.Push(OpenBrace)
-		l.emitOpenMatching(LBRACEBLOCK)
+		if l.lastToken == LAMBDA {
+			l.Emit(LBRACEBLOCK)
+		} else {
+			l.emitOpenMatching(LBRACEBLOCK)
+		}
 		l.skipNewline = true
 		return err
 	case '#':
@@ -463,6 +513,9 @@ func (l *Lexer) lexPunct() error {
 			return err
 		}
 	case LPAREN, LBRACKET:
+		if DebugLevel() >= 5 {
+			log.Printf("DEBUG LPAREN check: spaceConsumed=%v literal=%q lastToken=%d", l.spaceConsumed, string(l.read), l.lastToken)
+		}
 		if l.spaceConsumed {
 			l.Emit(exprStartTokens[validTok])
 			l.skipNewline = true
@@ -481,6 +534,16 @@ func (l *Lexer) emitOpenMatching(tok int) {
 	case RPAREN, RBRACKET, RBRACE, IDENT, CONSTANT, METHODIDENT, YIELD, IVAR, STRINGEND, RAWSTRINGEND, SUPER:
 		l.Emit(tok)
 	default:
+		// Operator tokens used as method names: `def <=>(other)`, `def +(other)`
+		// Only applies to LPAREN — `[` after operators is always an array literal.
+		if tok == LPAREN {
+			switch l.lastToken {
+			case SPACESHIP, EQ, NEQ, GT, GTE, LT, LTE, MATCH, NOTMATCH, PLUS, MINUS, ASTERISK, SLASH, MODULO,
+				CARET, LSHIFT, RSHIFT, POW:
+				l.Emit(tok)
+				return
+			}
+		}
 		l.Emit(exprStartTokens[tok])
 	}
 }
@@ -603,6 +666,79 @@ func (l *Lexer) lexComment() error {
 	return err
 }
 
+// lexBlockComment handles =begin ... =end multi-line comments.
+// When called, l.read contains ['='] and the next char is 'b'.
+// We verify the tag is "=begin", then consume lines until "=end".
+func (l *Lexer) lexBlockComment() error {
+	// Read the rest of "begin" — we already have '=' in l.read
+	for _, expected := range []rune("begin") {
+		chr, _ := l.Read()
+		l.read = append(l.read, chr)
+		if chr != expected {
+			// Not =begin — fall through to normal punct handling.
+			// Put everything back into the read buffer and let lexPunct handle it.
+			// Actually we can't easily unread multiple chars, so emit as Illegal.
+			l.Emit(Illegal)
+			return nil
+		}
+	}
+	// Check that =begin is followed by whitespace or newline (not =beginner)
+	next, err := l.Peek()
+	if err == nil && next != '\n' && next != '\r' && next != ' ' && next != '\t' {
+		l.Emit(Illegal)
+		return nil
+	}
+
+	// Consume the rest of the =begin line (skip to newline)
+	for err == nil && next != '\n' {
+		l.Read()
+		next, err = l.Peek()
+	}
+	if err == nil {
+		l.Read() // consume the newline
+	}
+	l.ResetBuffer()
+	l.lineNo++
+
+	// Read lines until we find =end at column 0
+	for {
+		// Read one line
+		var line []rune
+		var ch rune
+		for {
+			ch, err = l.Read()
+			if err != nil || ch == '\n' {
+				break
+			}
+			line = append(line, ch)
+		}
+
+		lineStr := string(line)
+
+		// Check for =end (with optional trailing whitespace)
+		trimmed := strings.TrimRight(lineStr, " \t")
+		if trimmed == "=end" {
+			l.lineNo++
+			break
+		}
+
+		// Emit this line as a COMMENT token (prefix with # so rubyToGoComment works)
+		if len(line) > 0 {
+			l.read = append([]rune{'#', ' '}, line...)
+		} else {
+			l.read = []rune{'#'}
+		}
+		l.Emit(COMMENT)
+		l.lineNo++
+
+		if err != nil {
+			break // EOF inside block comment
+		}
+	}
+
+	return err
+}
+
 func (l *Lexer) lexRegex() error {
 	if l.State.Peek() != InRegex {
 		l.Emit(REGEXBEG)
@@ -613,6 +749,7 @@ func (l *Lexer) lexRegex() error {
 	if curr == '/' {
 		l.State.Pop()
 		l.Emit(REGEXEND)
+		l.emitRegexpOpt()
 		return err
 	}
 	for {
@@ -624,6 +761,7 @@ func (l *Lexer) lexRegex() error {
 		case curr == '/':
 			l.State.Pop()
 			l.Emit(REGEXEND)
+			l.emitRegexpOpt()
 		case next == '/':
 			if len(l.read) > 0 {
 				l.Emit(STRINGBODY)
@@ -631,6 +769,7 @@ func (l *Lexer) lexRegex() error {
 			l.Advance()
 			l.State.Pop()
 			l.Emit(REGEXEND)
+			l.emitRegexpOpt()
 			return err
 		case curr == '#' && next == '{':
 			if len(l.read) > 1 {
@@ -649,6 +788,27 @@ func (l *Lexer) lexRegex() error {
 		curr, next, err = l.Advance()
 	}
 	return err
+}
+
+// emitRegexpOpt reads any regex modifier flags (i, m, x, o, s) after the
+// closing / and emits a REGEXPOPT token if any are found.
+func (l *Lexer) emitRegexpOpt() {
+	for {
+		r, err := l.Peek()
+		if err != nil {
+			return
+		}
+		switch r {
+		case 'i', 'm', 'x', 'o', 's':
+			l.Read()
+			l.read = append(l.read, r)
+		default:
+			if len(l.read) > 0 {
+				l.Emit(REGEXPOPT)
+			}
+			return
+		}
+	}
 }
 
 func (l *Lexer) lexString() error {

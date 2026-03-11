@@ -24,6 +24,10 @@ def double_third(a)
   a[2] * 2
 end
 
+def last_element(a)
+  a[-1]
+end
+
 def length_is_size(a)
   a.size == a.length
 end
@@ -32,12 +36,17 @@ def swap_positions(a, b)
   return b, a
 end
 
+chained = [1, 2, 3]
+  .map { |x| x * 2 }
+  .select { |x| x > 2 }
+
 arr = make_arr(1, 2, 3)
 qpo = squares_plus_one([1,2,3,4]).select do |x|
   x % 2 == 0
 end.length
 total = sum([1,2,3,4])
 doubled = double_third([1,2,3])
+last = last_element([1,2,3])
 foo = length_is_size([1,2,3])
 i, b = swap_positions true, 10
 

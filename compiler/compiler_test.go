@@ -39,26 +39,37 @@ func TestCompile(t *testing.T) {
 					t.Errorf("Recovered test failure in %s: %s\n\n%s", ruby, r, string(debug.Stack()))
 				}
 			}()
-			translated, err := Compile(program)
+			result, err := Compile(program)
 			if err != nil {
 				t.Error(err)
 				continue
 			}
-			if f, err := os.Open(goTgt); err != nil {
-				t.Fatal(err)
-			} else {
-				if b, err := ioutil.ReadAll(f); err != nil {
-					t.Fatal(err)
+			for path, translated := range result.Files {
+				var expectedPath string
+				if path == "main.go" {
+					expectedPath = goTgt
 				} else {
-					if translated != string(b) {
-						cmd := exec.Command("diff", "--color=always", "-b", "-c", goTgt, "-")
-						cmd.Stdin = strings.NewReader(translated)
-						var out bytes.Buffer
-						cmd.Stdout = &out
-						cmd.Run()
-						if len(strings.TrimSpace(out.String())) > 0 {
-							t.Errorf("Got unexpected result translating %s:\n\n%s\n", ruby, out.String())
-						}
+					// Module package files: testdata/go/<name>/<path>
+					expectedPath = fmt.Sprintf("testdata/go/%s/%s", noExt, path)
+				}
+				f, err := os.Open(expectedPath)
+				if err != nil {
+					t.Errorf("Missing expected output file %s for %s", expectedPath, ruby)
+					continue
+				}
+				b, err := ioutil.ReadAll(f)
+				f.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if translated != string(b) {
+					cmd := exec.Command("diff", "--color=always", "-b", "-c", expectedPath, "-")
+					cmd.Stdin = strings.NewReader(translated)
+					var out bytes.Buffer
+					cmd.Stdout = &out
+					cmd.Run()
+					if len(strings.TrimSpace(out.String())) > 0 {
+						t.Errorf("Got unexpected result translating %s (%s):\n\n%s\n", ruby, path, out.String())
 					}
 				}
 			}

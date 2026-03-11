@@ -13,8 +13,9 @@ func (loc *local) Type() types.Type {
 }
 
 type RubyLocal struct {
-	_type types.Type
-	Calls []*MethodCall
+	_type       types.Type
+	Calls       []*MethodCall
+	isRefinable bool // true if this variable's type can be refined (e.g., empty arrays)
 }
 
 func (rl *RubyLocal) String() string       { return rl._type.String() }
@@ -22,6 +23,16 @@ func (rl *RubyLocal) Type() types.Type     { return rl._type }
 func (rl *RubyLocal) SetType(t types.Type) { rl._type = t }
 func (rl *RubyLocal) AddCall(c *MethodCall) {
 	rl.Calls = append(rl.Calls, c)
+}
+
+// MarkAsRefinable marks this variable as having a type that can be refined
+func (rl *RubyLocal) MarkAsRefinable() {
+	rl.isRefinable = true
+}
+
+// IsRefinable returns true if this variable's type can be refined
+func (rl *RubyLocal) IsRefinable() bool {
+	return rl.isRefinable
 }
 
 var BadLocal = new(local)
@@ -62,6 +73,13 @@ func (scope *SimpleScope) Set(name string, local Local) {
 	scope.locals[name] = local
 }
 
+// Each iterates over all locals in this scope, calling fn for each.
+func (scope *SimpleScope) Each(fn func(name string, local Local)) {
+	for name, local := range scope.locals {
+		fn(name, local)
+	}
+}
+
 type ScopeChain []Scope
 
 func NewScopeChain() ScopeChain {
@@ -86,6 +104,17 @@ func (chain ScopeChain) MustGet(name string) Local {
 
 func (chain ScopeChain) Set(name string, local Local) {
 	chain[len(chain)-1].Set(name, local)
+}
+
+// RefineVariableType updates a variable's type if it's marked as refinable
+func (chain ScopeChain) RefineVariableType(name string, newType types.Type) bool {
+	if local := chain.ResolveVar(name); local != BadLocal {
+		if rubyLocal, ok := local.(*RubyLocal); ok && rubyLocal.IsRefinable() {
+			rubyLocal.SetType(newType)
+			return true
+		}
+	}
+	return false
 }
 
 func (chain ScopeChain) ResolveVar(s string) Local {

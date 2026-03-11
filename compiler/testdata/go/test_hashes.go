@@ -1,19 +1,26 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/redneckbeard/thanos/stdlib"
+)
 
 func main() {
-	h := map[string]string{"foo": "x", "bar": "y"}
+	om := stdlib.NewOrderedMap[string, string]()
+	om.Set("foo", "x")
+	om.Set("bar", "y")
+	h := om
 	var val string
-	if v, ok := h["foo"]; ok {
+	if v, ok := h.Data["foo"]; ok {
 		val = v
-		delete(h, "foo")
+		h.Delete("foo")
 	}
 	x := val
 	var val1 string
-	if v, ok := h["baz"]; ok {
+	if v, ok := h.Data["baz"]; ok {
 		val1 = v
-		delete(h, "baz")
+		h.Delete("baz")
 	} else {
 		k := "baz"
 		val1 = fmt.Sprintf("default for %v", k)
