@@ -202,6 +202,21 @@ func init() {
 			return Transform{}
 		},
 	})
+	KernelType.Def("warn", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return NilType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Stmts: []ast.Stmt{
+					&ast.ExprStmt{
+						X: bst.Call("fmt", "Fprintln", append([]ast.Expr{bst.Dot("os", "Stderr")}, UnwrapTypeExprs(args)...)...),
+					},
+				},
+				Imports: []string{"fmt", "os"},
+			}
+		},
+	})
 }
 
 // buildExceptionLiteral creates &stdlib.ClassName{...{RubyError: stdlib.RubyError{Msg: msg}}}

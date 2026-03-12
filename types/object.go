@@ -188,4 +188,40 @@ func init() {
 
 	ObjectType.Def("tainted?", AlwaysFalse)
 	ObjectType.Def("untrusted?", AlwaysFalse)
+
+	ObjectType.Def("tap", MethodSpec{
+		blockArgs: func(r Type, args []Type) []Type {
+			return []Type{r}
+		},
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			return receiverType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			tapVar := blk.Args[0]
+			init := bst.Define(tapVar, rcvr.Expr)
+			StripBlockReturn(blk)
+			stmts := []ast.Stmt{init}
+			stmts = append(stmts, blk.Statements...)
+			return Transform{
+				Expr:  tapVar,
+				Stmts: stmts,
+			}
+		},
+	})
+
+	ObjectType.Def("nil?", MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			if _, ok := rcvr.Type.(Optional); ok {
+				return Transform{
+					Expr: bst.Binary(rcvr.Expr, token.EQL, it.Get("nil")),
+				}
+			}
+			return Transform{
+				Expr: it.Get("false"),
+			}
+		},
+	})
 }

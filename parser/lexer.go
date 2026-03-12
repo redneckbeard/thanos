@@ -152,6 +152,8 @@ type Lexer struct {
 	resetExpr, skipNewline bool
 	cond, cmdArg           *StackState
 	condStack, cmdArgStack *Stack[*StackState]
+	inDefSignature         bool // tracks DEF ... until f_arglist ends
+	endlessMethodPending   bool // desugar: emit END at next NEWLINE
 }
 
 func NewLexer(buf []byte) *Lexer {
@@ -231,6 +233,53 @@ func (l *Lexer) Emit(t int) {
 	if DebugLevel() >= 5 {
 		log.Printf("EMIT line=%d type=%d literal=%q resetExpr=%v lastToken=%d", l.lineNo, t, string(l.read), l.resetExpr, l.lastToken)
 	}
+	// Endless method desugaring: `def foo(x) = expr` → `def foo(x); expr; end`
+	// Track when we're inside a def signature.
+	if t == DEF {
+		l.inDefSignature = true
+	} else if l.inDefSignature {
+		if t == NEWLINE || t == SEMICOLON {
+			// Method signature ended normally (not endless).
+			l.inDefSignature = false
+		} else if t == ASSIGN && l.lastToken == RPAREN {
+			// Endless method detected: suppress the = token entirely.
+			// The LPAREN f_args rparen already closes f_arglist without
+			// needing a term. The expression tokens become the body.
+			// We'll inject END when the next NEWLINE arrives.
+			l.inDefSignature = false
+			l.endlessMethodPending = true
+			// Preserve the original `=` in rawSource for gauntlet extraction.
+			if l.gauntlet {
+				l.rawSource = append(l.rawSource, l.read...)
+			}
+			l.ResetBuffer()
+			return
+		}
+	}
+	// When an endless method body ends (next NEWLINE), inject END + NEWLINE.
+	if l.endlessMethodPending && t == NEWLINE {
+		// First emit the real NEWLINE to terminate the body expression.
+		l.emitRaw(t)
+		// Then emit synthetic END + NEWLINE. Use emitSynthetic to avoid
+		// corrupting rawSource (used by gauntlet test extraction).
+		l.endlessMethodPending = false
+		l.emitSynthetic(END, "end")
+		l.emitSynthetic(NEWLINE, "\n")
+		return
+	}
+	l.emitRaw(t)
+}
+
+// emitSynthetic sends a token without affecting rawSource (for gauntlet extraction).
+func (l *Lexer) emitSynthetic(t int, literal string) {
+	tok := Token{t, literal, l.lineNo, string(l.rawSource)}
+	l.stream <- tok
+	l.lastToken = t
+	l.skipNewline = false
+	l.spaceConsumed = false
+}
+
+func (l *Lexer) emitRaw(t int) {
 	l.resetExpr = false
 	if l.gauntlet {
 		l.rawSource = append(l.rawSource, l.read...)
@@ -287,9 +336,11 @@ func (l *Lexer) Tokenize() {
 			err = l.lexRegex()
 		case unicode.IsSpace(chr):
 			err = l.lexWhitespace()
+		case chr == '_':
+			err = l.lexWord()
 		case unicode.IsPunct(chr) || unicode.IsSymbol(chr):
 			err = l.lexPunct()
-		case unicode.IsLetter(chr) || chr == '_':
+		case unicode.IsLetter(chr):
 			err = l.lexWord()
 		case unicode.IsDigit(chr):
 			err = l.lexNumber()
@@ -617,6 +668,13 @@ func (l *Lexer) lexWord() error {
 			}
 		}
 	} else {
+		// Keywords followed by ? or ! after a dot are method names (e.g., .nil?, .class!)
+		next, _ = l.Peek()
+		if (next == '?' || next == '!') && (l.lastToken == DOT || l.lastToken == ANDDOT) {
+			l.Advance()
+			l.Emit(METHODIDENT)
+			return err
+		}
 		switch string(l.read) {
 		case "do":
 			if l.cond.IsActive() {

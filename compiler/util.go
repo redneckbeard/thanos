@@ -11,8 +11,23 @@ import (
 	"github.com/redneckbeard/thanos/parser"
 )
 
+func rubyPath() string {
+	// THANOS_RUBY env var takes priority
+	if p := os.Getenv("THANOS_RUBY"); p != "" {
+		return p
+	}
+	// Try rbenv shim
+	home, _ := os.UserHomeDir()
+	rbenvRuby := filepath.Join(home, ".rbenv", "shims", "ruby")
+	if _, err := os.Stat(rbenvRuby); err == nil {
+		return rbenvRuby
+	}
+	// Fall back to PATH
+	return "ruby"
+}
+
 func CompareThanosToMRI(program, label string) (string, string, error) {
-	cmd := exec.Command("ruby")
+	cmd := exec.Command(rubyPath())
 	cmd.Stdin = strings.NewReader(program)
 	var out, rubyErr bytes.Buffer
 	cmd.Stdout = &out

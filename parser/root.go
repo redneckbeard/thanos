@@ -40,6 +40,7 @@ type Root struct {
 	currentClass     *Class
 	currentMethod    *Method
 	inPrivateMethods bool
+	inSingletonClass bool
 	nextConstantType int
 	facades          types.FacadeConfig
 }

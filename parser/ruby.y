@@ -859,7 +859,15 @@ primary:
     root(yylex).currentClass.Superclass = $3
     $$ = root(yylex).PopClass()
   }
-//| k_class tLSHFT expr term
+| CLASS LSHIFT SELF term
+  {
+    root(yylex).inSingletonClass = true
+  }
+  bodystmt END
+  {
+    root(yylex).inSingletonClass = false
+    $$ = &NoopNode{}
+  }
 | module cpath bodystmt END
   {
     r := root(yylex)
@@ -1128,6 +1136,7 @@ brace_body:
     for _, p := range $1 {
       blk.AddParam(p)
     }
+    synthesizeNumberedParams(blk)
     $$ = blk
   }
 
@@ -1281,6 +1290,9 @@ method_signature:
   {
     method := NewMethod($2, root(yylex))
     method.Private = root(yylex).inPrivateMethods
+    if root(yylex).inSingletonClass {
+      method.ClassMethod = true
+    }
     method.lineNo = currentLineNo
 
     for _, p := range $3 {
