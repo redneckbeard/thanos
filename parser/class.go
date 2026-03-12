@@ -466,6 +466,12 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 				if eachMethod, ok := cls.MethodSet.Methods["each"]; ok {
 					ctx["eachMethod"] = eachMethod
 				}
+				// Pass user-defined method names so the mixin can skip them
+				userMethods := map[string]bool{}
+				for name := range cls.MethodSet.Methods {
+					userMethods[name] = true
+				}
+				ctx["userMethods"] = userMethods
 				mixin.Apply(class.Instance.(types.Instance), ctx)
 			}
 		}

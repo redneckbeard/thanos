@@ -30,6 +30,19 @@ func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types
 	if err != nil {
 		return nil, err
 	}
+	// If the operator is a user-defined method (e.g., ==, <=>), register
+	// a synthetic call so AnalyzeMethodSet can type the params.
+	if ms, ok := classMethodSets[tl]; ok {
+		if _, userDefined := ms.Methods[n.Operator]; userDefined {
+			syntheticCall := &MethodCall{
+				Receiver:   n.Left,
+				MethodName: n.Operator,
+				Args:       ArgsNode{n.Right},
+				lineNo:     n.lineNo,
+			}
+			ms.AddCall(syntheticCall)
+		}
+	}
 	if n.HasMethod() {
 		if t, err := tl.MethodReturnType(n.Operator, nil, []types.Type{tr}); err != nil {
 			return nil, NewParseError(n, err.Error())

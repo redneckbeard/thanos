@@ -36,10 +36,15 @@ func init() {
 
 			// Check if the class defines <=> with a different Go name
 			if spec, ok := instance.Resolve("<=>"); ok && spec.TransformAST != nil {
-				// The class has its own <=> — the generated methods will call
-				// the Go method name via the transform. We use the standard
-				// GoName mapping.
 				_ = spec
+			}
+
+			// Collect user-defined method names to avoid overwriting them
+			userDefined := map[string]bool{}
+			if methods, ok := ctx["userMethods"]; ok {
+				if m, ok := methods.(map[string]bool); ok {
+					userDefined = m
+				}
 			}
 
 			comparisons := []struct {
@@ -54,6 +59,10 @@ func init() {
 			}
 
 			for _, cmp := range comparisons {
+				// Skip operators the class defines itself (user-defined takes priority)
+				if userDefined[cmp.op] {
+					continue
+				}
 				tok := cmp.tok
 				goName := spaceshipGoName
 				instance.Def(cmp.op, MethodSpec{

@@ -51,6 +51,9 @@ gauntlet("diff-lcs Change basic") do
       r
     end
 
+    def ==(other)
+      @action == other.action && @position == other.position && @element == other.element
+    end
   end
 
   c = Diff::LCS::Change.new("+", 5, "hello")
