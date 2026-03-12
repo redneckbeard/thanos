@@ -117,6 +117,8 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 		stmt.Body = g.BlockStack.Peek()
 		g.BlockStack.Pop()
 		g.appendToCurrentBlock(stmt)
+	case *parser.PatternMatchNode:
+		g.compilePatternMatch(n)
 	case *parser.MethodCall:
 		if n.RequiresTransform() {
 			stmtContext := g.State.Peek() != InReturnStatement

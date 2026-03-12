@@ -65,6 +65,10 @@ func root(yylex yyLexer) *Root {
 %type <rescue_clauses> opt_rescue
 %type <node_list> opt_ensure
 %type <str_list> rescue_types
+%type <in_clause> p_in_clause
+%type <in_clauses> p_case_body p_cases
+%type <node> p_pattern p_pattern_item
+%type <node_list> p_pattern_list
 
 %union{
  args ArgsNode
@@ -84,6 +88,8 @@ func root(yylex yyLexer) *Root {
  regexp string
  when *WhenNode
  whens []*WhenNode
+ in_clause *InClause
+ in_clauses []*InClause
  str string
 }
 
@@ -850,6 +856,16 @@ primary:
   {
     $$ = &CaseNode{Whens: $3, lineNo: currentLineNo}
   }
+| CASE expr_value opt_terms p_case_body END
+  {
+    pm := &PatternMatchNode{Value: $2, InClauses: $4, lineNo: currentLineNo}
+    // Check if last clause is an else (no pattern)
+    if last := $4[len($4)-1]; last.Pattern == nil {
+      pm.ElseBody = last.Statements
+      pm.InClauses = $4[:len($4)-1]
+    }
+    $$ = pm
+  }
 | FOR for_var IN expr_value_do compstmt END
   {
     $$ = &ForInNode{For: $2, In: $4, Body: $5, lineNo: currentLineNo}
@@ -1163,6 +1179,82 @@ cases:
     $$ = []*WhenNode{{Statements: $2, lineNo: currentLineNo}}
   }
 | case_body
+
+p_case_body:
+  p_in_clause p_cases
+  {
+    $$ = append([]*InClause{$1}, $2...)
+  }
+
+p_in_clause:
+  IN p_pattern then compstmt
+  {
+    $$ = &InClause{Pattern: $2, Statements: $4, lineNo: currentLineNo}
+  }
+
+p_cases:
+  none
+  {
+    $$ = []*InClause{}
+  }
+| ELSE compstmt
+  {
+    $$ = []*InClause{{Statements: $2, lineNo: currentLineNo}}
+  }
+| p_case_body
+
+p_pattern:
+  LBRACKET RBRACKET
+  {
+    $$ = &ArrayPatternNode{lineNo: currentLineNo}
+  }
+| LBRACKETSTART RBRACKET
+  {
+    $$ = &ArrayPatternNode{lineNo: currentLineNo}
+  }
+| LBRACKET p_pattern_list RBRACKET
+  {
+    $$ = &ArrayPatternNode{Elements: $2, lineNo: currentLineNo}
+  }
+| LBRACKETSTART p_pattern_list RBRACKET
+  {
+    $$ = &ArrayPatternNode{Elements: $2, lineNo: currentLineNo}
+  }
+| p_pattern_item
+
+p_pattern_item:
+  IDENT
+  {
+    if $1 == "_" {
+      $$ = &WildcardPatternNode{lineNo: currentLineNo}
+    } else {
+      $$ = &IdentNode{Val: $1, lineNo: currentLineNo}
+    }
+  }
+| literal
+| NIL
+  {
+    $$ = &NilNode{lineNo: currentLineNo}
+  }
+| TRUE
+  {
+    $$ = &BooleanNode{Val: "true", lineNo: currentLineNo}
+  }
+| FALSE
+  {
+    $$ = &BooleanNode{Val: "false", lineNo: currentLineNo}
+  }
+
+p_pattern_list:
+  p_pattern
+  {
+    $$ = Statements{$1}
+  }
+| p_pattern_list COMMA p_pattern
+  {
+    $$ = append($1, $3)
+  }
+
 // opt_rescue: kRESCUE exc_list exc_var then compstmt opt_rescue
 // |
 // exc_list: arg_value

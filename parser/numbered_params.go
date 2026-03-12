@@ -179,6 +179,64 @@ func scanNodeForNumberedParam(n Node) int {
 	return 0
 }
 
+// CollectIdents returns a set of all identifier names used in a node tree.
+func CollectIdents(nodes []Node) map[string]bool {
+	result := make(map[string]bool)
+	collectIdentsFromNodes(nodes, result)
+	return result
+}
+
+func collectIdentsFromNodes(nodes []Node, result map[string]bool) {
+	for _, n := range nodes {
+		collectIdentsFromNode(n, result)
+	}
+}
+
+func collectIdentsFromNode(n Node, result map[string]bool) {
+	if n == nil {
+		return
+	}
+	switch v := n.(type) {
+	case *IdentNode:
+		result[v.Val] = true
+	case *MethodCall:
+		collectIdentsFromNode(v.Receiver, result)
+		collectIdentsFromNodes([]Node(v.Args), result)
+		if v.Block != nil {
+			collectIdentsFromNodes(v.Block.Body.Statements, result)
+		}
+	case *InfixExpressionNode:
+		collectIdentsFromNode(v.Left, result)
+		collectIdentsFromNode(v.Right, result)
+	case *AssignmentNode:
+		collectIdentsFromNodes(v.Left, result)
+		collectIdentsFromNodes(v.Right, result)
+	case *ReturnNode:
+		collectIdentsFromNodes([]Node(v.Val), result)
+	case *ArrayNode:
+		collectIdentsFromNodes([]Node(v.Args), result)
+	case *Condition:
+		collectIdentsFromNode(v.Condition, result)
+		collectIdentsFromNodes([]Node(v.True), result)
+		if v.False != nil {
+			collectIdentsFromNode(v.False, result)
+		}
+	case Statements:
+		collectIdentsFromNodes([]Node(v), result)
+	case ArgsNode:
+		collectIdentsFromNodes([]Node(v), result)
+	case *StringNode:
+		for _, nodes := range v.Interps {
+			collectIdentsFromNodes(nodes, result)
+		}
+	case *BracketAccessNode:
+		collectIdentsFromNode(v.Composite, result)
+		collectIdentsFromNodes([]Node(v.Args), result)
+	case *NotExpressionNode:
+		collectIdentsFromNode(v.Arg, result)
+	}
+}
+
 func numberedParamIndex(name string) int {
 	if len(name) == 2 && name[0] == '_' && name[1] >= '1' && name[1] <= '9' {
 		return int(name[1] - '0')
