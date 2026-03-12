@@ -1356,6 +1356,26 @@ func init() {
 		},
 	})
 
+	// encoding — always returns "UTF-8" (Go strings are UTF-8)
+	StringType.Def("encoding", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return StringType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{Expr: bst.String("UTF-8")}
+		},
+	})
+
+	// encode — no-op (Go strings are already UTF-8)
+	StringType.Def("encode", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return StringType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{Expr: rcvr.Expr}
+		},
+	})
+
 	StringType.Def("bytes", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			return NewArray(IntType), nil

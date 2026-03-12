@@ -189,6 +189,7 @@ func init() {
 
 	ObjectType.Def("tainted?", AlwaysFalse)
 	ObjectType.Def("untrusted?", AlwaysFalse)
+	ObjectType.Def("frozen?", AlwaysTrue)
 
 	ObjectType.Def("tap", MethodSpec{
 		blockArgs: func(r Type, args []Type) []Type {
