@@ -7,10 +7,25 @@ import (
 
 	"github.com/redneckbeard/thanos/bst"
 	"github.com/redneckbeard/thanos/parser"
+	"github.com/redneckbeard/thanos/types"
 )
 
 func (g *GoProgram) compilePatternMatch(n *parser.PatternMatchNode) {
-	subject := g.CompileExpr(n.Value)
+	// When the subject is a tuple (heterogeneous array literal), we can't compile
+	// it as a single Go expression. Instead, we compile each element separately and
+	// use a tupleSubject to give pattern elements direct access.
+	var subject ast.Expr
+	var tupleExprs []ast.Expr
+	if arrNode, ok := n.Value.(*parser.ArrayNode); ok {
+		if _, isTuple := arrNode.Type().(*types.Tuple); isTuple {
+			for _, elem := range arrNode.Args {
+				tupleExprs = append(tupleExprs, g.CompileExpr(elem))
+			}
+		}
+	}
+	if tupleExprs == nil {
+		subject = g.CompileExpr(n.Value)
+	}
 
 	// Build an if-else chain for each in clause
 	var rootIf *ast.IfStmt
@@ -23,7 +38,13 @@ func (g *GoProgram) compilePatternMatch(n *parser.PatternMatchNode) {
 		usedIdents := parser.CollectIdents(clause.Statements)
 
 		// Generate condition and bindings for the pattern
-		cond, bindings := g.compilePatternCondition(clause.Pattern, subject, n.Value, usedIdents)
+		var cond ast.Expr
+		var bindings []ast.Stmt
+		if tupleExprs != nil {
+			cond, bindings = g.compileTuplePatternCondition(clause.Pattern, tupleExprs, usedIdents)
+		} else {
+			cond, bindings = g.compilePatternCondition(clause.Pattern, subject, n.Value, usedIdents)
+		}
 		ifStmt.Cond = cond
 
 		// Body: bindings + compiled statements
@@ -150,6 +171,70 @@ func (g *GoProgram) compileArrayPattern(p *parser.ArrayPatternNode, subject ast.
 		combined = bst.Binary(combined, token.LAND, c)
 	}
 
+	return combined, bindings
+}
+
+// compileTuplePatternCondition handles pattern matching when the subject is a
+// tuple (heterogeneous array literal). Each element is accessed directly by index.
+func (g *GoProgram) compileTuplePatternCondition(pattern parser.Node, tupleExprs []ast.Expr, usedIdents map[string]bool) (ast.Expr, []ast.Stmt) {
+	arrPat, ok := pattern.(*parser.ArrayPatternNode)
+	if !ok {
+		// If it's not an array pattern, fall through to wildcard/ident logic
+		if _, ok := pattern.(*parser.WildcardPatternNode); ok {
+			return g.it.Get("true"), nil
+		}
+		if ident, ok := pattern.(*parser.IdentNode); ok {
+			if !usedIdents[ident.Val] {
+				return g.it.Get("true"), nil
+			}
+		}
+		return g.it.Get("true"), nil
+	}
+
+	var conds []ast.Expr
+	var bindings []ast.Stmt
+
+	// Length must match
+	if len(arrPat.Elements) != len(tupleExprs) {
+		return g.it.Get("false"), nil
+	}
+
+	for i, elem := range arrPat.Elements {
+		subjectElem := tupleExprs[i]
+		switch e := elem.(type) {
+		case *parser.IdentNode:
+			if e.Val != "_" && usedIdents[e.Val] {
+				bindings = append(bindings, bst.Define(g.it.Get(e.Val), subjectElem))
+			}
+		case *parser.WildcardPatternNode:
+			// No binding, no condition
+		case *parser.ArrayPatternNode:
+			// Nested array pattern — use the regular array pattern compiler
+			nestedCond, nestedBindings := g.compileArrayPattern(e, subjectElem, nil, usedIdents)
+			conds = append(conds, nestedCond)
+			bindings = append(bindings, nestedBindings...)
+		case *parser.ArrayNode:
+			if len(e.Args) == 0 {
+				conds = append(conds, bst.Binary(
+					bst.Call(nil, "len", subjectElem),
+					token.EQL,
+					bst.Int("0"),
+				))
+			}
+		default:
+			subCond, subBindings := g.compilePatternCondition(e, subjectElem, nil, usedIdents)
+			conds = append(conds, subCond)
+			bindings = append(bindings, subBindings...)
+		}
+	}
+
+	if len(conds) == 0 {
+		return g.it.Get("true"), bindings
+	}
+	combined := conds[0]
+	for _, c := range conds[1:] {
+		combined = bst.Binary(combined, token.LAND, c)
+	}
 	return combined, bindings
 }
 

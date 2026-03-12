@@ -57,3 +57,25 @@ gauntlet("pattern match nested arrays") do
     puts d
   end
 end
+
+gauntlet("pattern match then syntax") do
+  remove = [1]
+  insert = []
+  case [remove, insert]
+  in [[], []] then puts "^"
+  in [_, []] then puts "-"
+  in [[], _] then puts "+"
+  in [_, _] then puts "!"
+  end
+end
+
+gauntlet("pattern match empty array matching") do
+  a = []
+  b = [1, 2]
+  case [a, b]
+  in [[], []] then puts "both empty"
+  in [[], _] then puts "first empty"
+  in [_, []] then puts "second empty"
+  in [_, _] then puts "neither empty"
+  end
+end

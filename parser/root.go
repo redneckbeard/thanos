@@ -40,10 +40,11 @@ type Root struct {
 	currentClass     *Class
 	currentMethod    *Method
 	inPrivateMethods bool
-	inSingletonClass bool
-	nextConstantType int
-	cpathDepth       int
-	facades          types.FacadeConfig
+	inSingletonClass    bool
+	singletonTargetDepth int
+	nextConstantType    int
+	cpathDepth          int
+	facades             types.FacadeConfig
 }
 
 func NewRoot() *Root {
@@ -93,6 +94,132 @@ func NewParseError(node Node, fmtString string, args ...interface{}) *ParseError
 		node: node,
 		msg:  fmt.Sprintf(fmtString, args...),
 	}
+}
+
+// PushSingletonTarget resolves an existing module or class by name and pushes
+// it onto the module stack for `class << SomeConstant` blocks.
+// For chained access like `class << Outer::Inner`, this is called once per segment.
+// Each segment pushes onto the module stack so the next segment resolves within it.
+func (r *Root) PushSingletonTarget(name string) {
+	r.singletonTargetDepth++
+	// findModule/findClass searches relative to moduleStack.Peek(),
+	// so chained access like Outer::Inner works naturally.
+	r.State.Push(InModuleBody)
+	if existing := r.findModule(name); existing != nil {
+		r.MethodSetStack.Push(existing.MethodSet)
+		r.moduleStack.Push(existing)
+		r.ScopeChain = r.ScopeChain.Extend(existing)
+		return
+	}
+	if existing := r.findClass(name); existing != nil {
+		r.MethodSetStack.Push(existing.MethodSet)
+		r.moduleStack.Push(&Module{name: name, MethodSet: existing.MethodSet})
+		r.ScopeChain = r.ScopeChain.Extend(existing)
+		return
+	}
+	// Not found — create a placeholder module
+	mod := &Module{name: name, lineNo: 0}
+	ms := NewMethodSet()
+	mod.MethodSet = ms
+	ms.Module = mod
+	r.MethodSetStack.Push(ms)
+	r.moduleStack.Push(mod)
+	r.ScopeChain = r.ScopeChain.Extend(mod)
+}
+
+// PopSingletonTarget pops the module/class pushed by PushSingletonTarget.
+// Re-registers any new class methods added during the singleton block.
+func (r *Root) PopSingletonTarget() {
+	// The target module is at the top of the stack.
+	// If there were intermediate segments (e.g., Outer in Outer::Inner),
+	// they're below and need to be popped too.
+	module := r.moduleStack.Pop()
+	r.MethodSetStack.Pop()
+	r.State.Pop()
+
+	// Pop intermediate segments (all except the last one which is the target)
+	for i := 1; i < r.singletonTargetDepth; i++ {
+		r.moduleStack.Pop()
+		r.MethodSetStack.Pop()
+		r.State.Pop()
+		r.ScopeChain = r.ScopeChain[:len(r.ScopeChain)-1]
+	}
+
+	// Re-register class methods on the module's type
+	pkgName := strings.ToLower(module.name)
+	if modClass, ok := module._type.(*types.Class); ok {
+		for _, m := range module.ClassMethods {
+			// Skip methods already registered
+			if modClass.HasMethod(m.Name) {
+				continue
+			}
+			m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{module, m.Scope[len(m.Scope)-1]}...)
+			cm := m
+			funcName := pkgName + "." + GoName(m.Name)
+			modClass.Def(m.Name, types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					if cm.Body.ReturnType == nil {
+						for i, param := range cm.Params {
+							if i < len(args) {
+								param._type = args[i]
+								cm.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
+							}
+						}
+						cm.Body.InferReturnType(cm.Scope, nil)
+					}
+					return cm.ReturnType(), nil
+				},
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					t := types.Transform{
+						Expr: bst.Call(nil, funcName, types.UnwrapTypeExprs(args)...),
+					}
+					if modClass.PackagePath != "" {
+						t.Imports = []string{modClass.PackagePath}
+					}
+					return t
+				},
+			})
+		}
+	} else if len(module.ClassMethods) > 0 {
+		// Module didn't have a type yet — create one (same as PopModule)
+		modClass := types.NewClass(module.name, "Object", nil, types.ClassRegistry)
+		modClass.UserDefined = true
+		modClass.Package = pkgName
+		for _, m := range module.ClassMethods {
+			m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{module, m.Scope[len(m.Scope)-1]}...)
+			cm := m
+			funcName := pkgName + "." + GoName(m.Name)
+			modClass.Def(m.Name, types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					if cm.Body.ReturnType == nil {
+						for i, param := range cm.Params {
+							if i < len(args) {
+								param._type = args[i]
+								cm.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
+							}
+						}
+						cm.Body.InferReturnType(cm.Scope, nil)
+					}
+					return cm.ReturnType(), nil
+				},
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					t := types.Transform{
+						Expr: bst.Call(nil, funcName, types.UnwrapTypeExprs(args)...),
+					}
+					if modClass.PackagePath != "" {
+						t.Imports = []string{modClass.PackagePath}
+					}
+					return t
+				},
+			})
+		}
+		module._type = modClass
+	}
+
+	GetType(module, r.ScopeChain, nil)
+	r.ScopeChain = r.ScopeChain[:len(r.ScopeChain)-1]
+	r.ScopeChain.Set(module.Name(), module)
+	r.singletonTargetDepth = 0
 }
 
 func (r *Root) PushModule(name string, lineNo int) {

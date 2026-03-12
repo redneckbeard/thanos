@@ -47,7 +47,7 @@ func root(yylex yyLexer) *Root {
 %token <str> SCOPE LAMBDA
 
 
-%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath op_asgn superclass private do raw_string_beg class module comment call_op
+%type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath singleton_cpath op_asgn superclass private do raw_string_beg class module comment call_op
 %type <node> symbol numeric user_variable keyword_variable simple_numeric expr arg primary literal lhs var_ref var_lhs primary_value expr_value command_asgn command_rhs command command_call regexp expr_value_do block_command block_call 
 %type <node> arg_rhs arg_value method_call stmt if_tail opt_else none rel_expr string raw_string mlhs_item mlhs_node 
 %type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head mlhs_inner for_var
@@ -426,6 +426,18 @@ cpath: //SCOPE Constant
     r := root(yylex)
     r.cpathDepth++
     r.PushModule($3, currentLineNo)
+    $$ = $1 + "::" + $3
+  }
+
+singleton_cpath:
+  CONSTANT
+  {
+    root(yylex).PushSingletonTarget($1)
+    $$ = $1
+  }
+| singleton_cpath SCOPE CONSTANT
+  {
+    root(yylex).PushSingletonTarget($3)
     $$ = $1 + "::" + $3
   }
 
@@ -902,6 +914,17 @@ primary:
   bodystmt END
   {
     root(yylex).inSingletonClass = false
+    $$ = &NoopNode{}
+  }
+| CLASS LSHIFT singleton_cpath term
+  {
+    root(yylex).inSingletonClass = true
+  }
+  bodystmt END
+  {
+    r := root(yylex)
+    r.inSingletonClass = false
+    r.PopSingletonTarget()
     $$ = &NoopNode{}
   }
 | module cpath bodystmt END

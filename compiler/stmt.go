@@ -12,6 +12,8 @@ import (
 // append to the current block statement.
 func (g *GoProgram) CompileStmt(node parser.Node) {
 	switch n := node.(type) {
+	case *parser.NoopNode:
+		return
 	case *parser.AssignmentNode:
 		if len(n.Left) == 1 {
 			if constant, ok := n.Left[0].(*parser.ConstantNode); ok {
