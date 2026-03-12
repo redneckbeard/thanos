@@ -415,9 +415,19 @@ cpath: //SCOPE Constant
     } else {
       root(yylex).PushClass($1, currentLineNo)
     }
+    root(yylex).cpathDepth = 0
     $$ = $1
   }
-//| primary_value SCOPE cname
+| cpath SCOPE CONSTANT
+  {
+    // For module Diff::LCS::Internals, each :: segment pushes a module.
+    // The previous segments are containers; cpathDepth tracks how many
+    // intermediate modules to pop when END is reached.
+    r := root(yylex)
+    r.cpathDepth++
+    r.PushModule($3, currentLineNo)
+    $$ = $1 + "::" + $3
+  }
 
 fname: 
   operation
@@ -872,8 +882,14 @@ primary:
   }
 | class cpath superclass bodystmt END
   {
-    root(yylex).currentClass.Superclass = $3
-    $$ = root(yylex).PopClass()
+    r := root(yylex)
+    r.currentClass.Superclass = $3
+    $$ = r.PopClass()
+    // Pop intermediate modules from :: chains (e.g., Diff in class Diff::Change)
+    for i := 0; i < r.cpathDepth; i++ {
+      r.PopIntermediateModule()
+    }
+    r.cpathDepth = 0
   }
 | CLASS LSHIFT SELF term
   {
@@ -887,12 +903,17 @@ primary:
 | module cpath bodystmt END
   {
     r := root(yylex)
-    module := r.PopModule() 
+    module := r.PopModule()
     if parent := r.moduleStack.Peek(); parent != nil {
       parent.Modules = append(parent.Modules, module)
     } else {
       r.TopLevelModules = append(r.TopLevelModules, module)
     }
+    // Pop intermediate modules from :: chains (e.g., Diff and LCS in Diff::LCS::Internals)
+    for i := 0; i < r.cpathDepth; i++ {
+      r.PopIntermediateModule()
+    }
+    r.cpathDepth = 0
     $$ = module
   }
 | method_signature bodystmt END

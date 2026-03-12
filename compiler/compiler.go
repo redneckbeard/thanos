@@ -126,21 +126,7 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 		p.ModulePath = "tmpmod"
 	}
 	for _, mod := range p.TopLevelModules {
-		pkgName := strings.ToLower(mod.Name())
-		pkgPath := p.ModulePath + "/" + pkgName
-		if mod.Type() != nil {
-			if cls, ok := mod.Type().(*types.Class); ok {
-				cls.PackagePath = pkgPath
-			}
-		}
-		// Also set on classes within the module
-		for _, innerCls := range mod.Classes {
-			if innerCls.Type() != nil {
-				if cls, ok := innerCls.Type().(*types.Class); ok {
-					cls.PackagePath = pkgPath
-				}
-			}
-		}
+		setModulePackagePaths(mod, p.ModulePath)
 	}
 
 	f := &ast.File{
@@ -156,8 +142,8 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 	}
 
 	for _, mod := range p.TopLevelModules {
-		// Modules with classes or class methods become their own packages
-		if len(mod.ClassMethods) > 0 || len(mod.Classes) > 0 {
+		// Modules with content (or sub-modules with content) become their own packages
+		if moduleHasContent(mod) {
 			continue
 		}
 		decls = append(decls, g.CompileModule(mod)...)
@@ -300,15 +286,71 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 
 	result := &CompileResult{Files: map[string]string{"main.go": mainSrc}}
 
-	// Compile each top-level module into its own package
+	// Compile each top-level module (and nested sub-modules) into packages
 	for _, mod := range p.TopLevelModules {
-		if len(mod.ClassMethods) == 0 && len(mod.Classes) == 0 {
-			continue
+		if err := g.compileModulePackages(mod, "", p.ScopeChain, result); err != nil {
+			return nil, err
 		}
-		pkgName := strings.ToLower(mod.Name())
+	}
+
+	for _, w := range g.Warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
+
+	return result, nil
+}
+
+// setModulePackagePaths recursively sets PackagePath on module types and their classes.
+func setModulePackagePaths(mod *parser.Module, parentModPath string) {
+	pkgName := strings.ToLower(mod.Name())
+	pkgPath := parentModPath + "/" + pkgName
+	if mod.Type() != nil {
+		if cls, ok := mod.Type().(*types.Class); ok {
+			cls.PackagePath = pkgPath
+		}
+	}
+	for _, innerCls := range mod.Classes {
+		if innerCls.Type() != nil {
+			if cls, ok := innerCls.Type().(*types.Class); ok {
+				cls.PackagePath = pkgPath
+			}
+		}
+	}
+	for _, sub := range mod.Modules {
+		setModulePackagePaths(sub, pkgPath)
+	}
+}
+
+// moduleHasContent returns true if a module or any of its sub-modules
+// have class methods, classes, or other content worth compiling.
+func moduleHasContent(mod *parser.Module) bool {
+	if len(mod.ClassMethods) > 0 || len(mod.Classes) > 0 {
+		return true
+	}
+	for _, sub := range mod.Modules {
+		if moduleHasContent(sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// compileModulePackages recursively compiles a module and its sub-modules into
+// separate Go packages. parentPath is the filesystem path prefix (e.g., "outer" for
+// a module nested under Outer). Each module with direct content (class methods or
+// classes) gets its own package file.
+func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string, scope parser.ScopeChain, result *CompileResult) error {
+	pkgName := strings.ToLower(mod.Name())
+	dirPath := pkgName
+	if parentPath != "" {
+		dirPath = parentPath + "/" + pkgName
+	}
+
+	// Compile this module's direct content if it has any
+	if len(mod.ClassMethods) > 0 || len(mod.Classes) > 0 {
 		modG := &GoProgram{
 			State:        &parser.Stack[State]{},
-			ScopeChain:   p.ScopeChain,
+			ScopeChain:   scope,
 			Imports:      make(map[string]bool),
 			BlockStack:   &parser.Stack[*ast.BlockStmt]{},
 			modulePrefix: mod.Name(),
@@ -328,7 +370,6 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 			Name: ast.NewIdent(pkgName),
 		}
 
-		// Add imports, constants, global vars at the top
 		modTopDecls := []ast.Decl{}
 		modImportSpecs := []ast.Spec{}
 		for imp := range modG.Imports {
@@ -347,17 +388,22 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 
 		modSrc, err := formatAndImports(modFile, token.NewFileSet())
 		if err != nil {
-			return nil, fmt.Errorf("error compiling module %s: %w", mod.Name(), err)
+			return fmt.Errorf("error compiling module %s: %w", mod.Name(), err)
 		}
-		filePath := pkgName + "/" + pkgName + ".go"
+		filePath := dirPath + "/" + pkgName + ".go"
 		result.Files[filePath] = modSrc
 	}
 
-	for _, w := range g.Warnings {
-		fmt.Fprintln(os.Stderr, w)
+	// Recurse into sub-modules
+	for _, sub := range mod.Modules {
+		if moduleHasContent(sub) {
+			if err := g.compileModulePackages(sub, dirPath, scope, result); err != nil {
+				return err
+			}
+		}
 	}
 
-	return result, nil
+	return nil
 }
 
 func formatAndImports(f *ast.File, fset *token.FileSet) (string, error) {

@@ -42,6 +42,7 @@ type Root struct {
 	inPrivateMethods bool
 	inSingletonClass bool
 	nextConstantType int
+	cpathDepth       int
 	facades          types.FacadeConfig
 }
 
@@ -96,6 +97,13 @@ func NewParseError(node Node, fmtString string, args ...interface{}) *ParseError
 
 func (r *Root) PushModule(name string, lineNo int) {
 	r.State.Push(InModuleBody)
+	// Check for existing module (reopening)
+	if existing := r.findModule(name); existing != nil {
+		r.MethodSetStack.Push(existing.MethodSet)
+		r.moduleStack.Push(existing)
+		r.ScopeChain = r.ScopeChain.Extend(existing)
+		return
+	}
 	mod := &Module{name: name, lineNo: lineNo}
 	ms := NewMethodSet()
 	mod.MethodSet = ms
@@ -155,6 +163,48 @@ func (r *Root) PopModule() *Module {
 	return module
 }
 
+// PopIntermediateModule pops a module that was pushed as part of a :: chain
+// in a cpath (e.g., Diff and LCS in `module Diff::LCS::Internals`).
+// These intermediate modules get registered in the tree but their body is empty.
+func (r *Root) PopIntermediateModule() {
+	module := r.moduleStack.Pop()
+	r.MethodSetStack.Pop()
+	r.State.Pop()
+
+	// Run type inference on the module (registers class methods etc.)
+	GetType(module, r.ScopeChain, nil)
+
+	r.ScopeChain = r.ScopeChain[:len(r.ScopeChain)-1]
+	// Register module name in parent scope for ScopeAccessNode resolution
+	r.ScopeChain.Set(module.Name(), module)
+	module.Parent = r.moduleStack.Peek()
+
+	// Register in parent's Modules list if not already there (reopened modules are already registered)
+	if parent := r.moduleStack.Peek(); parent != nil {
+		found := false
+		for _, m := range parent.Modules {
+			if m == module {
+				found = true
+				break
+			}
+		}
+		if !found {
+			parent.Modules = append(parent.Modules, module)
+		}
+	} else {
+		found := false
+		for _, m := range r.TopLevelModules {
+			if m == module {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.TopLevelModules = append(r.TopLevelModules, module)
+		}
+	}
+}
+
 func (r *Root) PushClass(name string, lineNo int) {
 	r.State.Push(InClassBody)
 	// Check if the class already exists (open class / monkey patching)
@@ -182,6 +232,23 @@ func (r *Root) findClass(name string) *Class {
 		for _, cls := range r.Classes {
 			if cls.Name() == name {
 				return cls
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Root) findModule(name string) *Module {
+	if parent := r.moduleStack.Peek(); parent != nil {
+		for _, mod := range parent.Modules {
+			if mod.Name() == name {
+				return mod
+			}
+		}
+	} else {
+		for _, mod := range r.TopLevelModules {
+			if mod.Name() == name {
+				return mod
 			}
 		}
 	}
@@ -331,20 +398,23 @@ func (r *Root) expandStructDefinitions() {
 			continue
 		}
 		call, isCall := assign.Right[0].(*MethodCall)
-		if !isCall || call.MethodName != "new" {
+		if !isCall {
 			remaining = append(remaining, stmt)
 			continue
 		}
 		rcvr, isConstRcvr := call.Receiver.(*ConstantNode)
-		if !isConstRcvr || rcvr.Val != "Struct" {
+		isStructNew := isConstRcvr && rcvr.Val == "Struct" && call.MethodName == "new"
+		isDataDefine := isConstRcvr && rcvr.Val == "Data" && call.MethodName == "define"
+		if !isStructNew && !isDataDefine {
 			remaining = append(remaining, stmt)
 			continue
 		}
-		// Found: Point = Struct.new(:x, :y)
+		// Found: Point = Struct.new(:x, :y) or Point = Data.define(:x, :y)
 		className := constNode.Val
 		r.PushClass(className, assign.LineNo())
 		cls := r.currentClass
 		// Create attr_accessor for each symbol argument
+		// (Data.define is immutable in Ruby, but we use attr_accessor for Go compatibility)
 		for _, arg := range call.Args {
 			if sym, ok := arg.(*SymbolNode); ok {
 				name := sym.Val[1:] // strip leading ':'

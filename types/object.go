@@ -181,7 +181,7 @@ func init() {
 	})
 
 	// Deprecated and unsupported methods, or general uselessness
-	noops := []string{"taint", "untaint", "trust", "untrust", "itself"}
+	noops := []string{"taint", "untaint", "trust", "untrust", "itself", "freeze"}
 	for _, noop := range noops {
 		ObjectType.Def(noop, NoopReturnSelf)
 	}
