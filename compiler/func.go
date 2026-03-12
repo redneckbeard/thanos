@@ -137,16 +137,21 @@ func (g *GoProgram) GetFuncParams(rubyParams []*parser.Param) []*ast.Field {
 			lastParam    *ast.Field
 			lastSeenType string
 		)
+		pType := p.Type()
+		goType := "interface{}"
+		if pType != nil {
+			goType = pType.GoType()
+		}
 		if len(params) > 0 {
 			lastParam = params[len(params)-1]
 			lastSeenType = lastParam.Type.(*ast.Ident).Name
 		}
-		if lastParam != nil && lastSeenType == p.Type().GoType() {
+		if lastParam != nil && lastSeenType == goType {
 			lastParam.Names = append(lastParam.Names, g.it.Get(p.Name))
 		} else {
 			params = append(params, &ast.Field{
 				Names: []*ast.Ident{g.it.Get(p.Name)},
-				Type:  g.it.Get(p.Type().GoType()),
+				Type:  g.it.Get(goType),
 			})
 		}
 	}

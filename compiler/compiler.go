@@ -460,6 +460,9 @@ func (g *GoProgram) popTracker() {
 }
 
 func (g *GoProgram) appendToCurrentBlock(stmts ...ast.Stmt) {
+	if len(stmts) == 0 {
+		return
+	}
 	currentBlock := g.BlockStack.Peek()
 	currentBlock.List = append(currentBlock.List, stmts...)
 }

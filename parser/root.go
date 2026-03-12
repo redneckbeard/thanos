@@ -495,6 +495,55 @@ func (r *Root) AddStatement(n Node) {
 	}
 }
 
+func (r *Root) analyzeClassMethodBodies() {
+	// Analyze class methods on top-level classes
+	for _, cls := range r.Classes {
+		for _, m := range cls.ClassMethods {
+			if m.Body.ReturnType == nil {
+				m.Body.InferReturnType(m.Scope, cls)
+			}
+		}
+	}
+	// Analyze class methods in module classes (recursive)
+	for _, mod := range r.TopLevelModules {
+		r.analyzeModuleClassMethods(mod)
+	}
+}
+
+func (r *Root) analyzeModule(mod *Module, parentScope ScopeChain) error {
+	modScope := parentScope.Extend(mod)
+	if len(mod.Statements) > 0 {
+		if _, err := GetType(mod.Statements, modScope, nil); err != nil {
+			return err
+		}
+	}
+	for i := len(mod.Classes) - 1; i >= 0; i-- {
+		cls := mod.Classes[i]
+		if err := r.AnalyzeMethodSet(cls.MethodSet, cls.Type()); err != nil {
+			return err
+		}
+	}
+	for _, sub := range mod.Modules {
+		if err := r.analyzeModule(sub, modScope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Root) analyzeModuleClassMethods(mod *Module) {
+	for _, cls := range mod.Classes {
+		for _, m := range cls.ClassMethods {
+			if m.Body.ReturnType == nil {
+				m.Body.InferReturnType(m.Scope, cls)
+			}
+		}
+	}
+	for _, sub := range mod.Modules {
+		r.analyzeModuleClassMethods(sub)
+	}
+}
+
 func (r *Root) AnalyzeMethodSet(ms *MethodSet, rcvr types.Type) error {
 	var err error
 	unanalyzedCount := len(ms.Methods)
@@ -703,19 +752,10 @@ func (r *Root) Analyze() error {
 	}
 
 
-	// Analyze module body statements (constants, etc.) and module classes
+	// Analyze module body statements (constants, etc.) and module classes (recursive)
 	for _, mod := range r.TopLevelModules {
-		modScope := r.ScopeChain.Extend(mod)
-		if len(mod.Statements) > 0 {
-			if _, err := GetType(mod.Statements, modScope, nil); err != nil {
-				return err
-			}
-		}
-		for i := len(mod.Classes) - 1; i >= 0; i-- {
-			cls := mod.Classes[i]
-			if err := r.AnalyzeMethodSet(cls.MethodSet, cls.Type()); err != nil {
-				return err
-			}
+		if err := r.analyzeModule(mod, r.ScopeChain); err != nil {
+			return err
 		}
 	}
 
@@ -731,6 +771,12 @@ func (r *Root) Analyze() error {
 	if err := r.AnalyzeMethodSet(r.MethodSetStack.Peek(), nil); err != nil {
 		return err
 	}
+
+	// Eagerly analyze class method bodies that haven't been analyzed yet.
+	// The ReturnType closure only fires when the method is called, but the
+	// compiler emits all class methods. Run after all method sets are analyzed
+	// so constants and instance types are fully resolved.
+	r.analyzeClassMethodBodies()
 
 	// Before the second pass, clear cached types on statements that
 	// contain unresolved inner calls (e.g., mixin methods whose block

@@ -353,6 +353,11 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 		m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{cls, m.Scope[len(m.Scope)-1]}...)
 		cm := m // capture for closure
 		funcName := cls.name + GoName(m.Name)
+		externalFuncName := funcName
+		pkgPath := class.PackagePath
+		if class.Package != "" {
+			externalFuncName = class.Package + "." + funcName
+		}
 		class.Def(m.Name, types.MethodSpec{
 			ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
 				if cm.Body.ReturnType == nil {
@@ -368,9 +373,13 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 				return cm.ReturnType(), nil
 			},
 			TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-				return types.Transform{
-					Expr: bst.Call(nil, funcName, types.UnwrapTypeExprs(args)...),
+				t := types.Transform{
+					Expr: bst.Call(nil, externalFuncName, types.UnwrapTypeExprs(args)...),
 				}
+				if pkgPath != "" {
+					t.Imports = []string{pkgPath}
+				}
+				return t
 			},
 		})
 	}
