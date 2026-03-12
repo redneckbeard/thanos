@@ -2102,23 +2102,32 @@ yydefault:
 	case 65:
 		yyDollar = yyS[yypt-1 : yypt+1]
 		{
-			if root(yylex).nextConstantType == MODULE {
-				root(yylex).PushModule(yyDollar[1].str, currentLineNo)
+			r := root(yylex)
+			if r.nextConstantType == MODULE {
+				r.PushModule(yyDollar[1].str, currentLineNo)
 			} else {
-				root(yylex).PushClass(yyDollar[1].str, currentLineNo)
+				r.PushClass(yyDollar[1].str, currentLineNo)
 			}
-			root(yylex).cpathDepth = 0
+			r.cpathDepth = 0
 			yyVAL.str = yyDollar[1].str
 		}
 	case 66:
 		yyDollar = yyS[yypt-3 : yypt+1]
 		{
-			// For module Diff::LCS::Internals, each :: segment pushes a module.
-			// The previous segments are containers; cpathDepth tracks how many
-			// intermediate modules to pop when END is reached.
+			// For class/module A::B::C, each :: segment converts the previous head to
+			// an intermediate module and pushes the new segment as the target.
 			r := root(yylex)
+			if r.nextConstantType == CLASS {
+				// Previous segment was a class — convert to intermediate module.
+				r.ConvertClassToModule()
+			}
 			r.cpathDepth++
-			r.PushModule(yyDollar[3].str, currentLineNo)
+			// Push the new segment as the actual target type
+			if r.nextConstantType == CLASS {
+				r.PushClass(yyDollar[3].str, currentLineNo)
+			} else {
+				r.PushModule(yyDollar[3].str, currentLineNo)
+			}
 			yyVAL.str = yyDollar[1].str + "::" + yyDollar[3].str
 		}
 	case 67:

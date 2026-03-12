@@ -186,6 +186,8 @@ func init() {
 			}
 		},
 	})
+	KernelType.Alias("raise", "fail")
+
 	KernelType.Def("require", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			return BoolType, nil

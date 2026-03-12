@@ -410,22 +410,31 @@ module:
 cpath: //SCOPE Constant
   CONSTANT
   {
-    if root(yylex).nextConstantType == MODULE {
-      root(yylex).PushModule($1, currentLineNo)
+    r := root(yylex)
+    if r.nextConstantType == MODULE {
+      r.PushModule($1, currentLineNo)
     } else {
-      root(yylex).PushClass($1, currentLineNo)
+      r.PushClass($1, currentLineNo)
     }
-    root(yylex).cpathDepth = 0
+    r.cpathDepth = 0
     $$ = $1
   }
 | cpath SCOPE CONSTANT
   {
-    // For module Diff::LCS::Internals, each :: segment pushes a module.
-    // The previous segments are containers; cpathDepth tracks how many
-    // intermediate modules to pop when END is reached.
+    // For class/module A::B::C, each :: segment converts the previous head to
+    // an intermediate module and pushes the new segment as the target.
     r := root(yylex)
+    if r.nextConstantType == CLASS {
+      // Previous segment was a class — convert to intermediate module.
+      r.ConvertClassToModule()
+    }
     r.cpathDepth++
-    r.PushModule($3, currentLineNo)
+    // Push the new segment as the actual target type
+    if r.nextConstantType == CLASS {
+      r.PushClass($3, currentLineNo)
+    } else {
+      r.PushModule($3, currentLineNo)
+    }
     $$ = $1 + "::" + $3
   }
 

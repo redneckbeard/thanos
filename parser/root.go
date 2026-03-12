@@ -222,6 +222,20 @@ func (r *Root) PopSingletonTarget() {
 	r.singletonTargetDepth = 0
 }
 
+// ConvertClassToModule converts the current class (pushed as the base of a cpath)
+// back to a module. This is needed when `class Outer::Inner::Item` is parsed —
+// the grammar initially pushes `Outer` as a class (because nextConstantType == CLASS),
+// but once `::` is seen, we know `Outer` is just an intermediate module container.
+func (r *Root) ConvertClassToModule() {
+	name := r.currentClass.name
+	lineNo := r.currentClass.lineNo
+	r.MethodSetStack.Pop()
+	r.currentClass = nil
+	r.State.Pop()
+	// Now push as a module instead
+	r.PushModule(name, lineNo)
+}
+
 func (r *Root) PushModule(name string, lineNo int) {
 	r.State.Push(InModuleBody)
 	// Check for existing module (reopening)

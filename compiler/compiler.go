@@ -353,7 +353,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 			ScopeChain:   scope,
 			Imports:      make(map[string]bool),
 			BlockStack:   &parser.Stack[*ast.BlockStmt]{},
-			modulePrefix: mod.Name(),
+			modulePrefix: mod.QualifiedName(),
 		}
 		modG.pushTracker()
 
