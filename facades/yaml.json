@@ -1,0 +1,27 @@
+{
+  "yaml": {
+    "go_imports": ["github.com/redneckbeard/thanos/shims"],
+    "modules": {
+      "YAML": {
+        "methods": {
+          "load": {
+            "call": ["shims.YAMLLoad"],
+            "returns": "string"
+          },
+          "safe_load": {
+            "call": ["shims.YAMLLoad"],
+            "returns": "string"
+          },
+          "dump": {
+            "call": ["shims.YAMLDump"],
+            "returns": "string"
+          },
+          "load_file": {
+            "call": ["shims.YAMLLoadFile"],
+            "returns": "string"
+          }
+        }
+      }
+    }
+  }
+}

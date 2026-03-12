@@ -186,14 +186,14 @@ func facadeReturnType(name string) Type {
 
 // buildFacadeMethodSpec creates a MethodSpec from a MethodFacade config.
 func buildFacadeMethodSpec(goImports []string, mb *MethodFacade) MethodSpec {
-	retType := facadeReturnType(mb.Returns)
+	returnsName := mb.Returns
 	pipeline := mb.Call
 	ignoreError := mb.IgnoreError
 	argFacades := mb.Args
 
 	return MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
-			return retType, nil
+			return facadeReturnType(returnsName), nil
 		},
 		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
 			imports := append([]string{}, goImports...)

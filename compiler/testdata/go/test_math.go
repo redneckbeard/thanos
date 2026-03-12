@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"math"
+
+	"github.com/redneckbeard/thanos/stdlib"
 )
 
 func main() {
@@ -12,8 +14,8 @@ func main() {
 	a := int(math.Pow(float64(x), float64(x)))
 	b := math.Pow(y, 2)
 	c := 12.0 / 4
-	d := int(math.Abs(-50))
-	e := int(math.Abs(float64(x)))
+	d := stdlib.Abs(-50)
+	e := stdlib.Abs(x)
 	for x := 0; x < 10; x++ {
 		if x%2 == 0 {
 			fmt.Println(x)

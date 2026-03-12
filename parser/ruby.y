@@ -281,7 +281,13 @@ command:
     root(yylex).AddCall(call)
     $$ = call
   }
-//| fcall command_args cmd_brace_block
+| fcall command_args brace_block
+  {
+    call := &MethodCall{MethodName: $1, Args: $2, lineNo: currentLineNo}
+    call.SetBlock($3)
+    root(yylex).AddCall(call)
+    $$ = call
+  }
 | primary_value call_op operation command_args %prec LOWEST
 //| primary_value call_op operation2 command_args cmd_brace_block
 | SUPER command_args

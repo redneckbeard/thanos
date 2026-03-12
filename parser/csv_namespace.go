@@ -7,8 +7,12 @@ import "github.com/redneckbeard/thanos/types"
 // This makes `require 'csv'` register CSV::Row and CSV::Table in the scope
 // so that ScopeAccessNode and ConstantNode can resolve them.
 var requireScopeInjectors = map[string]func(*Root){
-	"csv":      injectCSVScope,
-	"net/http": injectNetHTTPScope,
+	"csv":        injectCSVScope,
+	"net/http":   injectNetHTTPScope,
+	"shellwords": injectShellwordsScope,
+	"uri":        injectURIScope,
+	"yaml":       injectYAMLScope,
+	"zlib":       injectZlibScope,
 }
 
 func injectCSVScope(root *Root) {
@@ -75,4 +79,47 @@ func injectNetHTTPScope(root *Root) {
 	}
 
 	root.ScopeChain[0].Set("Net", netMod)
+}
+
+func injectShellwordsScope(root *Root) {
+	injectSimpleModuleScope(root, "Shellwords")
+}
+
+func injectURIScope(root *Root) {
+	mod := injectSimpleModuleScope(root, "URI")
+	// Register the URI facade type so URI.parse returns it
+	if t, ok := types.LookupNamedType("URI"); ok {
+		cls := &Class{
+			name:      "URI",
+			_type:     t,
+			MethodSet: NewMethodSet(),
+			Module:    mod,
+		}
+		mod.Classes = append(mod.Classes, cls)
+	}
+}
+
+func injectYAMLScope(root *Root) {
+	injectSimpleModuleScope(root, "YAML")
+}
+
+func injectZlibScope(root *Root) {
+	injectSimpleModuleScope(root, "Zlib")
+}
+
+// injectSimpleModuleScope registers a module-only facade (no inner types)
+// in the Root's scope chain. Returns the module for further customization.
+func injectSimpleModuleScope(root *Root, name string) *Module {
+	cls, err := types.ClassRegistry.Get(name)
+	var t types.Type
+	if err == nil {
+		t = cls
+	}
+	mod := &Module{
+		name:      name,
+		_type:     t,
+		MethodSet: NewMethodSet(),
+	}
+	root.ScopeChain[0].Set(name, mod)
+	return mod
 }

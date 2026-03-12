@@ -1,0 +1,39 @@
+{
+  "shellwords": {
+    "go_imports": ["github.com/redneckbeard/thanos/shims"],
+    "modules": {
+      "Shellwords": {
+        "methods": {
+          "split": {
+            "call": ["shims.ShellSplit"],
+            "returns": "[]string"
+          },
+          "shellsplit": {
+            "call": ["shims.ShellSplit"],
+            "returns": "[]string"
+          },
+          "shellwords": {
+            "call": ["shims.ShellSplit"],
+            "returns": "[]string"
+          },
+          "escape": {
+            "call": ["shims.ShellEscape"],
+            "returns": "string"
+          },
+          "shellescape": {
+            "call": ["shims.ShellEscape"],
+            "returns": "string"
+          },
+          "join": {
+            "call": ["shims.ShellJoin"],
+            "returns": "string"
+          },
+          "shelljoin": {
+            "call": ["shims.ShellJoin"],
+            "returns": "string"
+          }
+        }
+      }
+    }
+  }
+}

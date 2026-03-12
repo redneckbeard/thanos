@@ -1,0 +1,43 @@
+{
+  "uri": {
+    "go_imports": ["net/url", "github.com/redneckbeard/thanos/shims"],
+    "modules": {
+      "URI": {
+        "methods": {
+          "parse": {
+            "call": ["shims.URIParse"],
+            "returns": "URI"
+          },
+          "encode_www_form_component": {
+            "call": ["url.QueryEscape"],
+            "returns": "string"
+          },
+          "decode_www_form_component": {
+            "call": ["url.QueryUnescape"],
+            "ignore_error": true,
+            "returns": "string"
+          },
+          "encode_www_form": {
+            "call": ["shims.URIEncodeWwwForm"],
+            "returns": "string"
+          }
+        }
+      }
+    },
+    "types": {
+      "URI": {
+        "go_type": "*shims.URI",
+        "methods": {
+          "scheme":   {"call": "Scheme",   "returns": "string"},
+          "host":     {"call": "Host",     "returns": "string"},
+          "hostname": {"call": "Hostname", "returns": "string"},
+          "port":     {"call": "Port",     "returns": "int"},
+          "path":     {"call": "Path",     "returns": "string"},
+          "query":    {"call": "Query",    "returns": "string"},
+          "fragment": {"call": "Fragment", "returns": "string"},
+          "to_s":     {"call": "String",   "returns": "string"}
+        }
+      }
+    }
+  }
+}

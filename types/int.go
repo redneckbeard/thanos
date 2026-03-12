@@ -385,4 +385,131 @@ func init() {
 			}
 		},
 	})
+	IntType.Def("abs", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "Abs", rcvr.Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
+	IntType.Def("ceil", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{Expr: rcvr.Expr}
+		},
+	})
+	IntType.Def("floor", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{Expr: rcvr.Expr}
+		},
+	})
+	IntType.Def("round", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{Expr: rcvr.Expr}
+		},
+	})
+	IntType.Def("succ", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.ADD, bst.Int(1)),
+			}
+		},
+	})
+	IntType.Alias("succ", "next")
+	IntType.Def("pred", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.SUB, bst.Int(1)),
+			}
+		},
+	})
+	IntType.Def("zero?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.EQL, bst.Int(0)),
+			}
+		},
+	})
+	IntType.Def("nonzero?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.NEQ, bst.Int(0)),
+			}
+		},
+	})
+	IntType.Def("to_r", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return RationalType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "NewRationalFromInt", bst.Call(nil, "int64", rcvr.Expr)),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
+	IntType.Def("-@", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: &ast.UnaryExpr{Op: token.SUB, X: rcvr.Expr},
+			}
+		},
+	})
+	IntType.Def("positive?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.GTR, bst.Int(0)),
+			}
+		},
+	})
+	IntType.Def("negative?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.LSS, bst.Int(0)),
+			}
+		},
+	})
+	IntType.Def("to_c", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return ComplexType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Call(nil, "complex", bst.Call(nil, "float64", rcvr.Expr), &ast.BasicLit{Kind: token.FLOAT, Value: "0"}),
+			}
+		},
+	})
 }

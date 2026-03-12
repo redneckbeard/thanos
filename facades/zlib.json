@@ -1,0 +1,27 @@
+{
+  "zlib": {
+    "go_imports": ["github.com/redneckbeard/thanos/shims"],
+    "modules": {
+      "Zlib": {
+        "methods": {
+          "deflate": {
+            "call": ["shims.ZlibDeflate"],
+            "returns": "string"
+          },
+          "inflate": {
+            "call": ["shims.ZlibInflate"],
+            "returns": "string"
+          },
+          "gzip": {
+            "call": ["shims.ZlibGzip"],
+            "returns": "string"
+          },
+          "gunzip": {
+            "call": ["shims.ZlibGunzip"],
+            "returns": "string"
+          }
+        }
+      }
+    }
+  }
+}

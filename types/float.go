@@ -198,4 +198,99 @@ func init() {
 			}
 		},
 	})
+	FloatType.Def("to_f", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return FloatType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{Expr: rcvr.Expr}
+		},
+	})
+	FloatType.Def("truncate", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return IntType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: &ast.CallExpr{
+					Fun:  it.Get("int"),
+					Args: []ast.Expr{bst.Call("math", "Trunc", rcvr.Expr)},
+				},
+				Imports: []string{"math"},
+			}
+		},
+	})
+	FloatType.Def("divmod", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return NewArray(FloatType), nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "FloatDivmod", rcvr.Expr, args[0].Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
+	FloatType.Def("modulo", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return FloatType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("math", "Mod", rcvr.Expr, args[0].Expr),
+				Imports: []string{"math"},
+			}
+		},
+	})
+	FloatType.Def("to_r", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return RationalType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("stdlib", "NewRationalFromFloat", rcvr.Expr),
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
+	FloatType.Def("-@", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return FloatType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: &ast.UnaryExpr{Op: token.SUB, X: rcvr.Expr},
+			}
+		},
+	})
+	FloatType.Def("positive?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.GTR, &ast.BasicLit{Kind: token.FLOAT, Value: "0.0"}),
+			}
+		},
+	})
+	FloatType.Def("negative?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Binary(rcvr.Expr, token.LSS, &ast.BasicLit{Kind: token.FLOAT, Value: "0.0"}),
+			}
+		},
+	})
+	FloatType.Def("to_c", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return ComplexType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr: bst.Call(nil, "complex", rcvr.Expr, &ast.BasicLit{Kind: token.FLOAT, Value: "0"}),
+			}
+		},
+	})
 }
