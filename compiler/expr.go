@@ -110,6 +110,10 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		} else if n.Setter {
 			return bst.Dot(g.CompileExpr(n.Receiver), strings.Title(strings.TrimSuffix(n.MethodName, "=")))
 		}
+		// block_given? compiles to blk != nil
+		if n.MethodName == "block_given?" && n.Receiver == nil {
+			return bst.Binary(g.it.Get("blk"), token.NEQ, g.it.Get("nil"))
+		}
 		// yield desugars to blk.call(args...) — compile as blk(args...)
 		if n.MethodName == "call" {
 			if ident, ok := n.Receiver.(*parser.IdentNode); ok {
@@ -137,6 +141,9 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 				Type: funcType,
 				Body: g.CompileBlockStmt(n.Block.Body.Statements),
 			})
+		} else if n.Method != nil && n.Method.Block != nil {
+			// Method expects a block but call site doesn't provide one — pass nil
+			args = append(args, g.it.Get("nil"))
 		}
 		call := bst.Call(nil, strings.Title(n.MethodName), args...)
 		if n.HasSplat() {

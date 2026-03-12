@@ -802,6 +802,10 @@ primary:
   {
     // Bare predicate/bang method call with no args: get?, empty?, save!
     call := &MethodCall{MethodName: $1, lineNo: currentLineNo}
+    // block_given? implies an optional block param on the current method
+    if $1 == "block_given?" && root(yylex).currentMethod != nil {
+      root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
+    }
     if root(yylex).currentClass != nil {
       root(yylex).currentClass.MethodSet.AddCall(call)
     } else {

@@ -375,6 +375,23 @@ func (m *Method) extractYieldArgTypes() {
 				}
 			} else if ret, ok := node.(*ReturnNode); ok {
 				walk(Statements(ret.Val))
+			} else if cond, ok := node.(*Condition); ok {
+				walk(cond.True)
+				if cond.False != nil {
+					if elseIf, ok := cond.False.(*Condition); ok {
+						walk(Statements{elseIf})
+					}
+				}
+			} else if caseNode, ok := node.(*CaseNode); ok {
+				for _, w := range caseNode.Whens {
+					walk(w.Statements)
+				}
+			} else if whileNode, ok := node.(*WhileNode); ok {
+				walk(whileNode.Body)
+			} else if forNode, ok := node.(*ForInNode); ok {
+				walk(forNode.Body)
+			} else if beginNode, ok := node.(*BeginNode); ok {
+				walk(beginNode.Body)
 			}
 		}
 	}

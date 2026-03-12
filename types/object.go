@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"strconv"
+	"strings"
 
 	"github.com/redneckbeard/thanos/bst"
 )
@@ -206,6 +207,30 @@ func init() {
 				Expr:  tapVar,
 				Stmts: stmts,
 			}
+		},
+	})
+
+	ObjectType.Def("respond_to?", MethodSpec{
+		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			// At compile time, check if the receiver type has the named method
+			if len(args) > 0 {
+				methodName := ""
+				// The argument is a symbol like :foo — extract the name
+				if lit, ok := args[0].Expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					methodName = strings.Trim(lit.Value, `"`)
+				}
+				if methodName != "" {
+					if rcvr.Type.HasMethod(methodName) {
+						return Transform{Expr: it.Get("true")}
+					}
+					return Transform{Expr: it.Get("false")}
+				}
+			}
+			// Fallback: can't determine at compile time
+			return Transform{Expr: it.Get("false")}
 		},
 	})
 

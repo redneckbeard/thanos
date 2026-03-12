@@ -474,6 +474,7 @@ func (cls *Class) GenerateMethod(m *Method, class *types.Class) {
 			c.Receiver = &SelfNode{_type: class.Instance.(types.Type), lineNo: c.lineNo}
 		}
 	}
+	methodBlock := m.Block // capture for closure
 	spec := types.MethodSpec{
 		ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
 			return m.ReturnType(), nil
@@ -482,6 +483,9 @@ func (cls *Class) GenerateMethod(m *Method, class *types.Class) {
 			callArgs := types.UnwrapTypeExprs(args)
 			if blk != nil {
 				callArgs = append(callArgs, blk.FuncLit(it))
+			} else if methodBlock != nil {
+				// Method expects a block but call site doesn't provide one — pass nil
+				callArgs = append(callArgs, it.Get("nil"))
 			}
 			return types.Transform{
 				Expr: bst.Call(rcvr.Expr, m.GoName(), callArgs...),

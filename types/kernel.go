@@ -217,6 +217,16 @@ func init() {
 			}
 		},
 	})
+
+	KernelType.Def("block_given?", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return BoolType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			// Compiled to blk != nil in compiler/expr.go
+			return Transform{Expr: bst.Binary(it.Get("blk"), token.NEQ, it.Get("nil"))}
+		},
+	})
 }
 
 // buildExceptionLiteral creates &stdlib.ClassName{...{RubyError: stdlib.RubyError{Msg: msg}}}
