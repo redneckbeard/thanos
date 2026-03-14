@@ -72,6 +72,11 @@ func (n *CaseNode) Type() types.Type     { return n._type }
 func (n *CaseNode) SetType(t types.Type) { n._type = t }
 
 func (n *CaseNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	// Ensure case value is typed (needed for array-pattern case/when where
+	// the array elements must be individually analyzed).
+	if n.Value != nil {
+		GetType(n.Value, locals, class)
+	}
 	var (
 		t           types.Type
 		nilTypeSeen bool

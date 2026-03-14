@@ -81,6 +81,13 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 			g.appendToCurrentBlock(stmt)
 		}
 	case *parser.CaseNode:
+		// Array-pattern case/when: desugar to if/elsif chain comparing elements pairwise.
+		// Ruby: case [a, b]; when [true, true]; ... end
+		// Go:   if a == true && b == true { ... } else if ...
+		if arrVal, ok := n.Value.(*parser.ArrayNode); ok {
+			g.compileArrayPatternCase(arrVal, n.Whens)
+			break
+		}
 		stmt := &ast.SwitchStmt{}
 		tag := g.CompileExpr(n.Value)
 		if n.Value != nil && !n.RequiresExpansion {
@@ -773,6 +780,81 @@ func hoistWalk(stmts parser.Statements, hoisted map[string]bool, g *GoProgram) {
 				}
 			}
 		}
+	}
+}
+
+// compileArrayPatternCase desugars `case [a, b]; when [x, y]; ...` into an
+// if/elsif chain: `if a == x && b == y { ... } else if ...`. This is needed
+// because Go cannot switch on slices.
+func (g *GoProgram) compileArrayPatternCase(arrVal *parser.ArrayNode, whens []*parser.WhenNode) {
+	// Compile case value elements once into temp vars to avoid re-evaluation
+	valExprs := make([]ast.Expr, len(arrVal.Args))
+	for i, elem := range arrVal.Args {
+		valExprs[i] = g.CompileExpr(elem)
+	}
+
+	var ifStmt *ast.IfStmt
+	var lastIf *ast.IfStmt
+
+	for _, when := range whens {
+		body := g.CompileBlockStmt(when.Statements)
+
+		if len(when.Conditions) == 0 {
+			// else clause
+			if lastIf != nil {
+				lastIf.Else = body
+			} else {
+				// case with only else — just emit the body
+				g.appendToCurrentBlock(body.List...)
+			}
+			continue
+		}
+
+		// Build condition: valExprs[0] == cond[0] && valExprs[1] == cond[1] && ...
+		var cond ast.Expr
+		for _, condArg := range when.Conditions {
+			var elemCond ast.Expr
+			if condArr, ok := condArg.(*parser.ArrayNode); ok {
+				// Array when: compare element by element
+				for i, condElem := range condArr.Args {
+					if i >= len(valExprs) {
+						break
+					}
+					eq := bst.Binary(valExprs[i], token.EQL, g.CompileExpr(condElem))
+					if elemCond == nil {
+						elemCond = eq
+					} else {
+						elemCond = bst.Binary(elemCond, token.LAND, eq)
+					}
+				}
+			} else {
+				// Non-array when condition — compare whole value (fallback)
+				elemCond = g.CompileExpr(condArg)
+			}
+			if elemCond != nil {
+				if cond == nil {
+					cond = elemCond
+				} else {
+					cond = bst.Binary(cond, token.LOR, elemCond)
+				}
+			}
+		}
+
+		clause := &ast.IfStmt{
+			Cond: cond,
+			Body: body,
+		}
+		if ifStmt == nil {
+			ifStmt = clause
+			lastIf = clause
+		} else {
+			lastIf.Else = clause
+			lastIf = clause
+		}
+	}
+
+	if ifStmt != nil {
+		g.appendToCurrentBlock(ifStmt)
 	}
 }
 

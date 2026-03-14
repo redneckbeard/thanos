@@ -128,12 +128,23 @@ func registerPatternBindings(pattern Node, valueType types.Type, scope Scope) {
 		}
 		scope.Set(p.Val, &RubyLocal{_type: valueType})
 	case *ArrayPatternNode:
-		var elemType types.Type
-		if arr, ok := valueType.(types.Array); ok {
-			elemType = arr.Element
-		}
-		for _, elem := range p.Elements {
-			registerPatternBindings(elem, elemType, scope)
+		if tuple, ok := valueType.(*types.Tuple); ok {
+			// Heterogeneous array: each element has its own type
+			for i, elem := range p.Elements {
+				var elemType types.Type
+				if i < len(tuple.Elements) {
+					elemType = tuple.Elements[i]
+				}
+				registerPatternBindings(elem, elemType, scope)
+			}
+		} else {
+			var elemType types.Type
+			if arr, ok := valueType.(types.Array); ok {
+				elemType = arr.Element
+			}
+			for _, elem := range p.Elements {
+				registerPatternBindings(elem, elemType, scope)
+			}
 		}
 	case *WildcardPatternNode:
 		// No binding for wildcards

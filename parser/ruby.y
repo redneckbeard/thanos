@@ -1883,6 +1883,12 @@ assoc:
   {
     $$ = &KeyValuePair{Label: strings.TrimRight($1, ":"), Value: $2}
   }
+| LABEL
+  {
+    // Value-omission hash shorthand: {action:} means {action: action}
+    name := strings.TrimRight($1, ":")
+    $$ = &KeyValuePair{Label: name, Value: &IdentNode{Val: name, Pos: Pos{lineNo: currentLineNo, file: currentFile}}}
+  }
 | DOUBLESPLAT arg_value
   {
     $$ = &KeyValuePair{Value: $2, DoubleSplat: true}

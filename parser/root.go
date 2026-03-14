@@ -2,6 +2,8 @@ package parser
 
 import (
 	"fmt"
+	"go/ast"
+	"go/token"
 	"strings"
 
 	"github.com/redneckbeard/thanos/bst"
@@ -681,6 +683,49 @@ func (r *Root) expandStructDefinitions() {
 		}
 
 		r.PopClass()
+
+		// For Data.define, add `with` method: returns a copy with specified fields overridden.
+		// e.g., event.with(action: "-") → copy event, set Action = "-", return &copy
+		if isDataDefine && cls.Type() != nil {
+			classType := cls.Type().(*types.Class)
+			fieldNames := []string{}
+			for _, arg := range call.Args {
+				if sym, ok := arg.(*SymbolNode); ok {
+					fieldNames = append(fieldNames, sym.Val[1:])
+				}
+			}
+			kwargsSpec := make([]types.KwargSpec, len(fieldNames))
+			for i, name := range fieldNames {
+				kwargsSpec[i] = types.KwargSpec{Name: name}
+			}
+			fields := fieldNames // capture for closure
+			classType.Instance.Def("with", types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					return receiverType, nil
+				},
+				KwargsSpec: kwargsSpec,
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					copyIdent := it.New("copy_")
+					// copy_ := *receiver
+					copyStmt := bst.Define(copyIdent, &ast.StarExpr{X: rcvr.Expr})
+					stmts := []ast.Stmt{copyStmt}
+					// For each provided kwarg, set the field on the copy
+					for i, name := range fields {
+						if i < len(args) && args[i].Expr != nil {
+							stmts = append(stmts, bst.Assign(
+								&ast.SelectorExpr{X: copyIdent, Sel: it.Get(GoName(name))},
+								args[i].Expr,
+							))
+						}
+					}
+					return types.Transform{
+						Stmts: stmts,
+						Expr:  &ast.UnaryExpr{Op: token.AND, X: copyIdent},
+					}
+				},
+			})
+		}
+
 		// Pop intermediate modules pushed for scoped constant assignment.
 		// Use lightweight pop — modules already exist and have types from grammar
 		// parsing. Full PopModule would re-create types and corrupt state.
