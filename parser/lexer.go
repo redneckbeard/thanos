@@ -819,6 +819,11 @@ func (l *Lexer) lexAttribute() error {
 }
 
 func (l *Lexer) lexComment() error {
+	// Check if this is an inline comment (follows a non-newline token on
+	// the same line). Inline comments are saved by line number for the
+	// compiler but not emitted as tokens, since the grammar only accepts
+	// COMMENT where a term (newline/semicolon) is valid.
+	inline := l.lastToken != 0 && l.lastToken != NEWLINE && l.lastToken != COMMENT
 	_, next, err := l.Advance()
 	for {
 		var lastLoop bool
@@ -834,7 +839,22 @@ func (l *Lexer) lexComment() error {
 		}
 		_, next, err = l.Advance()
 	}
-	l.Emit(COMMENT)
+	if inline {
+		// Save the comment for the compiler but don't emit a COMMENT token.
+		// Emit a NEWLINE instead, since the comment consumed the line-ending
+		// newline that the parser needs to see as a statement terminator.
+		// Respect skipNewline (e.g., after `{` in a hash literal).
+		text := strings.TrimSpace(string(l.read))
+		l.Root.AddComment(Comment{Text: text, LineNo: l.lineNo})
+		if !l.skipNewline {
+			l.read = []rune{'\n'}
+			l.Emit(NEWLINE)
+		} else {
+			l.ResetBuffer()
+		}
+	} else {
+		l.Emit(COMMENT)
+	}
 	l.lineNo++
 	return err
 }
