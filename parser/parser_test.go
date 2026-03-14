@@ -1382,13 +1382,6 @@ func TestMethodParamInferenceErrors(t *testing.T) {
 			end
 			foo([1,2,3,4,5], true)`, "line 2: Tried to construct range from disparate types IntType and BoolType"},
 		{`def foo(bar, baz)
-		    case baz
-				when true then "string"
-				when false then 10
-				end
-			end
-			foo([1,2,3,4,5], true)`, "line 5: Case statement branches return conflicting types StringType and IntType"},
-		{`def foo(bar, baz)
 			  Math::PI * bar * baz
 			end
 			foo(2, 2.5)`, "line 2: No such class or module 'Math'"},

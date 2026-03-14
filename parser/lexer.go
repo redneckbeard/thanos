@@ -167,6 +167,10 @@ type Lexer struct {
 	condStack, cmdArgStack *Stack[*StackState]
 	inDefSignature         bool // tracks DEF ... until f_arglist ends
 	endlessMethodPending   bool // desugar: emit END at next NEWLINE
+	sourceLines            []string // source split by newline for error context
+	tokenHistory           [16]Token // ring buffer of recently consumed tokens
+	tokenHistoryPos        int       // current position in ring buffer
+	tokenHistoryCount      int       // total tokens consumed (capped at len)
 }
 
 func NewLexer(buf []byte) *Lexer {
@@ -180,6 +184,7 @@ func NewLexer(buf []byte) *Lexer {
 		cond:          NewStackState("cond"),
 		cmdArg:        NewStackState("cmdarg"),
 		spaceConsumed: true,
+		sourceLines:   strings.Split(string(buf), "\n"),
 	}
 	go l.Tokenize()
 	return l
@@ -200,6 +205,7 @@ func NewLexerWithRoot(buf []byte, root *Root, filePath string) *Lexer {
 		cond:          NewStackState("cond"),
 		cmdArg:        NewStackState("cmdarg"),
 		spaceConsumed: true,
+		sourceLines:   strings.Split(string(buf), "\n"),
 	}
 	go l.Tokenize()
 	return l
@@ -211,6 +217,11 @@ func (l *Lexer) Lex(lval *yySymType) int {
 	currentLineNo = token.LineNo
 	currentFile = l.filePath
 	l.lastParsedToken = token
+	l.tokenHistory[l.tokenHistoryPos] = token
+	l.tokenHistoryPos = (l.tokenHistoryPos + 1) % len(l.tokenHistory)
+	if l.tokenHistoryCount < len(l.tokenHistory) {
+		l.tokenHistoryCount++
+	}
 	return token.Type
 }
 
@@ -220,7 +231,59 @@ func (l *Lexer) Error(e string) {
 	if l.filePath != "" && !strings.HasPrefix(e, "syntax error") {
 		e = l.filePath + ": " + e
 	}
+	// Append source context and token history for syntax errors.
+	if strings.HasPrefix(e, "syntax error") {
+		e += l.errorContext()
+	}
 	l.Root.AddError(errors.New(e))
+}
+
+// errorContext returns a string with the source line and recent token history
+// for debugging parse errors.
+func (l *Lexer) errorContext() string {
+	var b strings.Builder
+
+	// Show the source line where the error occurred.
+	lineIdx := currentLineNo - 1
+	if lineIdx >= 0 && lineIdx < len(l.sourceLines) {
+		b.WriteString("\n  source: ")
+		// Show a few lines of context (up to 3 before, the error line, 1 after).
+		start := lineIdx - 3
+		if start < 0 {
+			start = 0
+		}
+		end := lineIdx + 2
+		if end > len(l.sourceLines) {
+			end = len(l.sourceLines)
+		}
+		for i := start; i < end; i++ {
+			marker := "  "
+			if i == lineIdx {
+				marker = "→ "
+			}
+			fmt.Fprintf(&b, "\n    %s%4d: %s", marker, i+1, l.sourceLines[i])
+		}
+	}
+
+	// Show recent token history (oldest → newest).
+	if l.tokenHistoryCount > 0 {
+		b.WriteString("\n  tokens: ")
+		count := l.tokenHistoryCount
+		start := (l.tokenHistoryPos - count + len(l.tokenHistory)) % len(l.tokenHistory)
+		for i := 0; i < count; i++ {
+			idx := (start + i) % len(l.tokenHistory)
+			tok := l.tokenHistory[idx]
+			if i > 0 {
+				b.WriteString(" ")
+			}
+			if tok.LineNo != 0 {
+				fmt.Fprintf(&b, "%d:", tok.LineNo)
+			}
+			b.WriteString(tok.String())
+		}
+	}
+
+	return b.String()
 }
 
 func (l *Lexer) Peek() (rune, error) {

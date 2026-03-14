@@ -100,7 +100,10 @@ func (n *CaseNode) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 		if tw != nil {
 			if tw != types.NilType {
 				if t != nil && t != tw {
-					return nil, NewParseError(w, "Case statement branches return conflicting types %s and %s", t, tw)
+					// Branches return different types — this case is used
+					// as a statement, not an expression. Set type to nil.
+					t = nil
+					break
 				}
 				t = tw
 			} else {

@@ -25,11 +25,16 @@ import (
 func ParseFile(filename string) (*Root, error) {
 	if filename != "" {
 		// Use multi-file parser for file-based input (handles require_relative)
-		dir, err := os.Getwd()
-		if err != nil {
-			panic(err)
+		var path string
+		if filepath.IsAbs(filename) {
+			path = filename
+		} else {
+			dir, err := os.Getwd()
+			if err != nil {
+				panic(err)
+			}
+			path = filepath.Join(dir, filename)
 		}
-		path := filepath.Join(dir, filename)
 		return ParseProgram(path)
 	}
 	// stdin fallback

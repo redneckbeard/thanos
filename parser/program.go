@@ -398,6 +398,7 @@ func registerFacadeNamespaces(root *Root, namespaces []types.FacadeNamespace) {
 // Also resolves gem sources via load paths when no facade matches.
 func stripRequires(root *Root, allFacades types.FacadeConfig) {
 	var remaining []Node
+	var loaded map[string]bool
 	for _, stmt := range root.Statements {
 		if call, ok := stmt.(*MethodCall); ok && call.Receiver == nil && call.MethodName == "require" {
 			if len(call.Args) == 1 {
@@ -417,16 +418,13 @@ func stripRequires(root *Root, allFacades types.FacadeConfig) {
 					// No facade — try resolving via Ruby load paths
 					if gemPath := resolveGemRequire(name, root.loadPaths); gemPath != "" {
 						fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
-						// Parse the gem file into the root — errors are non-fatal for gems
-						if data, err := os.ReadFile(gemPath); err == nil {
-							savedErrors := append([]error{}, root.Errors...)
-							p := yyNewParser()
-							l := NewLexerWithRoot(data, root, gemPath)
-							p.Parse(l)
-							if pErr := root.ParseError(); pErr != nil {
-								fmt.Fprintf(os.Stderr, "warning: require '%s': %v (continuing without this dependency)\n", name, pErr)
-								root.Errors = savedErrors
-							}
+						if loaded == nil {
+							loaded = make(map[string]bool)
+						}
+						savedErrors := append([]error{}, root.Errors...)
+						if err := loadFile(gemPath, root, loaded); err != nil {
+							fmt.Fprintf(os.Stderr, "warning: require '%s': %v (continuing without this dependency)\n", name, err)
+							root.Errors = savedErrors
 						}
 						continue // strip
 					}
