@@ -7,6 +7,7 @@ package cmd
 import (
 	"os"
 
+	"github.com/redneckbeard/thanos/parser"
 	"github.com/spf13/cobra"
 )
 
@@ -39,4 +40,5 @@ func init() {
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	rootCmd.PersistentFlags().BoolVar(&parser.NoGems, "no-gems", false, "Disable gem source resolution (facades still work)")
 }

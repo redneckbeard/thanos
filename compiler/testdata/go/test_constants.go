@@ -32,17 +32,9 @@ type CrossStateCommercialCTDriver struct {
 	age int
 }
 
-func NewCrossStateCommercialCTDriver(age int) *CrossStateCommercialCTDriver {
+func NewCrossStateCommercialCTDriver() *CrossStateCommercialCTDriver {
 	newInstance := &CrossStateCommercialCTDriver{}
-	newInstance.Initialize(age)
 	return newInstance
-}
-func (c *CrossStateCommercialCTDriver) Initialize(age int) int {
-	c.age = age
-	return c.age
-}
-func (c *CrossStateCommercialCTDriver) Can_drive() bool {
-	return c.age >= CTDriverLICENSE_AGE
 }
 func main() {
 	if NewCTDriver(19).Can_drive() {

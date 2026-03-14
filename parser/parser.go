@@ -71,6 +71,11 @@ func ParseBytes(b []byte) (*Root, error) {
 	l := NewLexer(b)
 	parser.Parse(l)
 
+	// Resolve Ruby load paths for gem source resolution
+	if dir, err := os.Getwd(); err == nil {
+		l.Root.loadPaths = resolveLoadPaths(dir)
+	}
+
 	// Register facade namespaces in scope for :: resolution
 	registerFacadeNamespaces(l.Root, namespaces)
 

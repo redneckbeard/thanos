@@ -14,7 +14,7 @@ type AssignmentNode struct {
 	Reassignment bool
 	OpAssignment bool
 	SetterCall   bool
-	lineNo       int
+	Pos
 	_type        types.Type
 }
 
@@ -33,7 +33,6 @@ func (n *AssignmentNode) String() string {
 }
 func (n *AssignmentNode) Type() types.Type     { return n._type }
 func (n *AssignmentNode) SetType(t types.Type) { n._type = t }
-func (n *AssignmentNode) LineNo() int          { return n.lineNo }
 
 func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
 	var typelist []types.Type
@@ -50,6 +49,12 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				return nil, err
 			}
 			n.Reassignment = true
+			// Also type the RHS so all nested expressions get typed
+			if i < len(n.Right) {
+				if _, err := GetType(n.Right[i], scope, class); err != nil {
+					return nil, err
+				}
+			}
 			typelist = append(typelist, lhs.Type())
 			continue
 		case *IVarNode:
@@ -126,7 +131,7 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				// needs to get type checked. Otherwise, as discussed above, we throw
 				// away any rhs values beyond the length of lhs.
 				if len(n.Left) == 1 {
-					array := &ArrayNode{Args: ArgsNode(n.Right), lineNo: n.Right[0].LineNo()}
+					array := &ArrayNode{Args: ArgsNode(n.Right), Pos: Pos{lineNo: n.Right[0].LineNo()}}
 					if at, err := GetType(array, scope, class); err != nil {
 						return nil, err
 					} else {
@@ -162,7 +167,18 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			n.Reassignment = true
 		case *ConstantNode:
 			lft.SetType(assignedType)
-			if scope.Current().TakesConstants() {
+			// Scoped constant assignment (e.g., Diff::LCS::Foo = expr): resolve
+			// the target scope from the namespace.
+			if lft.Namespace != "" {
+				targetScope := resolveNamespaceScope(lft.Namespace, scope)
+				if targetScope != nil {
+					constant := &Constant{name: lft.Val, prefix: lft.Namespace + "::"}
+					constant._type = assignedType
+					constant.Val = n.Right[i]
+					targetScope.(ConstantScope).AddConstant(constant)
+				}
+				// If we can't resolve the scope, silently skip (non-fatal for gems)
+			} else if scope.Current().TakesConstants() {
 				constant := &Constant{name: lft.Val, prefix: scope.Prefix()}
 				constant._type = assignedType
 				GetType(left, scope, class)
@@ -250,13 +266,51 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 	return typelist[0], nil
 }
 
+// resolveNamespaceScope walks a "::" separated namespace to find the target
+// ConstantScope. Returns nil if the namespace can't be resolved.
+func resolveNamespaceScope(namespace string, scope ScopeChain) Scope {
+	parts := strings.Split(namespace, "::")
+	var current Scope
+	for i, part := range parts {
+		if i == 0 {
+			local := scope.ResolveVar(part)
+			if local == BadLocal {
+				return nil
+			}
+			if cs, ok := local.(Scope); ok {
+				current = cs
+			} else {
+				return nil
+			}
+		} else {
+			if cs, ok := current.(ConstantScope); ok {
+				inner, err := cs.ConstGet(part)
+				if err != nil {
+					return nil
+				}
+				if innerScope, ok := inner.(Scope); ok {
+					current = innerScope
+				} else {
+					return nil
+				}
+			} else {
+				return nil
+			}
+		}
+	}
+	if _, ok := current.(ConstantScope); ok {
+		return current
+	}
+	return nil
+}
+
 func (n *AssignmentNode) Copy() Node {
 	return &AssignmentNode{
 		Left:         n.Left,
 		Right:        n.Right,
 		Reassignment: n.Reassignment,
 		OpAssignment: n.OpAssignment,
-		lineNo:       n.lineNo,
+		Pos:          n.Pos,
 		_type:        n._type,
 	}
 }

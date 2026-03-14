@@ -11,6 +11,15 @@ import (
 )
 
 var currentLineNo = 0
+var currentFile = ""
+
+// formatSyntaxError formats the file/line prefix for yacc-generated syntax errors.
+func formatSyntaxError(file string, lineNo int) string {
+	if file != "" {
+		return fmt.Sprintf("syntax error, %s line %d: ", file, lineNo)
+	}
+	return fmt.Sprintf("syntax error, line %d: ", lineNo)
+}
 
 var Illegal int = 99999999
 
@@ -81,6 +90,7 @@ var keywords = map[string]int{
 	"for":      FOR,
 	"gauntlet": IDENT,
 	"if":       IF,
+	"loop":     LOOP,
 	"in":       IN,
 	"module":   MODULE,
 	"next":     NEXT,
@@ -140,6 +150,7 @@ type Lexer struct {
 	*bytes.Buffer
 	Root                   *Root
 	lineNo                 int
+	filePath               string
 	stream                 chan Token
 	read                   []rune
 	State                  *Stack[LexState]
@@ -174,11 +185,12 @@ func NewLexer(buf []byte) *Lexer {
 
 // NewLexerWithRoot creates a lexer that shares an existing Root. Used for
 // multi-file support where require_relative'd files are parsed into the
-// same Root as the entry file.
-func NewLexerWithRoot(buf []byte, root *Root) *Lexer {
+// same Root as the entry file. The filePath is included in error messages.
+func NewLexerWithRoot(buf []byte, root *Root, filePath string) *Lexer {
 	l := &Lexer{
 		Buffer:        bytes.NewBuffer(buf),
 		lineNo:        1,
+		filePath:      filePath,
 		stream:        make(chan Token),
 		Root:          root,
 		State:         &Stack[LexState]{},
@@ -195,11 +207,17 @@ func (l *Lexer) Lex(lval *yySymType) int {
 	token := <-l.stream
 	lval.str = token.Literal
 	currentLineNo = token.LineNo
+	currentFile = l.filePath
 	l.lastParsedToken = token
 	return token.Type
 }
 
 func (l *Lexer) Error(e string) {
+	// Yacc-generated syntax errors already include the file path via
+	// formatSyntaxError, so only prepend for other error messages.
+	if l.filePath != "" && !strings.HasPrefix(e, "syntax error") {
+		e = l.filePath + ": " + e
+	}
 	l.Root.AddError(errors.New(e))
 }
 

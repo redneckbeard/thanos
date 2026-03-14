@@ -2,12 +2,22 @@ package parser
 
 import "github.com/redneckbeard/thanos/types"
 
+// Pos tracks the source location of an AST node.
+type Pos struct {
+	lineNo int
+	file   string
+}
+
+func (p Pos) LineNo() int    { return p.lineNo }
+func (p Pos) File() string   { return p.file }
+
 type Node interface {
 	String() string
 	TargetType(ScopeChain, *Class) (types.Type, error)
 	Type() types.Type
 	SetType(types.Type)
 	LineNo() int
+	File() string
 	Copy() Node
 }
 
@@ -29,7 +39,7 @@ func GetType(n Node, scope ScopeChain, class *Class) (t types.Type, err error) {
 					Method:     m,
 					MethodName: m.Name,
 					_type:      m.ReturnType(),
-					lineNo:     ident.lineNo,
+					Pos:        ident.Pos,
 				}
 				return m.ReturnType(), nil
 			}

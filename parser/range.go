@@ -9,7 +9,7 @@ import (
 type RangeNode struct {
 	Lower, Upper Node
 	Inclusive    bool
-	lineNo       int
+	Pos
 	_type        types.Type
 }
 
@@ -26,7 +26,6 @@ func (n *RangeNode) String() string {
 }
 func (n *RangeNode) Type() types.Type     { return n._type }
 func (n *RangeNode) SetType(t types.Type) { n._type = t }
-func (n *RangeNode) LineNo() int          { return n.lineNo }
 
 func (n *RangeNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	var t types.Type
@@ -46,5 +45,5 @@ func (n *RangeNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 }
 
 func (n *RangeNode) Copy() Node {
-	return &RangeNode{n.Lower.Copy(), n.Upper.Copy(), n.Inclusive, n.lineNo, n._type}
+	return &RangeNode{n.Lower.Copy(), n.Upper.Copy(), n.Inclusive, n.Pos, n._type}
 }

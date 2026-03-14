@@ -16,7 +16,7 @@ type IVarNode struct {
 	Val    string
 	Class  *Class
 	_type  types.Type
-	lineNo int
+	Pos
 }
 
 func (n *IVarNode) String() string   { return n.Val }
@@ -31,7 +31,6 @@ func (n *IVarNode) SetType(t types.Type) {
 		panic("Setting an instance variable outside of a class is unsupported")
 	}
 }
-func (n *IVarNode) LineNo() int { return n.lineNo }
 
 func (n *IVarNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if class != nil {
@@ -70,7 +69,7 @@ type CVarNode struct {
 	Val    string
 	Class  *Class
 	_type  types.Type
-	lineNo int
+	Pos
 }
 
 func (n *CVarNode) String() string       { return n.Val }
@@ -84,7 +83,6 @@ func (n *CVarNode) SetType(t types.Type) {
 		}
 	}
 }
-func (n *CVarNode) LineNo() int { return n.lineNo }
 
 func (n *CVarNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if class != nil {
@@ -178,7 +176,7 @@ type Module struct {
 	Statements   Statements
 	MethodSet    *MethodSet
 	_type        types.Type
-	lineNo       int
+	Pos
 	Parent       *Module
 	Constants    []*Constant
 	Modules      []*Module
@@ -206,7 +204,6 @@ func (mod *Module) String() string {
 
 func (mod *Module) Type() types.Type     { return mod._type }
 func (mod *Module) SetType(t types.Type) { mod._type = t }
-func (mod *Module) LineNo() int          { return mod.lineNo }
 func (mod *Module) Copy() Node           { return mod }
 
 func (mod *Module) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
@@ -276,7 +273,7 @@ type Class struct {
 	Statements       Statements
 	MethodSet        *MethodSet
 	_type            types.Type
-	lineNo           int
+	Pos
 	Body             Body
 	ivars            map[string]*IVar
 	ivarOrder        []string
@@ -288,6 +285,28 @@ type Class struct {
 	Aliases          []Alias
 	Includes         []string
 	ClassMethods     []*Method
+}
+
+// IsUsed reports whether the class was ever instantiated (has calls to
+// initialize) or had instance methods called on it from outside the class.
+func (cls *Class) IsUsed() bool {
+	if len(cls.MethodSet.Calls["initialize"]) > 0 {
+		return true
+	}
+	// Check if any instance method has external calls (not just internal
+	// Kernel calls like puts). A method with calls registered means
+	// someone called it on an instance of this class.
+	for name := range cls.MethodSet.Calls {
+		if name == "initialize" {
+			continue
+		}
+		if _, defined := cls.MethodSet.Methods[name]; defined {
+			if len(cls.MethodSet.Calls[name]) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (cls *Class) String() string {
@@ -327,7 +346,6 @@ func (cls *Class) String() string {
 
 func (cls *Class) Type() types.Type     { return cls._type }
 func (cls *Class) SetType(t types.Type) { cls._type = t }
-func (cls *Class) LineNo() int          { return cls.lineNo }
 
 func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 	super := "Object"
@@ -353,11 +371,6 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 		m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{cls, m.Scope[len(m.Scope)-1]}...)
 		cm := m // capture for closure
 		funcName := cls.name + GoName(m.Name)
-		externalFuncName := funcName
-		pkgPath := class.PackagePath
-		if class.Package != "" {
-			externalFuncName = class.Package + "." + funcName
-		}
 		class.Def(m.Name, types.MethodSpec{
 			ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
 				if cm.Body.ReturnType == nil {
@@ -373,11 +386,15 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 				return cm.ReturnType(), nil
 			},
 			TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-				t := types.Transform{
-					Expr: bst.Call(nil, externalFuncName, types.UnwrapTypeExprs(args)...),
+				callName := funcName
+				if class.Package != "" {
+					callName = class.Package + "." + funcName
 				}
-				if pkgPath != "" {
-					t.Imports = []string{pkgPath}
+				t := types.Transform{
+					Expr: bst.Call(nil, callName, types.UnwrapTypeExprs(args)...),
+				}
+				if class.PackagePath != "" {
+					t.Imports = []string{class.PackagePath}
 				}
 				return t
 			},
@@ -450,14 +467,14 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 				// Register synthetic calls to required methods so the analyzer infers their types
 				for _, req := range mixin.RequiredMethods {
 					syntheticCall := &MethodCall{
-						Receiver:   &SelfNode{_type: class.Instance.(types.Type), lineNo: cls.lineNo},
+						Receiver:   &SelfNode{_type: class.Instance.(types.Type), Pos: Pos{lineNo: cls.lineNo}},
 						MethodName: req,
-						lineNo:     cls.lineNo,
+						Pos:        Pos{lineNo: cls.lineNo},
 					}
 					// Only add synthetic arg for methods with positional params
 					// (e.g., <=> for Comparable needs an arg, but each for Enumerable does not)
 					if m := cls.MethodSet.Methods[req]; m != nil && len(m.PositionalParams()) > 0 {
-						syntheticCall.Args = ArgsNode{&SelfNode{_type: class.Instance.(types.Type), lineNo: cls.lineNo}}
+						syntheticCall.Args = ArgsNode{&SelfNode{_type: class.Instance.(types.Type), Pos: Pos{lineNo: cls.lineNo}}}
 					}
 					cls.MethodSet.AddCall(syntheticCall)
 				}
@@ -486,7 +503,7 @@ func (cls *Class) GenerateMethod(m *Method, class *types.Class) {
 	// track internal calls to own methods here where receiver is implicit
 	for _, c := range cls.MethodSet.Calls[m.Name] {
 		if c.Receiver == nil {
-			c.Receiver = &SelfNode{_type: class.Instance.(types.Type), lineNo: c.lineNo}
+			c.Receiver = &SelfNode{_type: class.Instance.(types.Type), Pos: Pos{lineNo: c.lineNo}}
 		}
 	}
 	methodBlock := m.Block // capture for closure
@@ -773,7 +790,7 @@ type ScopeAccessNode struct {
 	Receiver Node
 	Constant string
 	_type    types.Type
-	lineNo   int
+	Pos
 }
 
 func (n *ScopeAccessNode) String() string {
@@ -781,7 +798,6 @@ func (n *ScopeAccessNode) String() string {
 }
 func (n *ScopeAccessNode) Type() types.Type     { return n._type }
 func (n *ScopeAccessNode) SetType(t types.Type) { n._type = t }
-func (n *ScopeAccessNode) LineNo() int          { return n.lineNo }
 
 func (n *ScopeAccessNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if constant, err := n.Walk(locals); err != nil {
@@ -821,7 +837,7 @@ func (n *ScopeAccessNode) Walk(scope ScopeChain) (Const, error) {
 }
 
 func (n *ScopeAccessNode) Copy() Node {
-	return &ScopeAccessNode{n.Receiver.Copy(), n.Constant, n._type, n.lineNo}
+	return &ScopeAccessNode{n.Receiver.Copy(), n.Constant, n._type, n.Pos}
 }
 
 func (n *ScopeAccessNode) ReceiverName() string {
@@ -845,7 +861,7 @@ type SuperNode struct {
 	Method *Method
 	Class  *Class
 	_type  types.Type
-	lineNo int
+	Pos
 }
 
 func (n *SuperNode) String() string {
@@ -857,7 +873,6 @@ func (n *SuperNode) String() string {
 }
 func (n *SuperNode) Type() types.Type     { return n._type }
 func (n *SuperNode) SetType(t types.Type) { n._type = t }
-func (n *SuperNode) LineNo() int          { return n.lineNo }
 
 func (n *SuperNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	ancestor, method, found := n.Class.GetAncestorMethod(n.Method.Name)
@@ -897,13 +912,13 @@ func (n *SuperNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 		Method:     method,
 		MethodName: method.Name,
 		Args:       args,
-		lineNo:     n.lineNo,
+		Pos:        n.Pos,
 	}
 	return GetType(superCall, locals, class)
 }
 
 func (n *SuperNode) Copy() Node {
-	return &SuperNode{n.Args.Copy().(ArgsNode), n.Method, n.Class, n._type, n.lineNo}
+	return &SuperNode{n.Args.Copy().(ArgsNode), n.Method, n.Class, n._type, n.Pos}
 }
 
 func (n *SuperNode) Inline() Statements {

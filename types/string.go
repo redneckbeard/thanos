@@ -1403,6 +1403,33 @@ func init() {
 			}
 		},
 	})
+	// s[offset, length] = replacement → s = stdlib.StringSplice(s, offset, length, replacement)
+	// s[index] = char → s = stdlib.StringSplice(s, index, 1, char)
+	StringType.Def("[]=", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return StringType, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			var offset, length, replacement ast.Expr
+			if len(args) == 3 {
+				// s[offset, length] = replacement
+				offset = args[0].Expr
+				length = args[1].Expr
+				replacement = args[2].Expr
+			} else {
+				// s[index] = char
+				offset = args[0].Expr
+				length = bst.Int(1)
+				replacement = args[1].Expr
+			}
+			spliceCall := bst.Call(nil, "stdlib.StringSplice", rcvr.Expr, offset, length, replacement)
+			return Transform{
+				Stmts:   []ast.Stmt{bst.Assign(rcvr.Expr, spliceCall)},
+				Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+			}
+		},
+	})
+
 	StringType.Def("concat", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			return StringType, nil

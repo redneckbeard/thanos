@@ -230,3 +230,23 @@ func Join[T fmt.Stringer](t []T, delim string) string {
 	return strings.Join(segments, delim)
 }
 
+// StringSplice replaces s[offset:offset+length] with replacement.
+// Equivalent to Ruby's s[offset, length] = replacement.
+func StringSplice(s string, offset, length int, replacement string) string {
+	runes := []rune(s)
+	if offset < 0 {
+		offset = len(runes) + offset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > len(runes) {
+		offset = len(runes)
+	}
+	end := offset + length
+	if end > len(runes) {
+		end = len(runes)
+	}
+	return string(runes[:offset]) + replacement + string(runes[end:])
+}
+

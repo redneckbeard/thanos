@@ -10,14 +10,13 @@ import (
 type ArrayNode struct {
 	Args    ArgsNode
 	_type   types.Type
-	lineNo  int
+	Pos
 	isEmpty bool // tracks if this is an empty array needing type inference
 }
 
 func (n *ArrayNode) String() string       { return fmt.Sprintf("[%s]", n.Args) }
 func (n *ArrayNode) Type() types.Type     { return n._type }
 func (n *ArrayNode) SetType(t types.Type) { n._type = t }
-func (n *ArrayNode) LineNo() int          { return n.lineNo }
 
 func (n *ArrayNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	var inner types.Type
@@ -71,7 +70,7 @@ func (n *ArrayNode) IsEmpty() bool {
 }
 
 func (n *ArrayNode) Copy() Node {
-	return &ArrayNode{n.Args.Copy().(ArgsNode), n._type, n.lineNo, n.isEmpty}
+	return &ArrayNode{n.Args.Copy().(ArgsNode), n._type, n.Pos, n.isEmpty}
 }
 
 type KeyValuePair struct {
@@ -80,7 +79,7 @@ type KeyValuePair struct {
 	Value       Node
 	DoubleSplat bool
 	_type       types.Type
-	lineNo      int
+	Pos
 }
 
 func (n *KeyValuePair) String() string {
@@ -91,7 +90,6 @@ func (n *KeyValuePair) String() string {
 }
 func (n *KeyValuePair) Type() types.Type     { return n._type }
 func (n *KeyValuePair) SetType(t types.Type) { n._type = n.Value.Type() }
-func (n *KeyValuePair) LineNo() int          { return n.lineNo }
 
 func (n *KeyValuePair) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	return GetType(n.Value, locals, class)
@@ -103,7 +101,7 @@ func (n KeyValuePair) Copy() Node {
 		Value:       n.Value.Copy(),
 		DoubleSplat: n.DoubleSplat,
 		_type:       n._type,
-		lineNo:      n.lineNo,
+		Pos: Pos{lineNo: n.lineNo},
 	}
 	if n.Key != nil {
 		n.Key = n.Key.Copy()
@@ -114,7 +112,7 @@ func (n KeyValuePair) Copy() Node {
 type HashNode struct {
 	Pairs  []*KeyValuePair
 	_type  types.Type
-	lineNo int
+	Pos
 }
 
 func (n *HashNode) String() string {
@@ -122,7 +120,6 @@ func (n *HashNode) String() string {
 }
 func (n *HashNode) Type() types.Type     { return n._type }
 func (n *HashNode) SetType(t types.Type) { n._type = t }
-func (n *HashNode) LineNo() int          { return n.lineNo }
 
 func (n *HashNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if len(n.Pairs) == 0 {
@@ -151,7 +148,7 @@ func (n *HashNode) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 }
 
 func (n *HashNode) Copy() Node {
-	hash := &HashNode{_type: n._type, lineNo: n.lineNo}
+	hash := &HashNode{_type: n._type, Pos: Pos{lineNo: n.lineNo}}
 	var pairs []*KeyValuePair
 	for _, pair := range n.Pairs {
 		pairs = append(pairs, pair.Copy().(*KeyValuePair))
@@ -175,14 +172,13 @@ func (n *HashNode) Delete(key string) {
 type BracketAssignmentNode struct {
 	Composite Node
 	Args      ArgsNode
-	lineNo    int
+	Pos
 	_type     types.Type
 }
 
 func (n *BracketAssignmentNode) String() string       { return fmt.Sprintf("%s[%s]", n.Composite, n.Args) }
 func (n *BracketAssignmentNode) Type() types.Type     { return n._type }
 func (n *BracketAssignmentNode) SetType(t types.Type) { n._type = t }
-func (n *BracketAssignmentNode) LineNo() int          { return n.lineNo }
 
 func (n *BracketAssignmentNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	t, err := GetType(n.Composite, locals, class)
@@ -201,25 +197,30 @@ func (n *BracketAssignmentNode) TargetType(locals ScopeChain, class *Class) (typ
 }
 
 func (n *BracketAssignmentNode) Copy() Node {
-	return &BracketAssignmentNode{n.Composite.Copy(), n.Args.Copy().(ArgsNode), n.lineNo, n._type}
+	return &BracketAssignmentNode{n.Composite.Copy(), n.Args.Copy().(ArgsNode), n.Pos, n._type}
 }
 
 type BracketAccessNode struct {
 	Composite Node
 	Args      ArgsNode
-	lineNo    int
+	Pos
 	_type     types.Type
 }
 
 func (n *BracketAccessNode) String() string       { return fmt.Sprintf("%s[%s]", n.Composite, n.Args) }
 func (n *BracketAccessNode) Type() types.Type     { return n._type }
 func (n *BracketAccessNode) SetType(t types.Type) { n._type = t }
-func (n *BracketAccessNode) LineNo() int          { return n.lineNo }
 
 func (n *BracketAccessNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	t, err := GetType(n.Composite, locals, class)
 	if err != nil {
 		return nil, err
+	}
+	// Ensure all bracket args are typed (needed by compiler for expressions like arr[i - 1])
+	for _, arg := range n.Args {
+		if _, err := GetType(arg, locals, class); err != nil {
+			return nil, err
+		}
 	}
 	switch comp := t.(type) {
 	case nil:
@@ -262,7 +263,7 @@ func (n *BracketAccessNode) TargetType(locals ScopeChain, class *Class) (types.T
 }
 
 func (n *BracketAccessNode) Copy() Node {
-	return &BracketAccessNode{n.Composite.Copy(), n.Args.Copy().(ArgsNode), n.lineNo, n._type}
+	return &BracketAccessNode{n.Composite.Copy(), n.Args.Copy().(ArgsNode), n.Pos, n._type}
 }
 
 type SplatNode struct {
@@ -274,6 +275,7 @@ func (n *SplatNode) String() string       { return "*" + n.Arg.String() }
 func (n *SplatNode) Type() types.Type     { return n._type }
 func (n *SplatNode) SetType(t types.Type) { n._type = t }
 func (n *SplatNode) LineNo() int          { return n.Arg.LineNo() }
+func (n *SplatNode) File() string         { return n.Arg.File() }
 
 func (n *SplatNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	t, err := GetType(n.Arg, locals, class)

@@ -54,7 +54,8 @@ func (t *Class) MethodReturnType(m string, b Type, args []Type) (Type, error) {
 }
 
 func (t *Class) BlockArgTypes(m string, args []Type) []Type {
-	return t.MustResolve(m).blockArgs(t, args)
+	spec := t.MustResolve(m)
+	return spec.BlockArgs(t, args)
 }
 
 func (t *Class) TransformAST(m string, rcvr ast.Expr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
@@ -233,7 +234,8 @@ func (t Instance) MethodReturnType(m string, b Type, args []Type) (Type, error) 
 }
 
 func (t Instance) BlockArgTypes(m string, args []Type) []Type {
-	return t.proto.MustResolve(m, false).blockArgs(t, args)
+	spec := t.proto.MustResolve(m, false)
+	return spec.BlockArgs(t, args)
 }
 
 func (t Instance) TransformAST(m string, rcvr ast.Expr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {

@@ -166,11 +166,12 @@ type Method struct {
 	Scope     ScopeChain
 	Root      *Root
 	Block     *BlockParam
-	lineNo    int
+	Pos
 	Private     bool
 	ClassMethod bool
 	analyzed    bool
 	analyzing   bool
+	uncallable  bool
 }
 
 func NewMethod(name string, r *Root) *Method {
@@ -204,6 +205,7 @@ func (n *Method) String() string {
 	}
 }
 
+func (n *Method) IsUncallable() bool    { return n.uncallable }
 func (n *Method) Type() types.Type     { return types.FuncType }
 func (n *Method) SetType(t types.Type) {}
 func (n *Method) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
@@ -213,7 +215,6 @@ func (n *Method) Copy() Node {
 	//TODO how will we actually clone for subclassing and super?
 	return n
 }
-func (n *Method) LineNo() int { return n.lineNo }
 
 func (m *Method) ReturnType() types.Type {
 	return m.Body.ReturnType
@@ -297,6 +298,11 @@ func (m *Method) Analyze(ms *MethodSet) error {
 			doubleSplat := m.DoubleSplatParam()
 			if doubleSplat != nil && doubleSplat.Type() != nil && param.Kind == Keyword {
 				m.Locals.Set(param.Name, &RubyLocal{_type: doubleSplat.Type().(types.Hash).Value})
+			} else if len(ms.Calls[m.Name]) == 0 {
+				// Method is never called — can't infer param types.
+				// Mark as uncallable and skip without erroring.
+				m.uncallable = true
+				return nil
 			} else {
 				return NewParseError(m, "unable to detect type signature of method '%s' because it is never called", name)
 			}
@@ -492,7 +498,24 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 					// the keyword argument 'foo' is valid when a double splat parameter is also named 'foo', so we have to carve out an exception for that here
 					return nil
 				} else {
-					return NewParseError(c, "method '%s' called with %s for parameter '%s' but '%s' was previously seen as %s", method.Name, t, param.Name, param.Name, param.Type()).Terminal()
+					// Try duck-type interface inference before erroring
+					if iface := tryBuildDuckInterface(method, param, param.Type(), t); iface != nil {
+						param._type = iface
+						method.Scope.Set(param.Name, &RubyLocal{_type: iface})
+						// Register the interface globally for the compiler
+						found := false
+						for _, existing := range DuckInterfaces {
+							if existing.Name == iface.Name {
+								found = true
+								break
+							}
+						}
+						if !found {
+							DuckInterfaces = append(DuckInterfaces, iface)
+						}
+					} else {
+						return NewParseError(c, "method '%s' called with %s for parameter '%s' but '%s' was previously seen as %s", method.Name, t, param.Name, param.Name, param.Type()).Terminal()
+					}
 				}
 			}
 		}
@@ -532,12 +555,13 @@ type MethodCall struct {
 	MethodName              string
 	Args                    ArgsNode
 	Block                   *Block
+	BlockPass               *BlockPassNode
 	RawBlock                string
 	Getter, Setter          bool
 	Op                      string
 	splatStart, splatLength int
 	_type                   types.Type
-	lineNo                  int
+	Pos
 }
 
 func (n *MethodCall) String() string {
@@ -559,11 +583,17 @@ func (n *MethodCall) String() string {
 
 func (n *MethodCall) Type() types.Type     { return n._type }
 func (n *MethodCall) SetType(t types.Type) { n._type = t }
-func (n *MethodCall) LineNo() int          { return n.lineNo }
 
 func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
+	// defined?(expr) compiles to true at compile time — if the symbol exists,
+	// the compiler already resolved it; if not, it would have errored earlier.
+	if c.MethodName == "defined?" {
+		return types.BoolType, nil
+	}
 	// Extract &:symbol from args and convert to a synthetic block
 	c.extractSymbolToProc()
+	// Extract &variable block pass from args
+	c.extractBlockPass()
 	receiverType := c.ReceiverType(scope, class)
 	switch t := receiverType.(type) {
 	case *types.Class:
@@ -574,7 +604,7 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 				Args:       c.Args,
 				Block:      c.Block,
 				_type:      receiverType,
-				lineNo:     c.lineNo,
+				Pos: Pos{lineNo: c.lineNo},
 			}
 			classMethodSets[receiverType].AddCall(initializeCall)
 		}
@@ -683,6 +713,10 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			return nil, nil
 		case "include":
 			// Already handled during parsing in AddCall
+			delete(class.MethodSet.Calls, c.MethodName)
+			return nil, nil
+		case "private_constant", "public_constant", "freeze":
+			// Class-level directives with no compilation effect
 			delete(class.MethodSet.Calls, c.MethodName)
 			return nil, nil
 		}
@@ -832,6 +866,9 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			blockScope := NewScope("block")
 			blockArgTypes := receiverType.BlockArgTypes(c.MethodName, argTypes)
 			for i, p := range c.Block.Params {
+				if i >= len(blockArgTypes) {
+					break
+				}
 				if p.Kind == Destructured {
 					// Unpack composite type into nested params
 					compositeType := blockArgTypes[i]
@@ -890,6 +927,20 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 	if t, err := receiverType.MethodReturnType(c.MethodName, blockRetType, argTypes); err != nil {
 		return nil, NewParseError(c, err.Error())
 	} else {
+		// Fan out duck-interface calls to concrete types so their methods get analyzed
+		if di, ok := receiverType.(*types.DuckInterface); ok {
+			for _, ct := range di.ConcreteTypes {
+				if ms, msOk := classMethodSets[ct]; msOk {
+					syntheticCall := &MethodCall{
+						Receiver:   &SelfNode{_type: ct, Pos: Pos{lineNo: c.lineNo}},
+						MethodName: c.MethodName,
+						Args:       c.Args,
+						Pos: Pos{lineNo: c.lineNo},
+					}
+					ms.AddCall(syntheticCall)
+				}
+			}
+		}
 		// Check if this method can refine variable types (e.g., << on empty arrays)
 		if c.Receiver != nil {
 			if ident, ok := c.Receiver.(*IdentNode); ok {
@@ -931,6 +982,7 @@ func (n *MethodCall) Copy() Node {
 		n.MethodName,
 		n.Args.Copy().(ArgsNode),
 		n.Block.Copy(),
+		n.BlockPass,
 		"",
 		n.Getter,
 		n.Setter,
@@ -938,7 +990,7 @@ func (n *MethodCall) Copy() Node {
 		n.splatStart,
 		n.splatLength,
 		n._type,
-		n.lineNo,
+		n.Pos,
 	}
 }
 
@@ -1016,7 +1068,7 @@ func (c *MethodCall) KeywordArgsForDoubleSplatParam() *HashNode {
 			}
 		}
 	}
-	return &HashNode{Pairs: pairs, lineNo: c.lineNo, _type: c.Method.DoubleSplatParam().Type()}
+	return &HashNode{Pairs: pairs, Pos: Pos{lineNo: c.lineNo}, _type: c.Method.DoubleSplatParam().Type()}
 }
 
 func (c *MethodCall) ExtractDoubleSplatArg() Node {

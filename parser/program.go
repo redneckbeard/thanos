@@ -1,15 +1,27 @@
 package parser
 
 import (
+	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/redneckbeard/thanos/facades"
 	"github.com/redneckbeard/thanos/types"
 )
+
+// NoGems disables gem source resolution via system Ruby. Facades still work.
+var NoGems bool
+
+// builtinRequires lists require names that thanos handles natively via its
+// type system. These are silently stripped without needing a facade or gem source.
+var builtinRequires = map[string]bool{
+	"set": true,
+}
 
 // ParseProgram parses a Ruby file and all its require_relative dependencies
 // into a single Root, then runs Analyze(). This is the multi-file entry point.
@@ -46,6 +58,7 @@ func ParseProgram(entryPath string) (*Root, error) {
 
 	root := NewRoot()
 	root.facades = allFacades
+	root.loadPaths = resolveLoadPaths(filepath.Dir(absPath))
 
 	// Create Module objects for scoped facade namespaces (e.g., Digest::SHA256)
 	// so that ScopeAccessNode can resolve them via the scope chain.
@@ -81,6 +94,167 @@ func findFacadesConfig(dir string) types.FacadeConfig {
 	return nil
 }
 
+// findThanosConfig walks up from dir looking for .thanos/config.yaml and
+// extracts the ruby_command value. Returns "ruby" if not found.
+func findThanosConfig(dir string) string {
+	for {
+		path := filepath.Join(dir, ".thanos", "config.yaml")
+		if f, err := os.Open(path); err == nil {
+			defer f.Close()
+			scanner := bufio.NewScanner(f)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if strings.HasPrefix(line, "ruby_command:") {
+					val := strings.TrimSpace(strings.TrimPrefix(line, "ruby_command:"))
+					if val != "" {
+						return val
+					}
+				}
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "ruby"
+}
+
+// resolveRubyCommand finds the best ruby binary when the default "ruby" is
+// requested. It checks for rbenv and asdf shims which are commonly set up
+// in shell init files that exec.Command won't source.
+func resolveRubyCommand(rubyCmd string) string {
+	if rubyCmd != "ruby" {
+		return rubyCmd
+	}
+	// Check rbenv shim first
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return rubyCmd
+	}
+	for _, shimPath := range []string{
+		filepath.Join(home, ".rbenv", "shims", "ruby"),
+		filepath.Join(home, ".asdf", "shims", "ruby"),
+	} {
+		if _, err := os.Stat(shimPath); err == nil {
+			return shimPath
+		}
+	}
+	return rubyCmd
+}
+
+// resolveRubyLoadPaths shells out to the configured Ruby command to get $LOAD_PATH.
+// Returns nil if Ruby is unavailable or errors.
+func resolveRubyLoadPaths(rubyCmd string) []string {
+	rubyCmd = resolveRubyCommand(rubyCmd)
+	parts := strings.Fields(rubyCmd)
+	if len(parts) == 0 {
+		return nil
+	}
+	var cmd *exec.Cmd
+	rubyScript := `puts $:; puts Gem.path.flat_map { |p| Dir.glob(File.join(p, "gems", "*", "lib")) }`
+	if len(parts) > 1 {
+		// Multi-word commands (e.g., "bundle exec ruby") need a shell
+		// so that PATH and shims are set up correctly.
+		fullCmd := rubyCmd + ` -e '` + rubyScript + `'`
+		cmd = exec.Command("bash", "-lc", fullCmd)
+	} else {
+		cmd = exec.Command(parts[0], "-e", rubyScript)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	seen := map[string]bool{}
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !seen[line] {
+			seen[line] = true
+			paths = append(paths, line)
+		}
+	}
+	return paths
+}
+
+// loadPathsCacheFile returns the path to the load paths cache file,
+// searching upward from dir for a .thanos directory.
+func loadPathsCacheDir(dir string) string {
+	for {
+		candidate := filepath.Join(dir, ".thanos")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+// resolveLoadPaths gets Ruby load paths, using a cache when available.
+// The cache is stored in .thanos/load_paths.cache and invalidated when
+// the ruby_command changes.
+func resolveLoadPaths(dir string) []string {
+	if NoGems {
+		return nil
+	}
+	rubyCmd := findThanosConfig(dir)
+	cacheDir := loadPathsCacheDir(dir)
+
+	// Try reading cache
+	if cacheDir != "" {
+		cachePath := filepath.Join(cacheDir, "load_paths.cache")
+		if data, err := os.ReadFile(cachePath); err == nil {
+			lines := strings.Split(string(data), "\n")
+			if len(lines) > 1 {
+				// First line is a hash of the ruby command for invalidation
+				expectedHash := fmt.Sprintf("# ruby_command_hash: %x", sha256.Sum256([]byte(rubyCmd)))
+				if lines[0] == expectedHash {
+					var paths []string
+					for _, line := range lines[1:] {
+						line = strings.TrimSpace(line)
+						if line != "" {
+							paths = append(paths, line)
+						}
+					}
+					if len(paths) > 0 {
+						return paths
+					}
+				}
+			}
+		}
+	}
+
+	// Resolve fresh
+	paths := resolveRubyLoadPaths(rubyCmd)
+
+	// Write cache if we have a .thanos directory
+	if cacheDir != "" && len(paths) > 0 {
+		hash := fmt.Sprintf("# ruby_command_hash: %x", sha256.Sum256([]byte(rubyCmd)))
+		content := hash + "\n" + strings.Join(paths, "\n") + "\n"
+		_ = os.WriteFile(filepath.Join(cacheDir, "load_paths.cache"), []byte(content), 0644)
+	}
+
+	return paths
+}
+
+// resolveGemRequire searches load paths for a require name and returns the
+// absolute path to the .rb file, or "" if not found.
+func resolveGemRequire(name string, loadPaths []string) string {
+	for _, dir := range loadPaths {
+		candidate := filepath.Join(dir, name+".rb")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
 // loadFile reads and parses a single Ruby file into the shared Root, then
 // recursively loads any require_relative dependencies. Already-loaded files
 // (tracked by absolute path) are skipped.
@@ -102,7 +276,7 @@ func loadFile(absPath string, root *Root, loaded map[string]bool) error {
 	}
 
 	parser := yyNewParser()
-	l := NewLexerWithRoot(b, root)
+	l := NewLexerWithRoot(b, root, absPath)
 	parser.Parse(l)
 
 	if pErr := root.ParseError(); pErr != nil {
@@ -149,8 +323,21 @@ func loadFile(absPath string, root *Root, loaded map[string]bool) error {
 								continue // strip
 							}
 						}
-						// No facade found — this is an error
-						return fmt.Errorf("line %d: require '%s' has no thanos facade. See doc/facades.md for how to create one", call.LineNo(), name)
+						// Built-in type — silently strip
+						if builtinRequires[name] {
+							continue // strip
+						}
+						// No facade — try resolving via Ruby load paths
+						if gemPath := resolveGemRequire(name, root.loadPaths); gemPath != "" {
+							fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
+							if err := loadFile(gemPath, root, loaded); err != nil {
+								// Gem files may contain unsupported Ruby constructs.
+								// Warn and continue rather than failing the entire compilation.
+								fmt.Fprintf(os.Stderr, "warning: require '%s': %v (continuing without this dependency)\n", name, err)
+							}
+							continue // strip
+						}
+						return fmt.Errorf("line %d: cannot locate source for require '%s' (no facade and no gem source found)", call.LineNo(), name)
 					}
 				}
 			}
@@ -208,6 +395,7 @@ func registerFacadeNamespaces(root *Root, namespaces []types.FacadeNamespace) {
 // stripRequires removes `require` calls that match facades from the Root's
 // statements and calls scope injectors for each matched require. Used by
 // ParseBytes (gauntlet tests, stdin) where loadFile's require handling doesn't run.
+// Also resolves gem sources via load paths when no facade matches.
 func stripRequires(root *Root, allFacades types.FacadeConfig) {
 	var remaining []Node
 	for _, stmt := range root.Statements {
@@ -221,6 +409,26 @@ func stripRequires(root *Root, allFacades types.FacadeConfig) {
 							}
 							continue // strip
 						}
+					}
+					// Built-in type — silently strip
+					if builtinRequires[name] {
+						continue // strip
+					}
+					// No facade — try resolving via Ruby load paths
+					if gemPath := resolveGemRequire(name, root.loadPaths); gemPath != "" {
+						fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
+						// Parse the gem file into the root — errors are non-fatal for gems
+						if data, err := os.ReadFile(gemPath); err == nil {
+							savedErrors := append([]error{}, root.Errors...)
+							p := yyNewParser()
+							l := NewLexerWithRoot(data, root, gemPath)
+							p.Parse(l)
+							if pErr := root.ParseError(); pErr != nil {
+								fmt.Fprintf(os.Stderr, "warning: require '%s': %v (continuing without this dependency)\n", name, pErr)
+								root.Errors = savedErrors
+							}
+						}
+						continue // strip
 					}
 				}
 			}

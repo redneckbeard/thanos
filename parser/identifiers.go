@@ -9,14 +9,13 @@ import (
 type IdentNode struct {
 	Val        string
 	_type      types.Type
-	lineNo     int
+	Pos
 	MethodCall *MethodCall
 }
 
 func (n *IdentNode) String() string       { return n.Val }
 func (n *IdentNode) Type() types.Type     { return n._type }
 func (n *IdentNode) SetType(t types.Type) { n._type = t }
-func (n *IdentNode) LineNo() int          { return n.lineNo }
 
 func (n *IdentNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	local := locals.ResolveVar(n.Val)
@@ -31,7 +30,7 @@ func (n *IdentNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 			n.MethodCall = &MethodCall{
 				Receiver:   &KernelNode{},
 				MethodName: n.Val,
-				lineNo:     n.lineNo,
+				Pos: Pos{lineNo: n.lineNo},
 			}
 			n.MethodCall.SetType(retType)
 			return retType, nil
@@ -45,7 +44,7 @@ func (n *IdentNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 				Method:     m,
 				MethodName: m.Name,
 				_type:      m.ReturnType(),
-				lineNo:     n.lineNo,
+				Pos: Pos{lineNo: n.lineNo},
 			}
 			return m.ReturnType(), nil
 		}
@@ -61,7 +60,7 @@ func (n *IdentNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 }
 
 func (n *IdentNode) Copy() Node {
-	return &IdentNode{n.Val, n._type, n.lineNo, n.MethodCall}
+	return &IdentNode{n.Val, n._type, n.Pos, n.MethodCall}
 }
 
 // globalVarRegistry tracks all global variables ($var) and their types.
@@ -70,7 +69,7 @@ var globalVarRegistry = map[string]types.Type{}
 type GVarNode struct {
 	Val    string
 	_type  types.Type
-	lineNo int
+	Pos
 }
 
 func (n *GVarNode) String() string       { return n.Val }
@@ -79,7 +78,6 @@ func (n *GVarNode) SetType(t types.Type) {
 	n._type = t
 	globalVarRegistry[n.NormalizedVal()] = t
 }
-func (n *GVarNode) LineNo() int { return n.lineNo }
 
 func (n *GVarNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	name := n.NormalizedVal()
@@ -113,13 +111,12 @@ type ConstantNode struct {
 	Val       string
 	Namespace string
 	_type     types.Type
-	lineNo    int
+	Pos
 }
 
 func (n *ConstantNode) String() string       { return n.Val }
 func (n *ConstantNode) Type() types.Type     { return n._type }
 func (n *ConstantNode) SetType(t types.Type) { n._type = t }
-func (n *ConstantNode) LineNo() int          { return n.lineNo }
 
 func (n *ConstantNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if local := locals.ResolveVar(n.Val); local == BadLocal {
@@ -146,13 +143,12 @@ func (n *ConstantNode) Copy() Node {
 
 type SelfNode struct {
 	_type  types.Type
-	lineNo int
+	Pos
 }
 
 func (n *SelfNode) String() string       { return "self" }
 func (n *SelfNode) Type() types.Type     { return n._type }
 func (n *SelfNode) SetType(t types.Type) { n._type = t }
-func (n *SelfNode) LineNo() int          { return n.lineNo }
 
 func (n *SelfNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if class != nil && class.Type() != nil {
@@ -164,5 +160,5 @@ func (n *SelfNode) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 }
 
 func (n *SelfNode) Copy() Node {
-	return &SelfNode{n._type, n.lineNo}
+	return &SelfNode{n._type, n.Pos}
 }

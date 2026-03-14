@@ -1834,7 +1834,16 @@ func init() {
 	// uniq!
 	ArrayClass.Instance.Def("unshift", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			arrayType := r.(Array)
+			if arrayType.Element == AnyType && len(args) > 0 {
+				return NewArray(args[0]), nil
+			}
 			return r, nil
+		},
+		RefineVariable: func(receiverName string, newType Type, scope interface{}) {
+			if scopeChain, ok := scope.(interface{ RefineVariableType(string, Type) bool }); ok {
+				scopeChain.RefineVariableType(receiverName, newType)
+			}
 		},
 		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
 			newHead := &ast.CompositeLit{

@@ -28,6 +28,13 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 		}
 		g.CompileAssignmentNode(n)
 	case *parser.ReturnNode:
+		if n.Type() == nil {
+			// Nil-typed return — compile for side effects only (e.g., void method calls)
+			for _, v := range n.Val {
+				g.CompileStmt(v)
+			}
+			return
+		}
 		if !n.Type().IsMultiple() {
 			switch stmt := n.Val[0].(type) {
 			case *parser.Condition, *parser.CaseNode:
@@ -165,10 +172,17 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 			X: g.CompileSuperNode(n),
 		})
 	case *parser.WhileNode:
-		g.appendToCurrentBlock(&ast.ForStmt{
-			Cond: g.CompileExpr(n.Condition),
+		// Ruby while loops don't create a new scope, so variables first-assigned
+		// inside the body must be hoisted to the enclosing scope (like ForInNode).
+		hoistWhileLoopVars(n.Body, g)
+		forStmt := &ast.ForStmt{
 			Body: g.CompileBlockStmt(n.Body),
-		})
+		}
+		// `loop do...end` desugars to WhileNode with true condition — emit bare `for {}`
+		if boolNode, ok := n.Condition.(*parser.BooleanNode); !ok || boolNode.Val != "true" {
+			forStmt.Cond = g.CompileExpr(n.Condition)
+		}
+		g.appendToCurrentBlock(forStmt)
 	case *parser.BreakNode:
 		g.appendToCurrentBlock(&ast.BranchStmt{
 			Tok: token.BREAK,
@@ -256,6 +270,36 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 		}
 	}
 }
+// selectorUsesIdent returns true if expr contains pkg.Method where pkg matches name.
+// Handles both proper SelectorExpr nodes and dotted ident names (e.g. "pkg.Func").
+func selectorUsesIdent(expr ast.Expr, name string) bool {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return strings.HasPrefix(e.Name, name+".")
+	case *ast.SelectorExpr:
+		if ident, ok := e.X.(*ast.Ident); ok && ident.Name == name {
+			return true
+		}
+		return selectorUsesIdent(e.X, name)
+	case *ast.CallExpr:
+		if selectorUsesIdent(e.Fun, name) {
+			return true
+		}
+		for _, arg := range e.Args {
+			if selectorUsesIdent(arg, name) {
+				return true
+			}
+		}
+	case *ast.BinaryExpr:
+		return selectorUsesIdent(e.X, name) || selectorUsesIdent(e.Y, name)
+	case *ast.UnaryExpr:
+		return selectorUsesIdent(e.X, name)
+	case *ast.ParenExpr:
+		return selectorUsesIdent(e.X, name)
+	}
+	return false
+}
+
 func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 	//TODO write test case specifically for multiple return values in branches of conditional statement
 	// Handle conditional expressions (if/else, case/when) on the RHS.
@@ -279,12 +323,13 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 			if _, isHash := rcvrType.(types.Hash); !isHash {
 				if spec, hasSpec := rcvrType.GetMethodSpec("[]="); hasSpec {
 					rcvr := g.CompileExpr(ba.Composite)
-					key := g.CompileExpr(ba.Args[0])
+					var typeExprs []types.TypeExpr
+					for _, arg := range ba.Args {
+						typeExprs = append(typeExprs, types.TypeExpr{Expr: g.CompileExpr(arg), Type: arg.Type()})
+					}
 					rhs := g.CompileExpr(node.Right[0])
-					transform := spec.TransformAST(types.TypeExpr{Type: rcvrType, Expr: rcvr}, []types.TypeExpr{
-						{Expr: key, Type: ba.Args[0].Type()},
-						{Expr: rhs, Type: node.Right[0].Type()},
-					}, nil, g.it)
+					typeExprs = append(typeExprs, types.TypeExpr{Expr: rhs, Type: node.Right[0].Type()})
+					transform := spec.TransformAST(types.TypeExpr{Type: rcvrType, Expr: rcvr}, typeExprs, nil, g.it)
 					g.AddImports(transform.Imports...)
 					for _, s := range transform.Stmts {
 						g.appendToCurrentBlock(s)
@@ -393,6 +438,23 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 			}
 		} else {
 			rhs = append(rhs, g.CompileExpr(right))
+		}
+	}
+	// Detect variable shadowing: if LHS name matches a package selector in RHS,
+	// remap the variable to avoid illegal Go like `lcs := lcs.Foo()`
+	if !node.Reassignment && !node.OpAssignment {
+		for i, rhsExpr := range rhs {
+			if i < len(node.Left) {
+				if ident, ok := node.Left[i].(*parser.IdentNode); ok {
+					goName := bst.SanitizeName(ident.Val)
+					if selectorUsesIdent(rhsExpr, goName) {
+						// Ensure the name is registered before remapping,
+						// so Remap actually creates a versioned name.
+						g.it.Get(ident.Val)
+						g.it.Remap(ident.Val)
+					}
+				}
+			}
 		}
 	}
 	var lhs []ast.Expr
@@ -667,6 +729,62 @@ func nodeReferencesVar(node parser.Node, name string) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// hoistWhileLoopVars scans a while loop body for variables first-assigned inside
+// the loop. Since Ruby while loops don't create a new scope, these variables must
+// be declared in the enclosing Go scope to be accessible after the loop.
+func hoistWhileLoopVars(stmts parser.Statements, g *GoProgram) {
+	hoisted := map[string]bool{}
+	hoistWalk(stmts, hoisted, g)
+}
+
+func hoistWalk(stmts parser.Statements, hoisted map[string]bool, g *GoProgram) {
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
+		case *parser.AssignmentNode:
+			if !s.Reassignment && !s.OpAssignment && !s.SetterCall {
+				for i, left := range s.Left {
+					if ident, ok := left.(*parser.IdentNode); ok {
+						// Use RHS type since LHS ident may not be typed yet for first-assigns
+						var rhsType types.Type
+						if i < len(s.Right) {
+							rhsType = s.Right[i].Type()
+						}
+						if !hoisted[ident.Val] && rhsType != nil && !containsAnyType(rhsType) {
+							hoisted[ident.Val] = true
+							g.appendToCurrentBlock(&ast.DeclStmt{
+								Decl: bst.Declare(token.VAR, g.it.Get(ident.Val), g.it.Get(rhsType.GoType())),
+							})
+							s.Reassignment = true
+						}
+					}
+				}
+			}
+		case *parser.WhileNode:
+			hoistWalk(s.Body, hoisted, g)
+		case *parser.Condition:
+			hoistWalk(s.True, hoisted, g)
+			if s.False != nil {
+				if cond, ok := s.False.(*parser.Condition); ok {
+					hoistWalk(cond.True, hoisted, g)
+				}
+			}
+		}
+	}
+}
+
+func containsAnyType(t types.Type) bool {
+	if t == types.AnyType {
+		return true
+	}
+	if arr, ok := t.(types.Array); ok {
+		return arr.Element == types.AnyType
+	}
+	if h, ok := t.(types.Hash); ok {
+		return h.Key == types.AnyType || h.Value == types.AnyType
 	}
 	return false
 }

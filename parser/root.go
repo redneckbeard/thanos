@@ -45,11 +45,13 @@ type Root struct {
 	nextConstantType    int
 	cpathDepth          int
 	facades             types.FacadeConfig
+	loadPaths           []string
 }
 
 func NewRoot() *Root {
 	globalMethodSet = NewMethodSet()
 	ResetGlobalVars()
+	ResetDuckInterfaces()
 	p := &Root{
 		State:          &Stack[State]{},
 		StringStack:    &Stack[*StringNode]{},
@@ -81,6 +83,9 @@ type ParseError struct {
 }
 
 func (p *ParseError) Error() string {
+	if f := p.node.File(); f != "" {
+		return fmt.Sprintf("%s line %d: %s", f, p.node.LineNo(), p.msg)
+	}
 	return fmt.Sprintf("line %d: %s", p.node.LineNo(), p.msg)
 }
 
@@ -118,7 +123,7 @@ func (r *Root) PushSingletonTarget(name string) {
 		return
 	}
 	// Not found — create a placeholder module
-	mod := &Module{name: name, lineNo: 0}
+	mod := &Module{name: name, Pos: Pos{lineNo: 0}}
 	ms := NewMethodSet()
 	mod.MethodSet = ms
 	ms.Module = mod
@@ -245,7 +250,7 @@ func (r *Root) PushModule(name string, lineNo int) {
 		r.ScopeChain = r.ScopeChain.Extend(existing)
 		return
 	}
-	mod := &Module{name: name, lineNo: lineNo}
+	mod := &Module{name: name, Pos: Pos{lineNo: lineNo}}
 	ms := NewMethodSet()
 	mod.MethodSet = ms
 	ms.Module = mod
@@ -354,7 +359,7 @@ func (r *Root) PushClass(name string, lineNo int) {
 		r.MethodSetStack.Push(existing.MethodSet)
 		return
 	}
-	cls := &Class{name: name, lineNo: lineNo, ivars: make(map[string]*IVar), cvars: make(map[string]*CVar)}
+	cls := &Class{name: name, Pos: Pos{lineNo: lineNo}, ivars: make(map[string]*IVar), cvars: make(map[string]*CVar)}
 	ms := NewMethodSet()
 	cls.MethodSet = ms
 	ms.Class = cls
@@ -601,6 +606,15 @@ func (r *Root) expandStructDefinitions() {
 		}
 		// Found: Point = Struct.new(:x, :y) or Point = Data.define(:x, :y)
 		className := constNode.Val
+		// For scoped constant assignment (e.g., Diff::LCS::Change = Data.define(...)),
+		// push intermediate modules so the class ends up in the right scope.
+		var namespaceParts []string
+		if constNode.Namespace != "" {
+			namespaceParts = splitNamespace(constNode.Namespace)
+			for _, part := range namespaceParts {
+				r.PushModule(part, assign.LineNo())
+			}
+		}
 		r.PushClass(className, assign.LineNo())
 		cls := r.currentClass
 		// Create attr_accessor for each symbol argument
@@ -667,9 +681,25 @@ func (r *Root) expandStructDefinitions() {
 		}
 
 		r.PopClass()
+		// Pop intermediate modules pushed for scoped constant assignment.
+		// Use lightweight pop — modules already exist and have types from grammar
+		// parsing. Full PopModule would re-create types and corrupt state.
+		if len(namespaceParts) > 0 {
+			for range namespaceParts {
+				r.moduleStack.Pop()
+				r.MethodSetStack.Pop()
+				r.State.Pop()
+				r.ScopeChain = r.ScopeChain[:len(r.ScopeChain)-1]
+			}
+		}
 		// Don't add the assignment to remaining statements
 	}
 	r.Statements = remaining
+}
+
+// splitNamespace splits a "::" separated namespace (e.g., "Diff::LCS") into parts.
+func splitNamespace(ns string) []string {
+	return strings.Split(ns, "::")
 }
 
 // rewriteIdentsToIVars rewrites IdentNode references matching field names to IVarNode
@@ -685,7 +715,7 @@ func rewriteNode(n Node, fields map[string]bool, cls *Class) Node {
 	switch node := n.(type) {
 	case *IdentNode:
 		if fields[node.Val] {
-			return &IVarNode{Val: "@" + node.Val, Class: cls, lineNo: node.lineNo}
+			return &IVarNode{Val: "@" + node.Val, Class: cls, Pos: Pos{lineNo: node.lineNo}}
 		}
 	case *StringNode:
 		for idx, interps := range node.Interps {

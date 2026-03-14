@@ -12,7 +12,7 @@ type Condition struct {
 	True       Statements
 	False      Node
 	elseBranch bool
-	lineNo     int
+	Pos
 	_type      types.Type
 }
 
@@ -27,7 +27,6 @@ func (n *Condition) String() string {
 }
 func (n *Condition) Type() types.Type     { return n._type }
 func (n *Condition) SetType(t types.Type) { n._type = t }
-func (n *Condition) LineNo() int          { return n.lineNo }
 
 func (n *Condition) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if n.Condition != nil {
@@ -48,7 +47,7 @@ func (n *Condition) TargetType(locals ScopeChain, class *Class) (types.Type, err
 }
 
 func (n *Condition) Copy() Node {
-	copy := &Condition{True: n.True.Copy().(Statements), lineNo: n.lineNo}
+	copy := &Condition{True: n.True.Copy().(Statements), Pos: Pos{lineNo: n.lineNo}}
 	if n.False != nil {
 		copy.False = n.False.Copy()
 	}
@@ -63,7 +62,7 @@ type CaseNode struct {
 	Whens             []*WhenNode
 	RequiresExpansion bool
 	_type             types.Type
-	lineNo            int
+	Pos
 }
 
 func (n *CaseNode) String() string {
@@ -71,7 +70,6 @@ func (n *CaseNode) String() string {
 }
 func (n *CaseNode) Type() types.Type     { return n._type }
 func (n *CaseNode) SetType(t types.Type) { n._type = t }
-func (n *CaseNode) LineNo() int          { return n.lineNo }
 
 func (n *CaseNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	var (
@@ -112,7 +110,7 @@ func (n *CaseNode) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 }
 
 func (n *CaseNode) Copy() Node {
-	caseNode := &CaseNode{Value: n.Value.Copy(), RequiresExpansion: n.RequiresExpansion, _type: n._type, lineNo: n.lineNo}
+	caseNode := &CaseNode{Value: n.Value.Copy(), RequiresExpansion: n.RequiresExpansion, _type: n._type, Pos: Pos{lineNo: n.lineNo}}
 	for _, when := range n.Whens {
 		caseNode.Whens = append(caseNode.Whens, when.Copy().(*WhenNode))
 	}
@@ -123,7 +121,7 @@ type WhenNode struct {
 	Conditions ArgsNode
 	Statements Statements
 	_type      types.Type
-	lineNo     int
+	Pos
 }
 
 func (n *WhenNode) String() string {
@@ -134,20 +132,19 @@ func (n *WhenNode) String() string {
 }
 func (n *WhenNode) Type() types.Type     { return n._type }
 func (n *WhenNode) SetType(t types.Type) { n._type = t }
-func (n *WhenNode) LineNo() int          { return n.lineNo }
 
 func (n *WhenNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	return GetType(n.Statements, locals, class)
 }
 
 func (n *WhenNode) Copy() Node {
-	return &WhenNode{n.Conditions.Copy().(ArgsNode), n.Statements.Copy().(Statements), n._type, n.lineNo}
+	return &WhenNode{n.Conditions.Copy().(ArgsNode), n.Statements.Copy().(Statements), n._type, n.Pos}
 }
 
 type WhileNode struct {
 	Condition Node
 	Body      Statements
-	lineNo    int
+	Pos
 }
 
 func (n *WhileNode) String() string {
@@ -155,7 +152,6 @@ func (n *WhileNode) String() string {
 }
 func (n *WhileNode) Type() types.Type     { return n.Body.Type() }
 func (n *WhileNode) SetType(t types.Type) {}
-func (n *WhileNode) LineNo() int          { return n.lineNo }
 
 func (n *WhileNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if _, err := GetType(n.Condition, locals, class); err != nil {
@@ -168,14 +164,14 @@ func (n *WhileNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 }
 
 func (n *WhileNode) Copy() Node {
-	return &WhileNode{n.Condition.Copy(), n.Body.Copy().(Statements), n.lineNo}
+	return &WhileNode{n.Condition.Copy(), n.Body.Copy().(Statements), n.Pos}
 }
 
 type ForInNode struct {
 	For    []Node
 	In     Node
 	Body   Statements
-	lineNo int
+	Pos
 }
 
 func (n *ForInNode) String() string {
@@ -183,7 +179,6 @@ func (n *ForInNode) String() string {
 }
 func (n *ForInNode) Type() types.Type     { return n.Body.Type() }
 func (n *ForInNode) SetType(t types.Type) {}
-func (n *ForInNode) LineNo() int          { return n.lineNo }
 
 func (n *ForInNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	var inType types.Type
@@ -229,11 +224,11 @@ func (n *ForInNode) TargetType(locals ScopeChain, class *Class) (types.Type, err
 }
 
 func (n *ForInNode) Copy() Node {
-	return &ForInNode{n.For, n.In, n.Body, n.lineNo}
+	return &ForInNode{n.For, n.In, n.Body, n.Pos}
 }
 
 type BreakNode struct {
-	lineNo int
+	Pos
 }
 
 func (n *BreakNode) String() string {
@@ -241,7 +236,6 @@ func (n *BreakNode) String() string {
 }
 func (n *BreakNode) Type() types.Type     { return types.NilType }
 func (n *BreakNode) SetType(t types.Type) {}
-func (n *BreakNode) LineNo() int          { return n.lineNo }
 
 func (n *BreakNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	return types.NilType, nil
@@ -253,7 +247,7 @@ func (n *BreakNode) Copy() Node {
 
 type NextNode struct {
 	Val    Node
-	lineNo int
+	Pos
 }
 
 func (n *NextNode) String() string {
@@ -264,7 +258,6 @@ func (n *NextNode) String() string {
 }
 func (n *NextNode) Type() types.Type     { return types.NilType }
 func (n *NextNode) SetType(t types.Type) {}
-func (n *NextNode) LineNo() int          { return n.lineNo }
 
 func (n *NextNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if n.Val != nil {
@@ -276,7 +269,7 @@ func (n *NextNode) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 }
 
 func (n *NextNode) Copy() Node {
-	c := &NextNode{lineNo: n.lineNo}
+	c := &NextNode{Pos: Pos{lineNo: n.lineNo}}
 	if n.Val != nil {
 		c.Val = n.Val.Copy()
 	}
@@ -287,7 +280,7 @@ type RescueClause struct {
 	ExceptionTypes []string
 	ExceptionVar   string
 	Body           Statements
-	lineNo         int
+	Pos
 }
 
 type BeginNode struct {
@@ -295,7 +288,7 @@ type BeginNode struct {
 	RescueClauses []*RescueClause
 	EnsureBody    Statements
 	_type         types.Type
-	lineNo        int
+	Pos
 }
 
 func (n *BeginNode) String() string {
@@ -303,7 +296,6 @@ func (n *BeginNode) String() string {
 }
 func (n *BeginNode) Type() types.Type     { return n._type }
 func (n *BeginNode) SetType(t types.Type) { n._type = t }
-func (n *BeginNode) LineNo() int          { return n.lineNo }
 
 func (n *BeginNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if _, err := GetType(n.Body, locals, class); err != nil {
@@ -329,14 +321,14 @@ func (n *BeginNode) Copy() Node {
 	copy := &BeginNode{
 		Body:   n.Body.Copy().(Statements),
 		_type:  n._type,
-		lineNo: n.lineNo,
+		Pos: Pos{lineNo: n.lineNo},
 	}
 	for _, clause := range n.RescueClauses {
 		copy.RescueClauses = append(copy.RescueClauses, &RescueClause{
 			ExceptionTypes: clause.ExceptionTypes,
 			ExceptionVar:   clause.ExceptionVar,
 			Body:           clause.Body.Copy().(Statements),
-			lineNo:         clause.lineNo,
+			Pos: Pos{lineNo: clause.lineNo},
 		})
 	}
 	if n.EnsureBody != nil {
@@ -348,18 +340,17 @@ func (n *BeginNode) Copy() Node {
 type LambdaNode struct {
 	Block  *Block
 	_type  types.Type
-	lineNo int
+	Pos
 }
 
 func (n *LambdaNode) String() string       { return fmt.Sprintf("(lambda %s)", n.Block) }
 func (n *LambdaNode) Type() types.Type     { return n._type }
 func (n *LambdaNode) SetType(t types.Type) { n._type = t }
-func (n *LambdaNode) LineNo() int          { return n.lineNo }
 
 func (n *LambdaNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	return types.NewProc(), nil
 }
 
 func (n *LambdaNode) Copy() Node {
-	return &LambdaNode{Block: n.Block.Copy(), _type: n._type, lineNo: n.lineNo}
+	return &LambdaNode{Block: n.Block.Copy(), _type: n._type, Pos: Pos{lineNo: n.lineNo}}
 }

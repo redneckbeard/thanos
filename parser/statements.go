@@ -17,6 +17,7 @@ func (n ArgsNode) String() string {
 func (n ArgsNode) Type() types.Type     { return n[0].Type() }
 func (n ArgsNode) SetType(t types.Type) {}
 func (n ArgsNode) LineNo() int          { return 0 }
+func (n ArgsNode) File() string         { return "" }
 
 func (n ArgsNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	panic("ArgsNode#TargetType should never be called")
@@ -42,13 +43,12 @@ func (n ArgsNode) FindByName(name string) (Node, error) {
 type ReturnNode struct {
 	Val    ArgsNode
 	_type  types.Type
-	lineNo int
+	Pos
 }
 
 func (n *ReturnNode) String() string       { return fmt.Sprintf("(return %s)", n.Val) }
 func (n *ReturnNode) Type() types.Type     { return n._type }
 func (n *ReturnNode) SetType(t types.Type) { n._type = t }
-func (n *ReturnNode) LineNo() int          { return n.lineNo }
 
 func (n *ReturnNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if len(n.Val) == 1 {
@@ -66,7 +66,7 @@ func (n *ReturnNode) TargetType(locals ScopeChain, class *Class) (types.Type, er
 }
 
 func (n *ReturnNode) Copy() Node {
-	return &ReturnNode{n.Val.Copy().(ArgsNode), n._type, n.lineNo}
+	return &ReturnNode{n.Val.Copy().(ArgsNode), n._type, n.Pos}
 }
 
 type Statements []Node
@@ -149,6 +149,7 @@ func (stmts Statements) String() string {
 func (stmts Statements) Type() types.Type     { return nil }
 func (stmts Statements) SetType(t types.Type) {}
 func (stmts Statements) LineNo() int          { return 0 }
+func (stmts Statements) File() string         { return "" }
 
 func (stmts Statements) Copy() Node {
 	var copy []Node

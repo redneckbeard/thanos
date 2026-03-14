@@ -13,6 +13,27 @@ func setRoot(yylex yyLexer, nodes []Node) {
 func root(yylex yyLexer) *Root {
   return yylex.(*Lexer).Root
 }
+
+// scopeAccessPrefix extracts the namespace prefix from a primary_value chain
+// used in scoped constant assignment (e.g., Diff::LCS::Change = ...).
+// Returns "::" separated names like "Diff::LCS".
+func scopeAccessPrefix(node Node) string {
+  switch n := node.(type) {
+  case *ConstantNode:
+    if n.Namespace != "" {
+      return n.Namespace + "::" + n.Val
+    }
+    return n.Val
+  case *ScopeAccessNode:
+    prefix := scopeAccessPrefix(n.Receiver)
+    if prefix != "" {
+      return prefix + "::" + n.Constant
+    }
+    return n.Constant
+  default:
+    return ""
+  }
+}
 %}
 
 %nonassoc <str> LOWEST
@@ -44,7 +65,7 @@ func root(yylex yyLexer) *Root {
 %token <str> ANDDOT DOT LBRACE LBRACEBLOCK RBRACE NEWLINE COMMA DOUBLESPLAT
 %token <str> STRINGBEG STRINGEND INTERPBEG INTERPEND STRINGBODY REGEXBEG REGEXEND REGEXPOPT RAWSTRINGBEG RAWSTRINGEND WORDSBEG RAWWORDSBEG XSTRINGBEG RAWXSTRINGBEG
 %token <str> SEMICOLON LBRACKET LBRACKETSTART RBRACKET LPAREN LPARENSTART RPAREN HASHROCKET
-%token <str> SCOPE LAMBDA
+%token <str> SCOPE LAMBDA LOOP
 
 
 %type <str> fcall operation rparen op fname then term relop rbracket string_beg string_end string_contents string_interp regex_beg regex_end cpath singleton_cpath op_asgn superclass private do raw_string_beg class module comment call_op
@@ -53,12 +74,12 @@ func root(yylex yyLexer) *Root {
 %type <node_list> compstmt stmts root mlhs mlhs_basic mlhs_head mlhs_inner for_var
 %type <args> args call_args opt_call_args paren_args opt_paren_args aref_args command_args mrhs mrhs_arg
 %type <param> f_arg_item f_kw f_opt f_block_arg f_rest_arg f_kwrest
-%type <params> f_arglist f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg opt_f_block_arg f_marg_list
+%type <params> f_arglist f_opt_paren_args f_args f_arg opt_block_param f_kwarg opt_args_tail args_tail f_optarg opt_f_block_arg f_marg_list
 %type <body> bodystmt
 %type <when> when
 %type <whens> case_body cases
 %type <blk> brace_body brace_block do_block
-%type <meth> method_signature
+%type <meth> defn_head defs_head method_head
 %type <kv> assoc
 %type <kvs> assocs assoc_list
 %type <rescue_clause> rescue_clause
@@ -107,10 +128,15 @@ root:
     $$ = $1
   }
 
-bodystmt: 
-  compstmt // opt_rescue opt_else opt_ensure
+bodystmt:
+  compstmt opt_rescue
   {
-    $$ = &Body{Statements: $1}
+    if len($2) > 0 {
+      beginNode := &BeginNode{Body: $1, RescueClauses: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+      $$ = &Body{Statements: []Node{beginNode}}
+    } else {
+      $$ = &Body{Statements: $1}
+    }
   }
 
 compstmt: stmts opt_terms
@@ -154,88 +180,98 @@ stmts:
 stmt:
   ALIAS fname fname
   {
-    $$ = &AliasNode{NewName: $2, OldName: $3, lineNo: currentLineNo}
+    $$ = &AliasNode{NewName: $2, OldName: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | ALIAS SYMBOL SYMBOL
   {
-    $$ = &AliasNode{NewName: $2[1:], OldName: $3[1:], lineNo: currentLineNo}
+    $$ = &AliasNode{NewName: $2[1:], OldName: $3[1:], Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | stmt IF_MOD expr_value
   {
-    $$ = &Condition{Condition: $3, True: Statements{$1}, lineNo: currentLineNo}
+    $$ = &Condition{Condition: $3, True: Statements{$1}, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | stmt UNLESS_MOD expr_value
   {
-    $$ = &Condition{Condition: &NotExpressionNode{Arg: $3, lineNo: currentLineNo}, True: Statements{$1}, lineNo: currentLineNo}
+    $$ = &Condition{Condition: &NotExpressionNode{Arg: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}, True: Statements{$1}, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | stmt WHILE_MOD expr_value
   {
-    $$ = &WhileNode{Condition: $3, Body: Statements{$1}, lineNo: currentLineNo}
+    $$ = &WhileNode{Condition: $3, Body: Statements{$1}, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | stmt UNTIL_MOD expr_value
   {
-    $$ = &WhileNode{Condition: &NotExpressionNode{Arg: $3, lineNo: currentLineNo}, Body: Statements{$1}, lineNo: currentLineNo}
+    $$ = &WhileNode{Condition: &NotExpressionNode{Arg: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}, Body: Statements{$1}, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 //| stmt RESCUE_MOD stmt
 | command_asgn
 | mlhs ASSIGN command_call
   {
-    $$ = &AssignmentNode{Left: $1, Right: []Node{$3}, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: $1, Right: []Node{$3}, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | lhs ASSIGN mrhs
   {
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: $3, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | mlhs ASSIGN mrhs_arg
   {
-    $$ = &AssignmentNode{Left: $1, Right: $3, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: $1, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | private
   {
     root(yylex).inPrivateMethods = true
     $$ = &NoopNode{}
   }
-| expr 
+| private SYMBOL
+  {
+    // private :method_name — make specific method private (ignored for now)
+    $$ = &NoopNode{}
+  }
+| private fname
+  {
+    // private :method_name or private def ... — ignored for now
+    $$ = &NoopNode{}
+  }
+| expr
 
 command_asgn: 
   lhs ASSIGN command_rhs
   {
    
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{$3}, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{$3}, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | var_lhs op_asgn command_rhs
   {
-    operation := &InfixExpressionNode{Left: $1, Operator: strings.Trim($2, "="), Right: $3, lineNo: currentLineNo}
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+    operation := &InfixExpressionNode{Left: $1, Operator: strings.Trim($2, "="), Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{operation}, OpAssignment: true, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | primary_value LBRACKET opt_call_args rbracket op_asgn command_rhs
   {
-    access := &BracketAccessNode{Composite: $1, Args: $3, lineNo: currentLineNo}
-    operation := &InfixExpressionNode{Left: access, Operator: strings.Trim($5, "="), Right: $6, lineNo: currentLineNo}
+    access := &BracketAccessNode{Composite: $1, Args: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    operation := &InfixExpressionNode{Left: access, Operator: strings.Trim($5, "="), Right: $6, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     assignment := &BracketAssignmentNode{
       Composite: $1,
       Args: $3,
-      lineNo: currentLineNo,
+      Pos: Pos{lineNo: currentLineNo, file: currentFile},
     }
-    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | primary_value call_op IDENT op_asgn command_rhs
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
-    operation := &InfixExpressionNode{Left: call, Operator: strings.Trim($4, "="), Right: $5, lineNo: currentLineNo}
-    assignment := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
-    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    operation := &InfixExpressionNode{Left: call, Operator: strings.Trim($4, "="), Right: $5, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    assignment := &MethodCall{Receiver: $1, MethodName: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | primary_value call_op CONSTANT op_asgn command_rhs
   {
-     noop := &NoopNode{currentLineNo}
-     root(yylex).AddError(NewParseError(&NoopNode{currentLineNo}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
+     noop := &NoopNode{Pos{currentLineNo, currentFile}}
+     root(yylex).AddError(NewParseError(&NoopNode{Pos{currentLineNo, currentFile}}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
      $$ = noop
   }
 | primary_value SCOPE CONSTANT op_asgn command_rhs
   {
-     noop := &NoopNode{currentLineNo}
-     root(yylex).AddError(NewParseError(&NoopNode{currentLineNo}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
+     noop := &NoopNode{Pos{currentLineNo, currentFile}}
+     root(yylex).AddError(NewParseError(&NoopNode{Pos{currentLineNo, currentFile}}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
      $$ = noop
   }
 
@@ -248,7 +284,7 @@ expr:
   command_call
 | BANG command_call
   {
-    $$ = &NotExpressionNode{Arg: $2, lineNo: currentLineNo}
+    $$ = &NotExpressionNode{Arg: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg
 
@@ -272,7 +308,7 @@ block_command:
   block_call
 | block_call DOT operation command_args
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     root(yylex).AddCall(call)
     $$ = call
   }
@@ -283,13 +319,13 @@ fcall: operation
 command: 
   fcall command_args %prec LOWEST
   {
-    call := &MethodCall{MethodName: $1, Args: $2, lineNo: currentLineNo}
+    call := &MethodCall{MethodName: $1, Args: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     root(yylex).AddCall(call)
     $$ = call
   }
 | fcall command_args brace_block
   {
-    call := &MethodCall{MethodName: $1, Args: $2, lineNo: currentLineNo}
+    call := &MethodCall{MethodName: $1, Args: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     call.SetBlock($3)
     root(yylex).AddCall(call)
     $$ = call
@@ -298,16 +334,16 @@ command:
 //| primary_value call_op operation2 command_args cmd_brace_block
 | SUPER command_args
   {
-    $$ = &SuperNode{Args: $2, Method: root(yylex).currentMethod, Class: root(yylex).currentClass, lineNo: currentLineNo}
+    $$ = &SuperNode{Args: $2, Method: root(yylex).currentMethod, Class: root(yylex).currentClass, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
 	}
 | YIELD command_args
   {
     root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
-    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", Args: $2, lineNo: currentLineNo}
+    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", Args: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | RETURN call_args
   {
-    r := &ReturnNode{Val: $2, lineNo: currentLineNo}
+    r := &ReturnNode{Val: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     root(yylex).AddReturn(r)
     $$ = r
   }
@@ -369,12 +405,12 @@ mlhs_node: user_variable
 		$$ = &BracketAssignmentNode{
       Composite: $1,
       Args: $3,
-      lineNo: currentLineNo,
+      Pos: Pos{lineNo: currentLineNo, file: currentFile},
     }
   }
 | primary_value call_op IDENT
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, Op: $2, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Op: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     $$ = call
   }
 
@@ -386,13 +422,17 @@ lhs:
     $$ = &BracketAssignmentNode{
       Composite: $1,
       Args: $3,
-      lineNo: currentLineNo,
+      Pos: Pos{lineNo: currentLineNo, file: currentFile},
     }
   }
 | primary_value call_op IDENT
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, Op: $2, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Op: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     $$ = call
+  }
+| primary_value SCOPE CONSTANT
+  {
+    $$ = &ConstantNode{Val: $3, Namespace: scopeAccessPrefix($1), Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 class:
@@ -471,139 +511,139 @@ op:   PIPE    | CARET  | AND  | SPACESHIP  | EQ
 arg: 
   lhs ASSIGN arg_rhs
   {
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{$3}, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{$3}, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | var_lhs op_asgn arg_rhs
   {
-    operation := &InfixExpressionNode{Left: $1, Operator: strings.Trim($2, "="), Right: $3, lineNo: currentLineNo}
-    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+    operation := &InfixExpressionNode{Left: $1, Operator: strings.Trim($2, "="), Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    $$ = &AssignmentNode{Left: []Node{$1}, Right: []Node{operation}, OpAssignment: true, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | primary_value LBRACKET opt_call_args rbracket op_asgn arg_rhs
   {
-    access := &BracketAccessNode{Composite: $1, Args: $3, lineNo: currentLineNo}
-    operation := &InfixExpressionNode{Left: access, Operator: strings.Trim($5, "="), Right: $6, lineNo: currentLineNo}
+    access := &BracketAccessNode{Composite: $1, Args: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    operation := &InfixExpressionNode{Left: access, Operator: strings.Trim($5, "="), Right: $6, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     assignment := &BracketAssignmentNode{
       Composite: $1,
       Args: $3,
-      lineNo: currentLineNo,
+      Pos: Pos{lineNo: currentLineNo, file: currentFile},
     }
-    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | primary_value call_op IDENT op_asgn arg_rhs
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
-    operation := &InfixExpressionNode{Left: call, Operator: strings.Trim($4, "="), Right: $5, lineNo: currentLineNo}
-    assignment := &MethodCall{Receiver: $1, MethodName: $3, lineNo: currentLineNo}
-    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    operation := &InfixExpressionNode{Left: call, Operator: strings.Trim($4, "="), Right: $5, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    assignment := &MethodCall{Receiver: $1, MethodName: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    $$ = &AssignmentNode{Left: []Node{assignment}, Right: []Node{operation}, OpAssignment: true, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | primary_value call_op CONSTANT op_asgn arg_rhs
   {
-     noop := &NoopNode{currentLineNo}
-     root(yylex).AddError(NewParseError(&NoopNode{currentLineNo}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
+     noop := &NoopNode{Pos{currentLineNo, currentFile}}
+     root(yylex).AddError(NewParseError(&NoopNode{Pos{currentLineNo, currentFile}}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
      $$ = noop
   }
 | primary_value SCOPE CONSTANT op_asgn arg_rhs
   {
-     noop := &NoopNode{currentLineNo}
-     root(yylex).AddError(NewParseError(&NoopNode{currentLineNo}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
+     noop := &NoopNode{Pos{currentLineNo, currentFile}}
+     root(yylex).AddError(NewParseError(&NoopNode{Pos{currentLineNo, currentFile}}, "Tried to modify constant '%s'. In Ruby this only warns, but thanos forbids it.", $3).Terminal())
      $$ = noop
   }
 //| tCOLON3 tCONSTANT tOP_ASGN arg_rhs
 | arg DOT2 arg
   {
-    $$ = &RangeNode{Lower: $1, Upper: $3, Inclusive: true, lineNo: currentLineNo}
+    $$ = &RangeNode{Lower: $1, Upper: $3, Inclusive: true, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg DOT3 arg
   {
-    $$ = &RangeNode{Lower: $1, Upper: $3, lineNo: currentLineNo}
+    $$ = &RangeNode{Lower: $1, Upper: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg DOT2
   {
-    $$ = &RangeNode{Lower: $1, Inclusive: true, lineNo: currentLineNo}
+    $$ = &RangeNode{Lower: $1, Inclusive: true, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg DOT3
   {
-    $$ = &RangeNode{Lower: $1, lineNo: currentLineNo}
+    $$ = &RangeNode{Lower: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg PLUS arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg MINUS arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg ASTERISK arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg SLASH arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg MODULO arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg POW arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 //| tUNARY_NUM simple_numeric tPOW arg
 //| tUPLUS arg
 //| tUMINUS arg
 | arg PIPE arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg CARET arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg AND arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg SPACESHIP arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | rel_expr %prec SPACESHIP
 | arg EQ arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg NEQ arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg MATCH arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg NOTMATCH arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | BANG arg
   {
-    $$ = &NotExpressionNode{Arg: $2, lineNo: currentLineNo}
+    $$ = &NotExpressionNode{Arg: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg LSHIFT arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg RSHIFT arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg LOGICALAND arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg LOGICALOR arg
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | arg QMARK arg opt_nl COLON arg
   {
@@ -614,8 +654,30 @@ arg:
          True: Statements{$6},
          elseBranch: true,
        },
-       lineNo: currentLineNo,
+       Pos: Pos{lineNo: currentLineNo, file: currentFile},
     }
+  }
+| defn_head f_opt_paren_args ASSIGN arg
+  {
+    for _, p := range $2 {
+      if err := $1.AddParam(p); err != nil {
+        root(yylex).AddError(err)
+      }
+    }
+    $1.Body = &Body{Statements: []Node{$4}}
+    root(yylex).AddMethod($1)
+    $$ = $1
+  }
+| defs_head f_opt_paren_args ASSIGN arg
+  {
+    for _, p := range $2 {
+      if err := $1.AddParam(p); err != nil {
+        root(yylex).AddError(err)
+      }
+    }
+    $1.Body = &Body{Statements: []Node{$4}}
+    root(yylex).AddMethod($1)
+    $$ = $1
   }
 | primary
 
@@ -624,11 +686,11 @@ relop: GT | LT | GTE | LTE
 rel_expr: 
   arg relop arg %prec GT
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | rel_expr relop arg %prec GT
   {
-    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, lineNo: currentLineNo}
+    $$ = &InfixExpressionNode{Left: $1, Operator: $2, Right: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 arg_value: arg
@@ -670,11 +732,19 @@ opt_call_args:
 //| assocs tCOMMA
 | AND SYMBOL
   {
-    $$ = ArgsNode{&SymbolToProcNode{MethodName: strings.TrimPrefix($2, ":"), lineNo: currentLineNo}}
+    $$ = ArgsNode{&SymbolToProcNode{MethodName: strings.TrimPrefix($2, ":"), Pos: Pos{lineNo: currentLineNo, file: currentFile}}}
   }
 | args COMMA AND SYMBOL
   {
-    $$ = append($1, &SymbolToProcNode{MethodName: strings.TrimPrefix($4, ":"), lineNo: currentLineNo})
+    $$ = append($1, &SymbolToProcNode{MethodName: strings.TrimPrefix($4, ":"), Pos: Pos{lineNo: currentLineNo, file: currentFile}})
+  }
+| AND IDENT
+  {
+    $$ = ArgsNode{&BlockPassNode{Name: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}}
+  }
+| args COMMA AND IDENT
+  {
+    $$ = append($1, &BlockPassNode{Name: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}})
   }
 
 
@@ -776,7 +846,7 @@ primary:
 // | tFID
 | BEGIN compstmt opt_rescue opt_ensure END
   {
-    $$ = &BeginNode{Body: $2, RescueClauses: $3, EnsureBody: $4, lineNo: currentLineNo}
+    $$ = &BeginNode{Body: $2, RescueClauses: $3, EnsureBody: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | LPARENSTART stmt rparen
   {
@@ -786,43 +856,43 @@ primary:
 // | tLPAREN compstmt tRPAREN
 | primary_value SCOPE CONSTANT
   {
-    $$ = &ScopeAccessNode{Receiver: $1, Constant: $3, lineNo: currentLineNo}
+    $$ = &ScopeAccessNode{Receiver: $1, Constant: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 // | tCOLON3 tCONSTANT
 | LBRACKETSTART aref_args rbracket
   {
-    $$ = &ArrayNode{Args: $2, lineNo: currentLineNo}
+    $$ = &ArrayNode{Args: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | LBRACE assoc_list RBRACE
   {
-    $$ = &HashNode{Pairs: $2, lineNo: currentLineNo}
+    $$ = &HashNode{Pairs: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | YIELD LPAREN call_args rparen
   {
     // this is naive, as in theory the source could have non-block locals called "blk".
     root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
-    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", Args: $3, lineNo: currentLineNo}
+    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", Args: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | YIELD LPAREN rparen
   {
     root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
-    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", lineNo: currentLineNo}
+    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | YIELD
   {
     root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
-    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", lineNo: currentLineNo}
+    $$ = &MethodCall{Receiver: &IdentNode{Val: "blk"}, MethodName: "call", Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | fcall brace_block
   {
-  	call := &MethodCall{MethodName: $1, lineNo: currentLineNo}
+  	call := &MethodCall{MethodName: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     call.SetBlock($2)
     $$ = call
    }
 | METHODIDENT
   {
     // Bare predicate/bang method call with no args: get?, empty?, save!
-    call := &MethodCall{MethodName: $1, lineNo: currentLineNo}
+    call := &MethodCall{MethodName: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     // block_given? implies an optional block param on the current method
     if $1 == "block_given?" && root(yylex).currentMethod != nil {
       root(yylex).currentMethod.AddParam(&Param{Name: "blk", Kind: ExplicitBlock})
@@ -852,12 +922,12 @@ primary:
     for _, p := range $3 {
       blk.AddParam(p)
     }
-    $$ = &LambdaNode{Block: blk, lineNo: currentLineNo}
+    $$ = &LambdaNode{Block: blk, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | LAMBDA LBRACEBLOCK compstmt RBRACE
   {
     blk := &Block{Body: &Body{Statements: $3}, ParamList: NewParamList()}
-    $$ = &LambdaNode{Block: blk, lineNo: currentLineNo}
+    $$ = &LambdaNode{Block: blk, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | LAMBDA LPARENSTART f_args RPAREN DO compstmt END
   {
@@ -865,35 +935,43 @@ primary:
     for _, p := range $3 {
       blk.AddParam(p)
     }
-    $$ = &LambdaNode{Block: blk, lineNo: currentLineNo}
+    $$ = &LambdaNode{Block: blk, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | IF expr_value then compstmt if_tail END
   {
-    $$ = &Condition{Condition: $2, True: $4, False: $5, lineNo: currentLineNo}
+    $$ = &Condition{Condition: $2, True: $4, False: $5, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | UNLESS expr_value then compstmt opt_else END
   {
-    $$ = &Condition{Condition: &NotExpressionNode{Arg: $2, lineNo: currentLineNo}, True: $4, False: $5, lineNo: currentLineNo}
+    $$ = &Condition{Condition: &NotExpressionNode{Arg: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}, True: $4, False: $5, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | WHILE expr_value_do compstmt END
   {
-    $$ = &WhileNode{Condition: $2, Body: $3, lineNo: $2.LineNo()}
+    $$ = &WhileNode{Condition: $2, Body: $3, Pos: Pos{lineNo: $2.LineNo(), file: currentFile}}
   }
 | UNTIL expr_value_do compstmt END
   {
-    $$ = &WhileNode{Condition: &NotExpressionNode{Arg: $2, lineNo: $2.LineNo()}, Body: $3, lineNo: $2.LineNo()}
+    $$ = &WhileNode{Condition: &NotExpressionNode{Arg: $2, Pos: Pos{lineNo: $2.LineNo(), file: currentFile}}, Body: $3, Pos: Pos{lineNo: $2.LineNo(), file: currentFile}}
+  }
+| LOOP DO compstmt END
+  {
+    $$ = &WhileNode{Condition: &BooleanNode{Val: "true", Pos: Pos{lineNo: currentLineNo, file: currentFile}}, Body: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+  }
+| LOOP LBRACEBLOCK compstmt RBRACE
+  {
+    $$ = &WhileNode{Condition: &BooleanNode{Val: "true", Pos: Pos{lineNo: currentLineNo, file: currentFile}}, Body: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | CASE expr_value opt_terms case_body END
   {
-    $$ = &CaseNode{Value: $2, Whens: $4, lineNo: currentLineNo}
+    $$ = &CaseNode{Value: $2, Whens: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | CASE opt_terms case_body END
   {
-    $$ = &CaseNode{Whens: $3, lineNo: currentLineNo}
+    $$ = &CaseNode{Whens: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | CASE expr_value opt_terms p_case_body END
   {
-    pm := &PatternMatchNode{Value: $2, InClauses: $4, lineNo: currentLineNo}
+    pm := &PatternMatchNode{Value: $2, InClauses: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     // Check if last clause is an else (no pattern)
     if last := $4[len($4)-1]; last.Pattern == nil {
       pm.ElseBody = last.Statements
@@ -903,7 +981,7 @@ primary:
   }
 | FOR for_var IN expr_value_do compstmt END
   {
-    $$ = &ForInNode{For: $2, In: $4, Body: $5, lineNo: currentLineNo}
+    $$ = &ForInNode{For: $2, In: $4, Body: $5, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | class cpath superclass bodystmt END
   {
@@ -952,7 +1030,7 @@ primary:
     r.cpathDepth = 0
     $$ = module
   }
-| method_signature bodystmt END
+| method_head bodystmt END
   {
     $1.Body = $2
     root(yylex).AddMethod($1)
@@ -962,18 +1040,18 @@ primary:
 //| k_def singleton dot_or_colon
 | BREAK
   {
-    $$ = &BreakNode{lineNo: currentLineNo}  
+    $$ = &BreakNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}  
   }
 | NEXT
   {
-    $$ = &NextNode{lineNo: currentLineNo}
+    $$ = &NextNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | NEXT LPARENSTART args rparen
   {
     if len($3) == 1 {
-      $$ = &NextNode{Val: $3[0], lineNo: currentLineNo}
+      $$ = &NextNode{Val: $3[0], Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     } else {
-      $$ = &NextNode{lineNo: currentLineNo}
+      $$ = &NextNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     }
   }
 //| kREDO
@@ -1006,19 +1084,19 @@ opt_rescue:
 rescue_clause:
   RESCUE HASHROCKET IDENT then compstmt
   {
-    $$ = &RescueClause{ExceptionVar: $3, Body: $5, lineNo: currentLineNo}
+    $$ = &RescueClause{ExceptionVar: $3, Body: $5, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | RESCUE rescue_types HASHROCKET IDENT then compstmt
   {
-    $$ = &RescueClause{ExceptionTypes: $2, ExceptionVar: $4, Body: $6, lineNo: currentLineNo}
+    $$ = &RescueClause{ExceptionTypes: $2, ExceptionVar: $4, Body: $6, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | RESCUE rescue_types then compstmt
   {
-    $$ = &RescueClause{ExceptionTypes: $2, Body: $4, lineNo: currentLineNo}
+    $$ = &RescueClause{ExceptionTypes: $2, Body: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | RESCUE then compstmt
   {
-    $$ = &RescueClause{Body: $3, lineNo: currentLineNo}
+    $$ = &RescueClause{Body: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 rescue_types:
@@ -1048,14 +1126,14 @@ if_tail:
   opt_else
 | ELSIF expr then compstmt if_tail
   {
-    $$ = &Condition{Condition: $2, True: $4, False: $5, lineNo: currentLineNo}
+    $$ = &Condition{Condition: $2, True: $4, False: $5, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 opt_else: 
   none
 | ELSE compstmt
   {
-    $$ = &Condition{True: $2, lineNo: currentLineNo, elseBranch: true}
+    $$ = &Condition{True: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}, elseBranch: true}
   }
         
 for_var: 
@@ -1142,20 +1220,20 @@ block_call:
   }
 | block_call DOT operation opt_paren_args
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     root(yylex).AddCall(call)
     $$ = call
   }
 | block_call DOT operation opt_paren_args brace_block
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     call.SetBlock($5)
     root(yylex).AddCall(call)
     $$ = call
   }
 | block_call DOT operation command_args do_block
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     call.SetBlock($5)
     root(yylex).AddCall(call)
     $$ = call
@@ -1164,7 +1242,7 @@ block_call:
 method_call: 
   fcall paren_args
   {
-    call := &MethodCall{MethodName: $1, Args: $2, lineNo: currentLineNo}
+    call := &MethodCall{MethodName: $1, Args: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     if root(yylex).currentClass != nil {
       root(yylex).currentClass.MethodSet.AddCall(call)
     } else {
@@ -1174,21 +1252,21 @@ method_call:
   }
 | primary_value call_op fname opt_paren_args
   {
-    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, Op: $2, lineNo: currentLineNo}
+    call := &MethodCall{Receiver: $1, MethodName: $3, Args: $4, Op: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     root(yylex).AddCall(call)
     $$ = call
   }
 | SUPER paren_args
   {
-    $$ = &SuperNode{Args: $2, Method: root(yylex).currentMethod, Class: root(yylex).currentClass, lineNo: currentLineNo}
+    $$ = &SuperNode{Args: $2, Method: root(yylex).currentMethod, Class: root(yylex).currentClass, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
 	}
 | SUPER
   {
-    $$ = &SuperNode{Method: root(yylex).currentMethod, Class: root(yylex).currentClass, lineNo: currentLineNo}
+    $$ = &SuperNode{Method: root(yylex).currentMethod, Class: root(yylex).currentClass, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
 	}
 | primary_value LBRACKET opt_call_args rbracket
   {
-    $$ = &BracketAccessNode{Composite: $1, Args: $3, lineNo: currentLineNo}
+    $$ = &BracketAccessNode{Composite: $1, Args: $3, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 brace_block: 
@@ -1223,7 +1301,7 @@ case_body:
 when: 
   WHEN args then compstmt
   {
-    $$ = &WhenNode{Conditions: $2, Statements: $4, lineNo: currentLineNo}
+    $$ = &WhenNode{Conditions: $2, Statements: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 cases: 
@@ -1233,7 +1311,7 @@ cases:
   }
 | ELSE compstmt
   {
-    $$ = []*WhenNode{{Statements: $2, lineNo: currentLineNo}}
+    $$ = []*WhenNode{{Statements: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}}
   }
 | case_body
 
@@ -1246,7 +1324,7 @@ p_case_body:
 p_in_clause:
   IN p_pattern then compstmt
   {
-    $$ = &InClause{Pattern: $2, Statements: $4, lineNo: currentLineNo}
+    $$ = &InClause{Pattern: $2, Statements: $4, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 p_cases:
@@ -1256,26 +1334,26 @@ p_cases:
   }
 | ELSE compstmt
   {
-    $$ = []*InClause{{Statements: $2, lineNo: currentLineNo}}
+    $$ = []*InClause{{Statements: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}}
   }
 | p_case_body
 
 p_pattern:
   LBRACKET RBRACKET
   {
-    $$ = &ArrayPatternNode{lineNo: currentLineNo}
+    $$ = &ArrayPatternNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | LBRACKETSTART RBRACKET
   {
-    $$ = &ArrayPatternNode{lineNo: currentLineNo}
+    $$ = &ArrayPatternNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | LBRACKET p_pattern_list RBRACKET
   {
-    $$ = &ArrayPatternNode{Elements: $2, lineNo: currentLineNo}
+    $$ = &ArrayPatternNode{Elements: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | LBRACKETSTART p_pattern_list RBRACKET
   {
-    $$ = &ArrayPatternNode{Elements: $2, lineNo: currentLineNo}
+    $$ = &ArrayPatternNode{Elements: $2, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | p_pattern_item
 
@@ -1283,23 +1361,23 @@ p_pattern_item:
   IDENT
   {
     if $1 == "_" {
-      $$ = &WildcardPatternNode{lineNo: currentLineNo}
+      $$ = &WildcardPatternNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     } else {
-      $$ = &IdentNode{Val: $1, lineNo: currentLineNo}
+      $$ = &IdentNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     }
   }
 | literal
 | NIL
   {
-    $$ = &NilNode{lineNo: currentLineNo}
+    $$ = &NilNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | TRUE
   {
-    $$ = &BooleanNode{Val: "true", lineNo: currentLineNo}
+    $$ = &BooleanNode{Val: "true", Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | FALSE
   {
-    $$ = &BooleanNode{Val: "false", lineNo: currentLineNo}
+    $$ = &BooleanNode{Val: "false", Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 p_pattern_list:
@@ -1338,7 +1416,7 @@ string:
 raw_string: 
   raw_string_beg STRINGBODY RAWSTRINGEND
   {
-    $$ = &StringNode{BodySegments: []string{$2}, Kind: getStringKind($1), lineNo: currentLineNo, delim: $3} 
+    $$ = &StringNode{BodySegments: []string{$2}, Kind: getStringKind($1), Pos: Pos{lineNo: currentLineNo, file: currentFile}, delim: $3} 
   }
 
 raw_string_beg:
@@ -1350,19 +1428,19 @@ string_beg:
   STRINGBEG
   {
     root(yylex).State.Push(InString)
-    root(yylex).StringStack.Push(&StringNode{Kind: getStringKind($1), Interps: make(map[int][]Node), lineNo: currentLineNo})
+    root(yylex).StringStack.Push(&StringNode{Kind: getStringKind($1), Interps: make(map[int][]Node), Pos: Pos{lineNo: currentLineNo, file: currentFile}})
     $$ = ""
   }
 | WORDSBEG
   {
     root(yylex).State.Push(InString)
-    root(yylex).StringStack.Push(&StringNode{Kind: getStringKind($1), Interps: make(map[int][]Node), lineNo: currentLineNo})
+    root(yylex).StringStack.Push(&StringNode{Kind: getStringKind($1), Interps: make(map[int][]Node), Pos: Pos{lineNo: currentLineNo, file: currentFile}})
     $$ = ""
   }
 | XSTRINGBEG
   {
     root(yylex).State.Push(InString)
-    root(yylex).StringStack.Push(&StringNode{Kind: getStringKind($1), Interps: make(map[int][]Node), lineNo: currentLineNo})
+    root(yylex).StringStack.Push(&StringNode{Kind: getStringKind($1), Interps: make(map[int][]Node), Pos: Pos{lineNo: currentLineNo, file: currentFile}})
     $$ = ""
   }
 
@@ -1414,7 +1492,7 @@ regex_beg:
   REGEXBEG
 	{
 		root(yylex).State.Push(InString)
-		root(yylex).StringStack.Push(&StringNode{Kind: Regexp, Interps: make(map[int][]Node), lineNo: currentLineNo})
+		root(yylex).StringStack.Push(&StringNode{Kind: Regexp, Interps: make(map[int][]Node), Pos: Pos{lineNo: currentLineNo, file: currentFile}})
 		$$ = ""
 	}
 
@@ -1434,47 +1512,64 @@ regex_end:
 //qsym_list: # nothing
 //| qsym_list tSTRING_CONTENT tSPACE
 
-method_signature:
-  DEF fname f_arglist
+defn_head:
+  DEF fname
   {
     method := NewMethod($2, root(yylex))
     method.Private = root(yylex).inPrivateMethods
     if root(yylex).inSingletonClass {
       method.ClassMethod = true
     }
-    method.lineNo = currentLineNo
-
-    for _, p := range $3 {
-      if err := method.AddParam(p); err != nil {
-        root(yylex).AddError(err)
-      }
-    }
-
-    root(yylex).State.Push(InMethodDefinition)
+    method.Pos = Pos{lineNo: currentLineNo, file: currentFile}
     $$ = method
-    yylex.(*Lexer).resetExpr = true
   }
-| DEF SELF DOT fname f_arglist
+
+defs_head:
+  DEF SELF DOT fname
   {
     method := NewMethod($4, root(yylex))
     method.ClassMethod = true
-    method.lineNo = currentLineNo
+    method.Pos = Pos{lineNo: currentLineNo, file: currentFile}
+    $$ = method
+  }
 
-    for _, p := range $5 {
-      if err := method.AddParam(p); err != nil {
+method_head:
+  defn_head f_arglist
+  {
+    for _, p := range $2 {
+      if err := $1.AddParam(p); err != nil {
         root(yylex).AddError(err)
       }
     }
-
     root(yylex).State.Push(InMethodDefinition)
-    $$ = method
+    $$ = $1
+    yylex.(*Lexer).resetExpr = true
+  }
+| defs_head f_arglist
+  {
+    for _, p := range $2 {
+      if err := $1.AddParam(p); err != nil {
+        root(yylex).AddError(err)
+      }
+    }
+    root(yylex).State.Push(InMethodDefinition)
+    $$ = $1
     yylex.(*Lexer).resetExpr = true
   }
 
-symbol: 
+f_opt_paren_args:
+  {
+    $$ = nil
+  }
+| LPAREN f_args rparen
+  {
+    $$ = $2
+  }
+
+symbol:
   SYMBOL
   {
-    $$ = &SymbolNode{Val: $1, lineNo: currentLineNo}
+    $$ = &SymbolNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 //dsym: tSYMBEG string_contents tSTRING_END
 
@@ -1498,29 +1593,29 @@ numeric:
 simple_numeric: 
   INT
   {
-    $$ = &IntNode{Val: $1, lineNo: currentLineNo}
+    $$ = &IntNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | FLOAT
   {
-    $$ = &Float64Node{Val: $1, lineNo: currentLineNo}
+    $$ = &Float64Node{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | RATIONAL
   {
-    $$ = &RationalNode{Val: $1, lineNo: currentLineNo}
+    $$ = &RationalNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | IMAGINARY
   {
-    $$ = &ImaginaryNode{Val: $1, lineNo: currentLineNo}
+    $$ = &ImaginaryNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 user_variable: 
   IDENT
   {
-    $$ = &IdentNode{Val: $1, lineNo: currentLineNo}
+    $$ = &IdentNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | IVAR
   {
-    ivar := &IVarNode{Val: $1, Class: root(yylex).currentClass, lineNo: currentLineNo}
+    ivar := &IVarNode{Val: $1, Class: root(yylex).currentClass, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
     $$ = ivar
     cls := root(yylex).currentClass
     if cls != nil {
@@ -1529,33 +1624,33 @@ user_variable:
   }
 | GVAR
   {
-    $$ = &GVarNode{Val: $1, lineNo: currentLineNo}
+    $$ = &GVarNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | CONSTANT
   {
-    $$ = &ConstantNode{Val: $1, lineNo: currentLineNo}
+    $$ = &ConstantNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | CVAR
   {
-    $$ = &CVarNode{Val: $1, lineNo: currentLineNo}
+    $$ = &CVarNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 keyword_variable: 
   NIL
   {
-    $$ = &NilNode{lineNo: currentLineNo}
+    $$ = &NilNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | SELF
   {
-    $$ = &SelfNode{lineNo: currentLineNo}
+    $$ = &SelfNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | TRUE
   {
-    $$ = &BooleanNode{Val: $1, lineNo: currentLineNo}
+    $$ = &BooleanNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 | FALSE
   {
-    $$ = &BooleanNode{Val: $1, lineNo: currentLineNo}
+    $$ = &BooleanNode{Val: $1, Pos: Pos{lineNo: currentLineNo, file: currentFile}}
   }
 
 var_ref: user_variable | keyword_variable

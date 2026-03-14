@@ -34,6 +34,9 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 
 	structFields := []*ast.Field{}
 	for _, t := range c.IVars(nil) {
+		if t.Type() == nil {
+			continue
+		}
 		name := t.Name
 		if t.Readable && t.Writeable {
 			name = strings.Title(name)
@@ -89,6 +92,9 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 			cls = cls.Parent()
 		}
 	}
+	if initialize != nil && (initialize.IsUncallable() || !c.IsUsed()) {
+		initialize = nil
+	}
 
 	g.appendToCurrentBlock(bst.Define(g.it.Get("newInstance"),
 		&ast.UnaryExpr{
@@ -133,10 +139,15 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 	g.BlockStack.Pop()
 
 	var hasToS bool
-	for _, m := range c.Methods(nil) {
-		decls = append(decls, g.CompileFunc(m, c)...)
-		if m.Name == "to_s" {
-			hasToS = true
+	if c.IsUsed() {
+		for _, m := range c.Methods(nil) {
+			if m.IsUncallable() {
+				continue
+			}
+			decls = append(decls, g.CompileFunc(m, c)...)
+			if m.Name == "to_s" {
+				hasToS = true
+			}
 		}
 	}
 
@@ -213,6 +224,56 @@ func (g *GoProgram) addConstants(constants []*parser.Constant) {
 		default:
 			g.addGlobalVar(g.it.Get(name), g.it.Get(constant.Val.Type().GoType()), g.CompileExpr(constant.Val))
 		}
+	}
+}
+
+// compileDuckInterface emits a Go interface type declaration for a synthesized
+// duck-type interface. The interface lists methods called on the parameter
+// with signatures derived from the first concrete type's analyzed methods.
+func (g *GoProgram) compileDuckInterface(iface *types.DuckInterface) []ast.Decl {
+	sigs := parser.BuildInterfaceMethodSignatures(iface)
+	if len(sigs) == 0 {
+		return nil
+	}
+
+	methods := &ast.FieldList{}
+	for _, sig := range sigs {
+		params := g.GetFuncParams(sig.Params)
+		results := g.GetReturnType(sig.RetType)
+
+		var funcParams *ast.FieldList
+		if len(params) > 0 {
+			funcParams = &ast.FieldList{List: params}
+		} else {
+			funcParams = &ast.FieldList{}
+		}
+
+		var funcResults *ast.FieldList
+		if len(results) > 0 {
+			funcResults = &ast.FieldList{List: results}
+		}
+
+		methods.List = append(methods.List, &ast.Field{
+			Names: []*ast.Ident{g.it.Get(sig.GoName)},
+			Type: &ast.FuncType{
+				Params:  funcParams,
+				Results: funcResults,
+			},
+		})
+	}
+
+	return []ast.Decl{
+		&ast.GenDecl{
+			Tok: token.TYPE,
+			Specs: []ast.Spec{
+				&ast.TypeSpec{
+					Name: g.it.Get(iface.Name),
+					Type: &ast.InterfaceType{
+						Methods: methods,
+					},
+				},
+			},
+		},
 	}
 }
 

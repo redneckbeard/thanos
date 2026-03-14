@@ -27,9 +27,9 @@ gauntlet("File.exist?") do
   puts File.exist?("nonexistent_file_12345.txt")
 end
 
-gauntlet("File.exists?") do
-  puts File.exists?("compiler/testdata/input/millennials.txt")
-  puts File.exists?("nonexistent_file_98765.txt")
+gauntlet("File.exist?") do
+  puts File.exist?("compiler/testdata/input/millennials.txt")
+  puts File.exist?("nonexistent_file_98765.txt")
 end
 
 gauntlet("File.directory?") do

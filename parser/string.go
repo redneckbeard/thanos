@@ -64,7 +64,7 @@ type StringNode struct {
 	cached       bool
 	Kind         StringKind
 	Flags        string // Regex modifier flags (e.g., "i", "mx")
-	lineNo       int
+	Pos
 	delim        string
 	_type        types.Type
 }
@@ -174,7 +174,6 @@ func (n *StringNode) Type() types.Type {
 }
 
 func (n *StringNode) SetType(t types.Type) { n._type = t }
-func (n *StringNode) LineNo() int          { return n.lineNo }
 
 func (n *StringNode) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
 	if n.Kind != Regexp {

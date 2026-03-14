@@ -1470,7 +1470,7 @@ def foo(bar)
 	}
 	comments := []struct {
 		txt    string
-		lineNo int
+		Pos
 	}{
 		{"# some basic stuff about how this works", 1},
 		{"# tag", 4},
@@ -1479,7 +1479,7 @@ def foo(bar)
 	for _, c := range comments {
 		comment := p.Comments[c.lineNo]
 		if c.txt != comment.Text {
-			t.Fatalf("Comment on line %d did not match. Expected '%s', got '%s'", c.lineNo, c.txt, comment.Text)
+			t.Fatalf("Comment on line %d did not match. Expected '%s', got '%s'", c.Pos, c.txt, comment.Text)
 		}
 	}
 }

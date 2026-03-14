@@ -15,8 +15,8 @@ var goKeywords = map[string]bool{
 	"select": true, "struct": true, "switch": true, "type": true, "var": true,
 }
 
-// sanitizeName appends an underscore to Go reserved keywords.
-func sanitizeName(name string) string {
+// SanitizeName appends an underscore to Go reserved keywords.
+func SanitizeName(name string) string {
 	if goKeywords[name] {
 		return name + "_"
 	}
@@ -39,7 +39,7 @@ func (it IdentTracker) Get(name string) *ast.Ident {
 	if i, ok := it.idents[name]; ok {
 		return i[0]
 	} else {
-		ident := ast.NewIdent(sanitizeName(name))
+		ident := ast.NewIdent(SanitizeName(name))
 		it.idents[name] = []*ast.Ident{ident}
 		return ident
 	}
@@ -47,7 +47,7 @@ func (it IdentTracker) Get(name string) *ast.Ident {
 
 func (it IdentTracker) New(name string) *ast.Ident {
 	if i, ok := it.idents[name]; ok {
-		incName := fmt.Sprintf("%s%d", sanitizeName(name), len(i))
+		incName := fmt.Sprintf("%s%d", SanitizeName(name), len(i))
 		inc := ast.NewIdent(incName)
 		it.idents[name] = append(it.idents[name], inc)
 		it.idents[incName] = []*ast.Ident{inc}

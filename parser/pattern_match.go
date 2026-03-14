@@ -11,7 +11,7 @@ type PatternMatchNode struct {
 	Value     Node
 	InClauses []*InClause
 	ElseBody  Statements
-	lineNo    int
+	Pos
 	_type     types.Type
 }
 
@@ -20,7 +20,6 @@ func (n *PatternMatchNode) String() string {
 }
 func (n *PatternMatchNode) Type() types.Type     { return n._type }
 func (n *PatternMatchNode) SetType(t types.Type) { n._type = t }
-func (n *PatternMatchNode) LineNo() int          { return n.lineNo }
 func (n *PatternMatchNode) Copy() Node           { return n }
 
 func (n *PatternMatchNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
@@ -71,14 +70,13 @@ func (n *PatternMatchNode) TargetType(locals ScopeChain, class *Class) (types.Ty
 type InClause struct {
 	Pattern    Node
 	Statements Statements
-	lineNo     int
+	Pos
 	_type      types.Type
 }
 
 func (n *InClause) String() string       { return fmt.Sprintf("(in %s %s)", n.Pattern, n.Statements) }
 func (n *InClause) Type() types.Type     { return n._type }
 func (n *InClause) SetType(t types.Type) { n._type = t }
-func (n *InClause) LineNo() int          { return n.lineNo }
 func (n *InClause) Copy() Node           { return n }
 
 func (n *InClause) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
@@ -88,7 +86,7 @@ func (n *InClause) TargetType(locals ScopeChain, class *Class) (types.Type, erro
 // ArrayPatternNode represents `[a, b, c]` in a pattern context
 type ArrayPatternNode struct {
 	Elements []Node // each element is a pattern (IdentNode, ArrayPatternNode, WildcardPatternNode, etc.)
-	lineNo   int
+	Pos
 	_type    types.Type
 }
 
@@ -97,7 +95,6 @@ func (n *ArrayPatternNode) String() string {
 }
 func (n *ArrayPatternNode) Type() types.Type     { return n._type }
 func (n *ArrayPatternNode) SetType(t types.Type) { n._type = t }
-func (n *ArrayPatternNode) LineNo() int          { return n.lineNo }
 func (n *ArrayPatternNode) Copy() Node           { return n }
 
 func (n *ArrayPatternNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
@@ -107,14 +104,13 @@ func (n *ArrayPatternNode) TargetType(locals ScopeChain, class *Class) (types.Ty
 
 // WildcardPatternNode represents `_` in a pattern context
 type WildcardPatternNode struct {
-	lineNo int
+	Pos
 	_type  types.Type
 }
 
 func (n *WildcardPatternNode) String() string       { return "_" }
 func (n *WildcardPatternNode) Type() types.Type     { return n._type }
 func (n *WildcardPatternNode) SetType(t types.Type) { n._type = t }
-func (n *WildcardPatternNode) LineNo() int          { return n.lineNo }
 func (n *WildcardPatternNode) Copy() Node           { return n }
 
 func (n *WildcardPatternNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {

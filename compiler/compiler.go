@@ -153,6 +153,11 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 		decls = append(decls, g.CompileClass(class)...)
 	}
 
+	// Emit duck-type interface declarations
+	for _, iface := range parser.DuckInterfaces {
+		decls = append(decls, g.compileDuckInterface(iface)...)
+	}
+
 	// Emit package-level vars for global variables ($var)
 	for name, t := range parser.GlobalVars() {
 		if t != nil {

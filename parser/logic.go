@@ -10,7 +10,7 @@ type InfixExpressionNode struct {
 	Operator string
 	Left     Node
 	Right    Node
-	lineNo   int
+	Pos
 	_type    types.Type
 }
 
@@ -19,7 +19,6 @@ func (n *InfixExpressionNode) String() string {
 }
 func (n *InfixExpressionNode) Type() types.Type     { return n._type }
 func (n *InfixExpressionNode) SetType(t types.Type) { n._type = t }
-func (n *InfixExpressionNode) LineNo() int          { return n.lineNo }
 
 func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	tl, err := GetType(n.Left, locals, class)
@@ -38,7 +37,7 @@ func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types
 				Receiver:   n.Left,
 				MethodName: n.Operator,
 				Args:       ArgsNode{n.Right},
-				lineNo:     n.lineNo,
+				Pos: Pos{lineNo: n.lineNo},
 			}
 			ms.AddCall(syntheticCall)
 		}
@@ -78,7 +77,7 @@ func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types
 }
 
 func (n *InfixExpressionNode) Copy() Node {
-	return &InfixExpressionNode{n.Operator, n.Left.Copy(), n.Right.Copy(), n.lineNo, n._type}
+	return &InfixExpressionNode{n.Operator, n.Left.Copy(), n.Right.Copy(), n.Pos, n._type}
 }
 
 func (n *InfixExpressionNode) HasMethod() bool {
@@ -90,14 +89,13 @@ func (n *InfixExpressionNode) HasMethod() bool {
 
 type NotExpressionNode struct {
 	Arg    Node
-	lineNo int
+	Pos
 	_type  types.Type
 }
 
 func (n *NotExpressionNode) String() string       { return fmt.Sprintf("!%s", n.Arg) }
 func (n *NotExpressionNode) Type() types.Type     { return n._type }
 func (n *NotExpressionNode) SetType(t types.Type) { n._type = types.BoolType }
-func (n *NotExpressionNode) LineNo() int          { return n.lineNo }
 
 func (n *NotExpressionNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if _, err := GetType(n.Arg, locals, class); err != nil {
@@ -107,5 +105,5 @@ func (n *NotExpressionNode) TargetType(locals ScopeChain, class *Class) (types.T
 }
 
 func (n *NotExpressionNode) Copy() Node {
-	return &NotExpressionNode{n.Arg.Copy(), n.lineNo, n._type}
+	return &NotExpressionNode{n.Arg.Copy(), n.Pos, n._type}
 }

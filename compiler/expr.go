@@ -110,6 +110,10 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		} else if n.Setter {
 			return bst.Dot(g.CompileExpr(n.Receiver), strings.Title(strings.TrimSuffix(n.MethodName, "=")))
 		}
+		// defined?(expr) compiles to true — if we got here, it exists
+		if n.MethodName == "defined?" {
+			return g.it.Get("true")
+		}
 		// block_given? compiles to blk != nil
 		if n.MethodName == "block_given?" && n.Receiver == nil {
 			return bst.Binary(g.it.Get("blk"), token.NEQ, g.it.Get("nil"))
@@ -312,7 +316,7 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		return om
 	case *parser.BracketAccessNode:
 		rcvr := g.CompileExpr(n.Composite)
-		if n.Composite.Type().HasMethod("[]") {
+		if n.Composite.Type() != nil && n.Composite.Type().HasMethod("[]") {
 			// For order-safe hashes, use native map indexing
 			if _, isHash := n.Composite.Type().(types.Hash); isHash && g.receiverIsOrderSafe(n.Composite) {
 				return &ast.IndexExpr{X: rcvr, Index: g.CompileExpr(n.Args[0])}
@@ -423,6 +427,12 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		g.CurrentLhs = nil
 		g.State.Pop()
 		return name
+	case *parser.AssignmentNode:
+		// Chained assignment (e.g., a = b = 0): compile inner assignment as a
+		// statement and return the RHS value as the expression.
+		g.CompileAssignmentNode(n)
+		// The last LHS variable is the expression value
+		return g.CompileExpr(n.Left[len(n.Left)-1])
 	default:
 		return &ast.BadExpr{}
 	}

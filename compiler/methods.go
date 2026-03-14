@@ -24,6 +24,12 @@ func (g *GoProgram) TransformMethodCallStmt(c *parser.MethodCall) types.Transfor
 }
 
 func (g *GoProgram) getTransform(call *parser.MethodCall, rcvr ast.Expr, rcvrType types.Type, methodName string, args parser.ArgsNode, blk *types.Block, stmtContext bool) types.Transform {
+	// Guard against nil rcvrType — can happen for Kernel methods (fail/raise)
+	// inside postfix conditions where the receiver resolves to KernelNode
+	if rcvrType == nil {
+		rcvrType = types.KernelType
+		rcvr = nil
+	}
 	var argExprs []types.TypeExpr
 	if call != nil && call.Method != nil {
 		argExprs = g.CompileArgs(call, args)
