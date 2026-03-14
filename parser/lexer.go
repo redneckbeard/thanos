@@ -325,7 +325,7 @@ func (l *Lexer) AtExprStart() bool {
 	midExprTokens := []int{
 		NIL, SYMBOL, STRING, INT, FLOAT, TRUE, FALSE, DEF, END, SELF, CONSTANT,
 		IVAR, CVAR, GVAR, METHODIDENT, IDENT, DO,
-		RBRACE, STRINGEND, RBRACKET, RPAREN, BREAK, NEXT,
+		RBRACE, STRINGEND, RBRACKET, RPAREN, BREAK, NEXT, RETURN, YIELD,
 	}
 
 	for _, tok := range midExprTokens {

@@ -7,3 +7,8 @@ Each entry records the grammar SHA (or "uncommitted"), conflict counts, and note
 | 2026-03-13 | 19c061d     | 3            | 16            | Baseline before diff-lcs changes |
 | 2026-03-13 | uncommitted | 3            | 16            | Add LOOP token, scoped constant assignment LHS, loop do...end rule |
 | 2026-03-13 | bb26e4d | 3 | 16 | |
+| 2026-03-14 | e115ef6 | 3 | 16 | |
+| 2026-03-14 | e115ef6 | 6 | 16 | |
+| 2026-03-14 | e115ef6 | 3 | 16 | |
+| 2026-03-14 | e115ef6 | 3 | 16 | |
+| 2026-03-14 | e115ef6 | 3 | 16 | |

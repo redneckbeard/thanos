@@ -347,6 +347,12 @@ command:
     root(yylex).AddReturn(r)
     $$ = r
   }
+| RETURN
+  {
+    r := &ReturnNode{Pos: Pos{lineNo: currentLineNo, file: currentFile}}
+    root(yylex).AddReturn(r)
+    $$ = r
+  }
 //| kBREAK call_args
 //| kNEXT call_args
 
@@ -1659,12 +1665,17 @@ superclass:
   {
     $$ = ""
   }
-// The correct rule here would have expr_value instead of CONSTANT. This
-// restricts the grammar to what's currently actually supported by the
-// compiler.
-| LT CONSTANT term 
+| LT CONSTANT term
   {
     $$ = $2
+  }
+| LT CONSTANT SCOPE CONSTANT term
+  {
+    $$ = $4
+  }
+| LT CONSTANT SCOPE CONSTANT SCOPE CONSTANT term
+  {
+    $$ = $6
   }
 
 f_arglist: 

@@ -59,14 +59,22 @@ var testCmd = &cobra.Command{
 		}
 		for _, file := range testFiles {
 			if TestFile == "" || file == filepath.Join(TestDir, TestFile) {
-				// very possible that we're doing something in the test that is _not_
-				// valid Ruby like declaring a constant, so ignore errors this time
-				// around and report them when we've extracted the body of the gauntlet
-				// block
-				program, _ := parser.ParseFile(file)
-				for _, call := range program.MethodSetStack.Peek().Calls["gauntlet"] {
-					tests[strings.Trim(call.Args[0].String(), `"'`)] = call.RawBlock
-				}
+				// Parse errors are common (e.g. constants outside gauntlet blocks),
+			// but if parsing fails entirely we should report it so the user
+			// knows what went wrong.
+			program, parseErr := parser.ParseFile(file)
+			if program == nil {
+				color.Red("Parse error in %s: %v", file, parseErr)
+				continue
+			}
+			calls := program.MethodSetStack.Peek().Calls["gauntlet"]
+			if len(calls) == 0 && parseErr != nil {
+				color.Red("Parse error in %s: %v", file, parseErr)
+				continue
+			}
+			for _, call := range calls {
+				tests[strings.Trim(call.Args[0].String(), `"'`)] = call.RawBlock
+			}
 			}
 		}
 		if TestCase != "" {

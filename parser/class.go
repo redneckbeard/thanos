@@ -652,6 +652,7 @@ func (cls *Class) GetAncestorMethod(methodName string) (*Class, *Method, bool) {
 	return nil, nil, false
 }
 
+
 func (cls *Class) AddIVars(args ArgsNode, readable, writeable bool) {
 	for _, a := range args {
 		sym, ok := a.(*SymbolNode)
