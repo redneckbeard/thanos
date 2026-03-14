@@ -29,6 +29,14 @@ func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types
 	if err != nil {
 		return nil, err
 	}
+	// When the LHS type is nil (e.g., Data.define field with unknown type)
+	// and the RHS type is known, infer the LHS type from the RHS.
+	// This handles patterns like `action == "+"` where action's type is
+	// only discoverable from usage context.
+	if tl == nil && tr != nil {
+		n.Left.SetType(tr)
+		tl = tr
+	}
 	// If the operator is a user-defined method (e.g., ==, <=>), register
 	// a synthetic call so AnalyzeMethodSet can type the params.
 	if ms, ok := classMethodSets[tl]; ok {

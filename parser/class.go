@@ -561,6 +561,7 @@ func (cls *Class) Get(name string) (Local, bool) {
 			call := &MethodCall{
 				Receiver:   &SelfNode{_type: classType.Instance.(types.Type)},
 				MethodName: name,
+				Getter:     true,
 				_type:      ivar.Type(),
 			}
 			return call, true
@@ -590,6 +591,7 @@ func (cls *Class) Get(name string) (Local, bool) {
 				call := &MethodCall{
 					Receiver:   &SelfNode{_type: classType.Instance.(types.Type)},
 					MethodName: name,
+					Getter:     true,
 					_type:      ivar.Type(),
 				}
 				return call, true

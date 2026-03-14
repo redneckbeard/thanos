@@ -15,7 +15,12 @@ type IdentNode struct {
 
 func (n *IdentNode) String() string       { return n.Val }
 func (n *IdentNode) Type() types.Type     { return n._type }
-func (n *IdentNode) SetType(t types.Type) { n._type = t }
+func (n *IdentNode) SetType(t types.Type) {
+	n._type = t
+	if n.MethodCall != nil && n.MethodCall.Type() == nil {
+		n.MethodCall.SetType(t)
+	}
+}
 
 func (n *IdentNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	local := locals.ResolveVar(n.Val)
