@@ -114,6 +114,8 @@ var keywords = map[string]int{
 	"when":      WHEN,
 	"while":     WHILE,
 	"yield":     YIELD,
+	"and":       LOGICALAND,
+	"or":        LOGICALOR,
 }
 
 type LexState int
@@ -286,6 +288,13 @@ func (l *Lexer) Emit(t int) {
 		return
 	}
 	l.emitRaw(t)
+	// Tokens that allow continuation on the next line (suppress NEWLINE)
+	switch t {
+	case LOGICALAND, LOGICALOR, SPACESHIP, EQ, NEQ, LT, GT, LTE, GTE,
+		PLUS, MINUS, ASTERISK, SLASH, MODULO, POW, LSHIFT, RSHIFT,
+		COMMA, DOT, ANDDOT, HASHROCKET, ASSIGN, ORASSIGN:
+		l.skipNewline = true
+	}
 }
 
 // emitSynthetic sends a token without affecting rawSource (for gauntlet extraction).
@@ -526,6 +535,9 @@ func (l *Lexer) lexPunct() error {
 		l.State.Push(OpenBrace)
 		if l.lastToken == LAMBDA {
 			l.Emit(LBRACEBLOCK)
+		} else if l.endlessMethodPending {
+			// In endless method body, { is always a hash literal, not a block
+			l.Emit(LBRACE)
 		} else {
 			l.emitOpenMatching(LBRACEBLOCK)
 		}
@@ -686,11 +698,15 @@ func (l *Lexer) lexWord() error {
 			}
 		}
 	} else {
-		// Keywords followed by ? or ! after a dot are method names (e.g., .nil?, .class!)
-		next, _ = l.Peek()
-		if (next == '?' || next == '!') && (l.lastToken == DOT || l.lastToken == ANDDOT) {
-			l.Advance()
-			l.Emit(METHODIDENT)
+		// Keywords after a dot are method names, not keywords (e.g., self.class, obj.nil?)
+		if l.lastToken == DOT || l.lastToken == ANDDOT {
+			next, _ = l.Peek()
+			if next == '?' || next == '!' {
+				l.Advance()
+				l.Emit(METHODIDENT)
+			} else {
+				l.Emit(IDENT)
+			}
 			return err
 		}
 		switch string(l.read) {
