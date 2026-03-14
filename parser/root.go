@@ -551,6 +551,32 @@ func (r *Root) analyzeModuleClassMethods(mod *Module) {
 	}
 }
 
+func (r *Root) preAnalyzeInitializers() {
+	for _, class := range r.Classes {
+		r.preAnalyzeClassInitializer(class)
+	}
+	for _, mod := range r.TopLevelModules {
+		r.preAnalyzeModuleInitializers(mod)
+	}
+}
+
+func (r *Root) preAnalyzeClassInitializer(cls *Class) {
+	if initialize, ok := cls.MethodSet.Methods["initialize"]; ok && !initialize.analyzed {
+		if err := initialize.Analyze(cls.MethodSet); err == nil {
+			initialize.analyzed = true
+		}
+	}
+}
+
+func (r *Root) preAnalyzeModuleInitializers(mod *Module) {
+	for _, cls := range mod.Classes {
+		r.preAnalyzeClassInitializer(cls)
+	}
+	for _, sub := range mod.Modules {
+		r.preAnalyzeModuleInitializers(sub)
+	}
+}
+
 func (r *Root) AnalyzeMethodSet(ms *MethodSet, rcvr types.Type) error {
 	var err error
 	unanalyzedCount := len(ms.Methods)
@@ -833,6 +859,10 @@ func (r *Root) Analyze() error {
 			return err
 		}
 	}
+
+	// Pre-pass: analyze initialize methods in forward order so that ivar
+	// types are available when child classes reference inherited fields.
+	r.preAnalyzeInitializers()
 
 	// Work backwards through class declarations so that child classes are
 	// analyzed before parents and method calls on inherited methods propagate

@@ -20,6 +20,15 @@ func (n *IdentNode) SetType(t types.Type) { n._type = t }
 func (n *IdentNode) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	local := locals.ResolveVar(n.Val)
 	if local == BadLocal || local.Type() == nil {
+		// If we found a MethodCall with nil type (e.g., Data.define field whose
+		// type hasn't been inferred yet), keep the MethodCall so the compiler
+		// generates proper field access. The type will be resolved from context.
+		if local != BadLocal {
+			if m, ok := local.(*MethodCall); ok {
+				n.MethodCall = m
+				return nil, nil
+			}
+		}
 		// Fall back to Kernel methods for bare identifiers like `params`
 		if types.KernelType.HasMethod(n.Val) {
 			retType, err := types.KernelType.MethodReturnType(n.Val, nil, nil)

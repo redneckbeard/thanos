@@ -555,6 +555,16 @@ func (cls *Class) AddStatement(stmt Node) {
 //ClassNode implements Scope with these methods
 func (cls *Class) Get(name string) (Local, bool) {
 	if ivar, ok := cls.ivars[name]; ok && ivar.Readable {
+		// Return a synthetic MethodCall on self so the compiler generates
+		// field access (a.Field) rather than a bare identifier.
+		if classType, err := types.ClassRegistry.Get(cls.name); err == nil {
+			call := &MethodCall{
+				Receiver:   &SelfNode{_type: classType.Instance.(types.Type)},
+				MethodName: name,
+				_type:      ivar.Type(),
+			}
+			return call, true
+		}
 		return ivar, true
 	} else if m, ok := cls.MethodSet.Methods[name]; ok && len(m.Params) == 0 {
 		classType, _ := types.ClassRegistry.Get(cls.name)
@@ -572,9 +582,24 @@ func (cls *Class) Get(name string) (Local, bool) {
 			return constant, true
 		}
 	}
+	// Check parent class ivars (e.g., inherited attr_reader fields)
+	parent := cls.Parent()
+	for parent != nil {
+		if ivar, ok := parent.ivars[name]; ok && ivar.Readable {
+			if classType, err := types.ClassRegistry.Get(cls.name); err == nil {
+				call := &MethodCall{
+					Receiver:   &SelfNode{_type: classType.Instance.(types.Type)},
+					MethodName: name,
+					_type:      ivar.Type(),
+				}
+				return call, true
+			}
+		}
+		parent = parent.Parent()
+	}
 	// Check parent class methods
-	if parent, m, ok := cls.GetAncestorMethod(name); ok && len(m.Params) == 0 {
-		classType, _ := types.ClassRegistry.Get(parent.name)
+	if parentCls, m, ok := cls.GetAncestorMethod(name); ok && len(m.Params) == 0 {
+		classType, _ := types.ClassRegistry.Get(parentCls.name)
 		call := &MethodCall{
 			Receiver:   &SelfNode{_type: classType.Instance.(types.Type)},
 			Method:     m,
@@ -700,7 +725,9 @@ func (cls *Class) AddIVar(name string, ivar *IVar) error {
 			},
 		}
 		cls.MethodSet.AddMethod(method)
-		cls.GenerateMethod(method, cls.Type().(*types.Class))
+		if cls.Type() != nil {
+			cls.GenerateMethod(method, cls.Type().(*types.Class))
+		}
 	}
 	if !ivar.Readable && ivar.Writeable {
 		scope := NewScope(ivar.Name + "Set")
