@@ -136,7 +136,7 @@ end.length`, `(((foo([1, 2, 3, 4])).select(block = (|x| ((x % 2) == 0)))).length
 
 		{`class Foo; def bar(x); super; end; end`, `Foo((def bar(x) super(x)))`},
 		{`class Foo; def bar(x, y); @y = y; super(x); end; end`, `Foo({@y}; (def bar(x, y) (@y  = y); super(x)))`},
-		{`module Foo; Bar = "bar"; class Baz; def quux; 100; end; end; end`, `Foo([Bar = "bar"]; Baz((def quux() 100)))`},
+		{`module Foo; Bar = "bar"; class Baz; def quux; 100; end; end; end`, `Foo([Bar = "bar"]; Baz((def quux() (return 100))))`},
 		{`[1,
 	2,
 	3
