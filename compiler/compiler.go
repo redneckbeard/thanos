@@ -384,8 +384,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 		}
 		modG.pushTracker()
 
-		modDecls := []ast.Decl{}
-		modG.addConstants(mod.Constants)
+		modDecls := modG.addConstants(mod.Constants)
 		for _, cls := range mod.Classes {
 			if mod.IsFromGem() {
 				func() {

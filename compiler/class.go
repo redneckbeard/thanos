@@ -12,9 +12,7 @@ import (
 )
 
 func (g *GoProgram) CompileModule(mod *parser.Module) []ast.Decl {
-	g.addConstants(mod.Constants)
-
-	var decls []ast.Decl
+	decls := g.addConstants(mod.Constants)
 
 	for _, cls := range mod.Classes {
 		decls = append(decls, g.CompileClass(cls)...)
@@ -46,7 +44,7 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 			Type:  g.it.Get(t.Type().GoType()),
 		})
 	}
-	g.addConstants(c.Constants)
+	decls = append(decls, g.addConstants(c.Constants)...)
 
 	// Emit package-level vars for class variables (@@var)
 	for _, cvar := range c.CVars() {
@@ -215,16 +213,40 @@ func (g *GoProgram) compileAlias(alias parser.Alias, orig *parser.Method, c *par
 	}
 }
 
-func (g *GoProgram) addConstants(constants []*parser.Constant) {
+func (g *GoProgram) addConstants(constants []*parser.Constant) []ast.Decl {
+	var initDecls []ast.Decl
 	for _, constant := range constants {
 		name := g.localName(constant.QualifiedName())
 		switch constant.Val.Type() {
 		case types.IntType, types.SymbolType, types.FloatType, types.StringType, types.BoolType:
 			g.addConstant(g.it.Get(name), g.CompileExpr(constant.Val))
 		default:
-			g.addGlobalVar(g.it.Get(name), g.it.Get(constant.Val.Type().GoType()), g.CompileExpr(constant.Val))
+			// Push a temporary block so CompileExpr can use appendToCurrentBlock
+			// for complex expressions (e.g. OrderedMap hashes, method calls).
+			tempBlock := &ast.BlockStmt{}
+			g.BlockStack.Push(tempBlock)
+			val := g.CompileExpr(constant.Val)
+			g.BlockStack.Pop()
+			if len(tempBlock.List) > 0 {
+				// Prepended statements need a function body — emit an init().
+				varIdent := g.it.Get(name)
+				g.addGlobalVar(varIdent, g.it.Get(constant.Val.Type().GoType()), nil)
+				tempBlock.List = append(tempBlock.List, &ast.AssignStmt{
+					Lhs: []ast.Expr{varIdent},
+					Tok: token.ASSIGN,
+					Rhs: []ast.Expr{val},
+				})
+				initDecls = append(initDecls, &ast.FuncDecl{
+					Name: ast.NewIdent("init"),
+					Type: &ast.FuncType{Params: &ast.FieldList{}},
+					Body: tempBlock,
+				})
+			} else {
+				g.addGlobalVar(g.it.Get(name), g.it.Get(constant.Val.Type().GoType()), val)
+			}
 		}
 	}
+	return initDecls
 }
 
 // compileDuckInterface emits a Go interface type declaration for a synthesized

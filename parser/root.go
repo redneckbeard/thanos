@@ -632,19 +632,44 @@ func (r *Root) AnalyzeMethodSet(ms *MethodSet, rcvr types.Type) error {
 	for unanalyzedCount > 0 {
 		successes := 0
 		if initialize, ok := ms.Methods["initialize"]; ok && !initialize.analyzed {
+			if Tracer != nil {
+				owner := "global"
+				if ms.Class != nil {
+					owner = ms.Class.name
+				}
+				Tracer.Record("analyze-method", fmt.Sprintf("%s#initialize (%d calls)", owner, len(ms.Calls["initialize"])))
+			}
 			err = initialize.Analyze(ms)
 			if err == nil {
 				initialize.analyzed = true
 				successes++
+			} else if Tracer != nil {
+				Tracer.Record("error", err.Error())
 			}
 		}
 		for _, name := range ms.Order {
 			m := ms.Methods[name]
 			if !m.analyzed {
+				if Tracer != nil {
+					owner := "global"
+					if ms.Class != nil {
+						owner = ms.Class.name
+					}
+					Tracer.Record("analyze-method", fmt.Sprintf("%s#%s (%d calls)", owner, name, len(ms.Calls[name])))
+				}
 				err = m.Analyze(ms)
 				if err == nil {
 					m.analyzed = true
 					successes++
+					if Tracer != nil {
+						retType := "nil"
+						if m.ReturnType() != nil {
+							retType = m.ReturnType().String()
+						}
+						Tracer.Record("method-typed", fmt.Sprintf("%s => %s", name, retType))
+					}
+				} else if Tracer != nil {
+					Tracer.Record("error", err.Error())
 				}
 			}
 		}
@@ -893,14 +918,26 @@ func (r *Root) Analyze() error {
 
 	// Pre-pass: register module-level constants before the first pass so
 	// that method bodies inside modules can resolve them.
+	if Tracer != nil {
+		Tracer.SetPhase("module-constants")
+	}
 	for _, mod := range r.TopLevelModules {
+		if Tracer != nil {
+			Tracer.Record("analyze-module-constants", mod.name)
+		}
 		r.analyzeModuleConstants(mod, r.ScopeChain)
 	}
 
 	// First pass, just to pick up method calls
+	if Tracer != nil {
+		Tracer.SetPhase("first-pass (top-level statements)")
+	}
 	if len(r.Statements) > 0 {
 		err := (&Body{Statements: r.Statements}).InferReturnType(r.ScopeChain, nil)
 		if err != nil {
+			if Tracer != nil {
+				Tracer.Record("error", err.Error())
+			}
 			if parseError, ok := err.(*ParseError); ok && parseError.terminal {
 				return err
 			}
@@ -911,7 +948,13 @@ func (r *Root) Analyze() error {
 	// Analyze module body statements (constants, etc.) and module classes (recursive).
 	// Errors from gem-loaded modules are demoted to warnings so they don't block
 	// analysis of user code.
+	if Tracer != nil {
+		Tracer.SetPhase("module-bodies")
+	}
 	for _, mod := range r.TopLevelModules {
+		if Tracer != nil {
+			Tracer.Record("analyze-module", mod.name)
+		}
 		if err := r.analyzeModule(mod, r.ScopeChain); err != nil {
 			if mod.fromGem {
 				fmt.Fprintf(os.Stderr, "warning: module %s: %v (continuing)\n", mod.name, err)
@@ -923,16 +966,28 @@ func (r *Root) Analyze() error {
 
 	// Pre-pass: analyze initialize methods in forward order so that ivar
 	// types are available when child classes reference inherited fields.
+	if Tracer != nil {
+		Tracer.SetPhase("initialize-pre-pass")
+	}
 	r.preAnalyzeInitializers()
 
 	// Work backwards through class declarations so that child classes are
 	// analyzed before parents and method calls on inherited methods propagate
 	// upward
+	if Tracer != nil {
+		Tracer.SetPhase("class-method-sets (reverse order)")
+	}
 	for i := len(r.Classes) - 1; i >= 0; i-- {
 		class := r.Classes[i]
+		if Tracer != nil {
+			Tracer.Record("analyze-class", class.name)
+		}
 		if err := r.AnalyzeMethodSet(class.MethodSet, class.Type()); err != nil {
 			return err
 		}
+	}
+	if Tracer != nil {
+		Tracer.SetPhase("global-method-set")
 	}
 	if err := r.AnalyzeMethodSet(r.MethodSetStack.Peek(), nil); err != nil {
 		return err
@@ -942,11 +997,17 @@ func (r *Root) Analyze() error {
 	// The ReturnType closure only fires when the method is called, but the
 	// compiler emits all class methods. Run after all method sets are analyzed
 	// so constants and instance types are fully resolved.
+	if Tracer != nil {
+		Tracer.SetPhase("class-method-bodies")
+	}
 	r.analyzeClassMethodBodies()
 
 	// Before the second pass, clear cached types on statements that
 	// contain unresolved inner calls (e.g., mixin methods whose block
 	// params couldn't be typed in the first pass).
+	if Tracer != nil {
+		Tracer.SetPhase("second-pass (re-infer top-level)")
+	}
 	r.clearUnresolvedTypes(r.Statements)
 
 	if len(r.Statements) > 0 {
@@ -956,6 +1017,9 @@ func (r *Root) Analyze() error {
 		}
 	}
 
+	if Tracer != nil {
+		Tracer.SetPhase("loose-call-resolution")
+	}
 	for _, calls := range r.MethodSetStack.Peek().Calls {
 		for _, c := range calls {
 			GetType(c, r.ScopeChain, r.MethodSetStack.Peek().Class)
