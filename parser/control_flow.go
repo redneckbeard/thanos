@@ -28,6 +28,13 @@ func (n *Condition) String() string {
 func (n *Condition) Type() types.Type     { return n._type }
 func (n *Condition) SetType(t types.Type) { n._type = t }
 
+func (n *Condition) isBlockGivenGuard() bool {
+	if mc, ok := n.Condition.(*MethodCall); ok && mc.MethodName == "block_given?" {
+		return true
+	}
+	return false
+}
+
 func (n *Condition) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
 	if n.Condition != nil {
 		GetType(n.Condition, locals, class)
@@ -40,8 +47,33 @@ func (n *Condition) TargetType(locals ScopeChain, class *Class) (types.Type, err
 		}
 		return types.NilType, nil
 	}
-	if t2, err2 := GetType(n.False, locals, class); t1 == t2 && err1 == nil && err2 == nil {
+	t2, err2 := GetType(n.False, locals, class)
+	if t1 == t2 && err1 == nil && err2 == nil {
 		return t1, nil
+	}
+	// block_given? guards have legitimately different branch types;
+	// prefer the false (no-block) branch type as it uses concrete types.
+	if n.isBlockGivenGuard() {
+		if err2 == nil && t2 != nil {
+			return t2, nil
+		}
+		if err1 == nil && t1 != nil {
+			return t1, nil
+		}
+	}
+	// When one branch is AnyType or NilType, use the broader type rather
+	// than erroring. This commonly happens in gem code where dynamic
+	// variables produce AnyType on one branch.
+	if err1 == nil && err2 == nil && t1 != nil && t2 != nil {
+		if t1 == types.AnyType || t2 == types.AnyType {
+			return types.AnyType, nil
+		}
+		if t1 == types.NilType {
+			return t2, nil
+		}
+		if t2 == types.NilType {
+			return t1, nil
+		}
 	}
 	return nil, NewParseError(n.Condition, "Different branches of conditional returned different types: %s", n)
 }

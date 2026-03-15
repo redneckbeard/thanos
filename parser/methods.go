@@ -169,6 +169,7 @@ type Method struct {
 	Pos
 	Private     bool
 	ClassMethod bool
+	FromGem     bool
 	analyzed    bool
 	analyzing   bool
 	uncallable  bool
@@ -182,6 +183,7 @@ func NewMethod(name string, r *Root) *Method {
 		Locals:    locals,
 		Scope:     r.ScopeChain.Extend(locals),
 		Root:      r,
+		FromGem:   r.loadingGem,
 	}
 	return r.currentMethod
 }
@@ -299,10 +301,13 @@ func (m *Method) Analyze(ms *MethodSet) error {
 			if doubleSplat != nil && doubleSplat.Type() != nil && param.Kind == Keyword {
 				m.Locals.Set(param.Name, &RubyLocal{_type: doubleSplat.Type().(types.Hash).Value})
 			} else if len(ms.Calls[m.Name]) == 0 {
-				// Method is never called — can't infer param types.
-				// Mark as uncallable and skip without erroring.
-				m.uncallable = true
-				return nil
+				if m.FromGem {
+					// Gem method is never called — can't infer param types.
+					// Mark as uncallable and skip without erroring.
+					m.uncallable = true
+					return nil
+				}
+				return NewParseError(m, "unable to detect type signature of method '%s' because it is never called", name)
 			} else {
 				return NewParseError(m, "unable to detect type signature of method '%s' because it is never called", name)
 			}
@@ -310,16 +315,8 @@ func (m *Method) Analyze(ms *MethodSet) error {
 			m.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
 		}
 	}
-	// Register block param in locals so yield-desugared blk.call() can resolve
-	if m.Block != nil {
-		m.Locals.Set(m.Block.Name, &RubyLocal{_type: types.NewProc()})
-	}
-	if err := m.Body.InferReturnType(m.Scope, ms.Class); err != nil {
+	if err := m.analyzeMethodBody(ms.Class, nil, nil); err != nil {
 		return err
-	}
-	// After analysis, extract yield arg types to populate BlockParam
-	if m.Block != nil && len(m.Block.Params) == 0 {
-		m.extractYieldArgTypes()
 	}
 	for _, c := range ms.Calls[m.Name] {
 		c.Method = m
@@ -336,6 +333,145 @@ func (m *Method) Analyze(ms *MethodSet) error {
 		}
 	}
 	m.analyzed = true
+	return nil
+}
+
+// resetBlockCallTypes clears cached types on blk.call() nodes,
+// block_given? conditionals, and any MethodCall that takes a blk.call()
+// result as an argument (e.g., result << yield(item)). This allows the
+// method body to be re-analyzed with a known block return type.
+func (m *Method) resetBlockCallTypes() {
+	if m.Block == nil {
+		return
+	}
+	blockName := m.Block.Name
+	var walk func(n Node) bool // returns true if n is/contains a block call
+	walk = func(n Node) bool {
+		if n == nil {
+			return false
+		}
+		switch v := n.(type) {
+		case Statements:
+			for _, s := range v {
+				walk(s)
+			}
+		case *Condition:
+			if v.isBlockGivenGuard() {
+				v._type = nil
+			}
+			walk(v.True)
+			if v.False != nil {
+				walk(v.False)
+			}
+		case *AssignmentNode:
+			for _, r := range v.Right {
+				walk(r)
+			}
+		case *MethodCall:
+			isBlockCall := false
+			if v.MethodName == "call" {
+				if ident, ok := v.Receiver.(*IdentNode); ok && ident.Val == blockName {
+					v._type = nil
+					isBlockCall = true
+				}
+			}
+			// Check if any arg is/contains a block call
+			for _, arg := range v.Args {
+				if walk(arg) {
+					// This call uses a block call result; clear its type too
+					v._type = nil
+					isBlockCall = true
+				}
+			}
+			// Walk into block bodies (e.g., items.each { ... yield ... })
+			if v.Block != nil && v.Block.Body != nil {
+				if walk(v.Block.Body.Statements) {
+					// The block body contains a block call — clear the
+					// enclosing each/map call type and block body return type
+					v._type = nil
+					v.Block.Body.ReturnType = nil
+				}
+			}
+			return isBlockCall
+		case *WhileNode:
+			walk(v.Body)
+		case *ForInNode:
+			walk(v.Body)
+		case *InfixExpressionNode:
+			leftHasBlock := walk(v.Left)
+			rightHasBlock := walk(v.Right)
+			if leftHasBlock || rightHasBlock {
+				v._type = nil
+				return true
+			}
+		case *ReturnNode:
+			if v.Val != nil {
+				for _, val := range v.Val {
+					if walk(val) {
+						return true
+					}
+				}
+			}
+		case *ArrayNode:
+			for _, arg := range v.Args {
+				walk(arg)
+			}
+		}
+		return false
+	}
+	walk(m.Body.Statements)
+	// Reset locals whose types derived from block calls (e.g., arrays
+	// refined by << with block call results).
+	m.Locals.Each(func(name string, local Local) {
+		if rl, ok := local.(*RubyLocal); ok {
+			if arr, isArr := rl._type.(types.Array); isArr && arr.Element == types.NilType {
+					rl._type = types.NewArray(types.AnyType)
+				rl.MarkAsRefinable()
+			}
+		}
+	})
+}
+
+// analyzeMethodBody is the shared analysis logic for both instance methods (via
+// Method.Analyze) and class methods (via MethodSpec closures). It sets param
+// types, registers block locals, infers the body return type, and extracts
+// yield arg types.
+//
+// When blockReturnType is non-nil and no callBlock is provided, a synthetic
+// Block is created so that blk.call() dispatch in AnalyzeArguments correctly
+// propagates the block return type (instead of returning NilType).
+func (m *Method) analyzeMethodBody(class *Class, args []types.Type, blockReturnType types.Type) error {
+	for i, param := range m.Params {
+		if i < len(args) {
+			param._type = args[i]
+			m.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
+		}
+	}
+	if m.Block != nil {
+		if blockReturnType != nil {
+			// Clear cached types on blk.call() nodes from any prior analysis
+			// so GetType will re-dispatch through the synthetic Block.
+			m.resetBlockCallTypes()
+			m.Body.ReturnType = nil
+			// Create a synthetic Block so blk.call() takes the *Block path
+			// in AnalyzeArguments, which sets Block.ReturnType properly
+			synBlock := &Block{
+				Body:      &Body{ReturnType: blockReturnType},
+				Scope:     m.Scope.Extend(NewScope("block")),
+				Method:    m,
+				ParamList: m.Block.ParamList,
+			}
+			m.Locals.Set(m.Block.Name, synBlock)
+		} else {
+			m.Locals.Set(m.Block.Name, &RubyLocal{_type: types.NewProc()})
+		}
+	}
+	if err := m.Body.InferReturnType(m.Scope, class); err != nil {
+		return err
+	}
+	if m.Block != nil && len(m.Block.Params) == 0 {
+		m.extractYieldArgTypes()
+	}
 	return nil
 }
 
@@ -375,6 +511,10 @@ func (m *Method) extractYieldArgTypes() {
 						return
 					}
 				}
+				// Check inside method call args (e.g., result << yield(item))
+				for _, arg := range mc.Args {
+					walk(Statements{arg})
+				}
 				// Check inside blocks of method calls
 				if mc.Block != nil {
 					walk(mc.Block.Body.Statements)
@@ -396,8 +536,15 @@ func (m *Method) extractYieldArgTypes() {
 				walk(whileNode.Body)
 			} else if forNode, ok := node.(*ForInNode); ok {
 				walk(forNode.Body)
+			} else if assign, ok := node.(*AssignmentNode); ok {
+				for _, r := range assign.Right {
+					walk(Statements{r})
+				}
 			} else if beginNode, ok := node.(*BeginNode); ok {
 				walk(beginNode.Body)
+			} else if infix, ok := node.(*InfixExpressionNode); ok {
+				walk(Statements{infix.Left})
+				walk(Statements{infix.Right})
 			}
 		}
 	}
@@ -407,7 +554,13 @@ func (m *Method) extractYieldArgTypes() {
 func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeChain) error {
 	for _, p := range method.Params {
 		if p.Default != nil {
-			t, err := GetType(p.Default, ScopeChain{class}, class)
+			// Use the method's scope for default param resolution so that
+			// scoped constants like Diff::LCS::BalancedCallbacks are visible.
+			defaultScope := method.Scope
+			if defaultScope == nil {
+				defaultScope = ScopeChain{class}
+			}
+			t, err := GetType(p.Default, defaultScope, class)
 			if err != nil {
 				return err
 			}
@@ -460,6 +613,9 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 				param, err = method.GetParam(i)
 			}
 			if err != nil {
+				if DebugLevel() >= 1 {
+					fmt.Fprintf(os.Stderr, "DEBUG arg overflow: method=%s params=%d args=%d i=%d file=%s classMethod=%v\n", method.Name, len(method.Params), len(c.Args), i, c.file, method.ClassMethod)
+				}
 				return NewParseError(c, "method '%s' called with %d arguments but %d expected", method.Name, i+1, i).Terminal()
 			}
 			if param.Kind == Splat && !splatSeen {
@@ -482,7 +638,11 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 			}
 		} else {
 			t, err := GetType(arg, scope, class)
-			if err == nil && t != param.Type() {
+			if err == nil && t != param.Type() && param.Type() == types.NilType {
+				// Default was nil — adopt the actual call-site type
+				param._type = t
+				method.Scope.Set(param.Name, &RubyLocal{_type: t})
+			} else if err == nil && t != param.Type() {
 				if param.Kind == Splat {
 					if splat, ok := arg.(*SplatNode); ok {
 						t = splat.Type().(types.Array).Inner()
@@ -643,9 +803,13 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 						blk.Scope.Set(p.Name, &RubyLocal{_type: t})
 					}
 				}
-				err := blk.Body.InferReturnType(blk.Scope, nil)
-				if err != nil {
-					return nil, err
+				// Synthetic blocks (from analyzeMethodBody) have ReturnType
+				// pre-set with no Statements — skip InferReturnType.
+				if blk.Body.ReturnType == nil {
+					err := blk.Body.InferReturnType(blk.Scope, nil)
+					if err != nil {
+						return nil, err
+					}
 				}
 				blk.Method.Block.ReturnType = blk.Body.ReturnType
 				return blk.Body.ReturnType, nil
@@ -782,7 +946,41 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 	} else if c.Receiver == nil {
 		switch c.MethodName {
 		default:
-			method = globalMethodSet.Methods[c.MethodName]
+			// Inside a class context, check class methods and instance methods
+			// before falling back to the global method set. This handles cases
+			// like `def self.patch!` calling peer class method `patch(...)`.
+			if class != nil {
+				for _, m := range class.ClassMethods {
+					if m.Name == c.MethodName {
+						method = m
+						break
+					}
+				}
+				if method == nil {
+					method = class.MethodSet.Methods[c.MethodName]
+				}
+			}
+			// Inside a module class method, check sibling class methods on
+			// the enclosing module (e.g., position_hash called from self.lcs
+			// in module Internals).
+			if method == nil && class == nil {
+				for i := len(scope) - 1; i >= 0; i-- {
+					if mod, ok := scope[i].(*Module); ok {
+						for _, m := range mod.ClassMethods {
+							if m.Name == c.MethodName {
+								method = m
+								break
+							}
+						}
+						if method != nil {
+							break
+						}
+					}
+				}
+			}
+			if method == nil {
+				method = globalMethodSet.Methods[c.MethodName]
+			}
 			if method == nil {
 				return nil, NewParseError(c, "Tried calling method '%s' inside but no such method exists", c.MethodName)
 			}
@@ -826,6 +1024,13 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 				if c.Block.Body != nil {
 					c.Block.Body.InferReturnType(c.Block.Scope, nil)
 				}
+			}
+		}
+		// Ensure block local is registered before body analysis
+		// (may not be set if method was uncallable during AnalyzeMethodSet)
+		if method.Block != nil {
+			if _, ok := method.Locals.Get(method.Block.Name); !ok {
+				method.Locals.Set(method.Block.Name, &RubyLocal{_type: types.NewProc()})
 			}
 		}
 		method.analyzing = true
@@ -883,6 +1088,7 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 						}
 					}
 				} else {
+					p._type = blockArgTypes[i]
 					local := &RubyLocal{_type: blockArgTypes[i]}
 					if arr, ok := blockArgTypes[i].(types.Array); ok && arr.Element == types.AnyType {
 						local.MarkAsRefinable()

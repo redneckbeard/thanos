@@ -5,10 +5,13 @@ go 1.23
 require (
 	github.com/alecthomas/chroma v0.10.0
 	github.com/fatih/color v1.13.0
+	github.com/redneckbeard/thanos/shims v0.0.0
 	github.com/redneckbeard/thanos/stdlib v0.0.0-20220324042549-39b620fb67ac
 	github.com/spf13/cobra v1.3.0
 	golang.org/x/tools v0.1.10
 )
+
+replace github.com/redneckbeard/thanos/shims => ./shims
 
 require (
 	github.com/dlclark/regexp2 v1.4.0 // indirect

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 	"strings"
 
 	"github.com/redneckbeard/thanos/bst"
@@ -48,10 +49,12 @@ type Root struct {
 	cpathDepth          int
 	facades             types.FacadeConfig
 	loadPaths           []string
+	loadingGem          bool // true while parsing gem source files
 }
 
 func NewRoot() *Root {
 	globalMethodSet = NewMethodSet()
+	classMethodSets = make(map[types.Type]*MethodSet)
 	ResetGlobalVars()
 	ResetDuckInterfaces()
 	p := &Root{
@@ -67,6 +70,9 @@ func NewRoot() *Root {
 }
 
 func (r *Root) AddComment(c Comment) {
+	if r.loadingGem {
+		return
+	}
 	r.Comments[c.LineNo] = c
 }
 
@@ -156,69 +162,21 @@ func (r *Root) PopSingletonTarget() {
 	pkgName := strings.ToLower(module.name)
 	if modClass, ok := module._type.(*types.Class); ok {
 		for _, m := range module.ClassMethods {
-			// Skip methods already registered
 			if modClass.HasMethod(m.Name) {
 				continue
 			}
 			m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{module, m.Scope[len(m.Scope)-1]}...)
-			cm := m
 			funcName := pkgName + "." + GoName(m.Name)
-			modClass.Def(m.Name, types.MethodSpec{
-				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
-					if cm.Body.ReturnType == nil {
-						for i, param := range cm.Params {
-							if i < len(args) {
-								param._type = args[i]
-								cm.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
-							}
-						}
-						cm.Body.InferReturnType(cm.Scope, nil)
-					}
-					return cm.ReturnType(), nil
-				},
-				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-					t := types.Transform{
-						Expr: bst.Call(nil, funcName, types.UnwrapTypeExprs(args)...),
-					}
-					if modClass.PackagePath != "" {
-						t.Imports = []string{modClass.PackagePath}
-					}
-					return t
-				},
-			})
+			modClass.Def(m.Name, generateClassMethodSpec(m, funcName, modClass, nil, false))
 		}
 	} else if len(module.ClassMethods) > 0 {
-		// Module didn't have a type yet — create one (same as PopModule)
 		modClass := types.NewClass(module.name, "Object", nil, types.ClassRegistry)
 		modClass.UserDefined = true
 		modClass.Package = pkgName
 		for _, m := range module.ClassMethods {
 			m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{module, m.Scope[len(m.Scope)-1]}...)
-			cm := m
 			funcName := pkgName + "." + GoName(m.Name)
-			modClass.Def(m.Name, types.MethodSpec{
-				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
-					if cm.Body.ReturnType == nil {
-						for i, param := range cm.Params {
-							if i < len(args) {
-								param._type = args[i]
-								cm.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
-							}
-						}
-						cm.Body.InferReturnType(cm.Scope, nil)
-					}
-					return cm.ReturnType(), nil
-				},
-				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-					t := types.Transform{
-						Expr: bst.Call(nil, funcName, types.UnwrapTypeExprs(args)...),
-					}
-					if modClass.PackagePath != "" {
-						t.Imports = []string{modClass.PackagePath}
-					}
-					return t
-				},
-			})
+			modClass.Def(m.Name, generateClassMethodSpec(m, funcName, modClass, nil, false))
 		}
 		module._type = modClass
 	}
@@ -247,12 +205,15 @@ func (r *Root) PushModule(name string, lineNo int) {
 	r.State.Push(InModuleBody)
 	// Check for existing module (reopening)
 	if existing := r.findModule(name); existing != nil {
+		if r.loadingGem {
+			existing.fromGem = true
+		}
 		r.MethodSetStack.Push(existing.MethodSet)
 		r.moduleStack.Push(existing)
 		r.ScopeChain = r.ScopeChain.Extend(existing)
 		return
 	}
-	mod := &Module{name: name, Pos: Pos{lineNo: lineNo}}
+	mod := &Module{name: name, Pos: Pos{lineNo: lineNo}, fromGem: r.loadingGem}
 	ms := NewMethodSet()
 	mod.MethodSet = ms
 	ms.Module = mod
@@ -273,33 +234,9 @@ func (r *Root) PopModule() *Module {
 		modClass.UserDefined = true
 		modClass.Package = pkgName
 		for _, m := range module.ClassMethods {
-			// Insert module scope before method's locals (last element)
 			m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{module, m.Scope[len(m.Scope)-1]}...)
-			cm := m
 			funcName := pkgName + "." + GoName(m.Name)
-			modClass.Def(m.Name, types.MethodSpec{
-				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
-					if cm.Body.ReturnType == nil {
-						for i, param := range cm.Params {
-							if i < len(args) {
-								param._type = args[i]
-								cm.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
-							}
-						}
-						cm.Body.InferReturnType(cm.Scope, nil)
-					}
-					return cm.ReturnType(), nil
-				},
-				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-					t := types.Transform{
-						Expr: bst.Call(nil, funcName, types.UnwrapTypeExprs(args)...),
-					}
-					if modClass.PackagePath != "" {
-						t.Imports = []string{modClass.PackagePath}
-					}
-					return t
-				},
-			})
+			modClass.Def(m.Name, generateClassMethodSpec(m, funcName, modClass, nil, m.FromGem))
 		}
 		module._type = modClass
 	}
@@ -476,11 +413,45 @@ func (r *Root) AddCall(c *MethodCall) {
 			}
 		}
 		return
-	} else if method, found := r.MethodSetStack.Peek().Methods[c.MethodName]; found {
-		if err := method.AnalyzeArguments(r.MethodSetStack.Peek().Class, c, nil); err != nil {
-			r.AddError(err)
-			if e, ok := err.(*ParseError); ok && e.terminal {
-				return
+	} else {
+		// Inside a class method body, check class methods on the current class
+		// before instance methods. This ensures `def self.patch!` calling
+		// `patch(...)` resolves to `def self.patch(...)` instead of `def patch(...)`.
+		var method *Method
+		var cls *Class
+		if r.currentMethod != nil && r.currentMethod.ClassMethod {
+			// Check current class's class methods
+			if r.currentClass != nil {
+				for _, m := range r.currentClass.ClassMethods {
+					if m.Name == c.MethodName {
+						method = m
+						cls = r.currentClass
+						break
+					}
+				}
+			}
+			// Check current module's class methods
+			if method == nil && r.moduleStack.Peek() != nil {
+				for _, m := range r.moduleStack.Peek().ClassMethods {
+					if m.Name == c.MethodName {
+						method = m
+						break
+					}
+				}
+			}
+		}
+		if method == nil {
+			if m, found := r.MethodSetStack.Peek().Methods[c.MethodName]; found {
+				method = m
+				cls = r.MethodSetStack.Peek().Class
+			}
+		}
+		if method != nil && !r.loadingGem {
+			if err := method.AnalyzeArguments(cls, c, nil); err != nil {
+				r.AddError(err)
+				if e, ok := err.(*ParseError); ok && e.terminal {
+					return
+				}
 			}
 		}
 	}
@@ -517,11 +488,47 @@ func (r *Root) analyzeClassMethodBodies() {
 	}
 }
 
+// analyzeModuleConstants registers constants defined in module bodies so
+// they are available before the first pass resolves method bodies.
+func (r *Root) analyzeModuleConstants(mod *Module, parentScope ScopeChain) {
+	modScope := parentScope.Extend(mod)
+	for _, stmt := range mod.Statements {
+		if assign, ok := stmt.(*AssignmentNode); ok {
+			if len(assign.Left) == 1 {
+				if _, ok := assign.Left[0].(*ConstantNode); ok {
+					GetType(assign, modScope, nil)
+				}
+			}
+		}
+	}
+	for _, sub := range mod.Modules {
+		r.analyzeModuleConstants(sub, modScope)
+	}
+}
+
 func (r *Root) analyzeModule(mod *Module, parentScope ScopeChain) error {
 	modScope := parentScope.Extend(mod)
 	if len(mod.Statements) > 0 {
-		if _, err := GetType(mod.Statements, modScope, nil); err != nil {
-			return err
+		// Filter out Method and NoopNode entries from module statements —
+		// methods are analyzed via AnalyzeMethodSet, and analyzing them
+		// here via GetType would fail on unresolved params.
+		var stmts Statements
+		for _, s := range mod.Statements {
+			switch s.(type) {
+			case *Method, *NoopNode:
+				continue
+			default:
+				stmts = append(stmts, s)
+			}
+		}
+		if len(stmts) > 0 {
+			if _, err := GetType(stmts, modScope, nil); err != nil {
+				if mod.fromGem {
+					fmt.Fprintf(os.Stderr, "warning: module %s: %v (continuing)\n", mod.Name(), err)
+				} else {
+					return err
+				}
+			}
 		}
 	}
 	for i := len(mod.Classes) - 1; i >= 0; i-- {
@@ -539,10 +546,35 @@ func (r *Root) analyzeModule(mod *Module, parentScope ScopeChain) error {
 }
 
 func (r *Root) analyzeModuleClassMethods(mod *Module) {
+	// Analyze class methods defined directly on the module (def self.x inside module)
+	for _, m := range mod.ClassMethods {
+		if m.Body.ReturnType == nil && len(m.Body.Statements) > 0 {
+			if m.FromGem {
+				func() {
+					defer func() { recover() }()
+					if err := m.Body.InferReturnType(m.Scope, nil); err != nil {
+						// Analysis failed (e.g. mid-body type mismatch). Try to
+						// determine the return type from the last statement anyway.
+						inferGemMethodReturnType(m)
+					}
+				}()
+			} else {
+				m.Body.InferReturnType(m.Scope, nil)
+			}
+		}
+	}
+	// Analyze class methods on classes within the module
 	for _, cls := range mod.Classes {
 		for _, m := range cls.ClassMethods {
-			if m.Body.ReturnType == nil {
-				m.Body.InferReturnType(m.Scope, cls)
+			if m.Body.ReturnType == nil && len(m.Body.Statements) > 0 {
+				if m.FromGem {
+					func() {
+						defer func() { recover() }()
+						m.Body.InferReturnType(m.Scope, cls)
+					}()
+				} else {
+					m.Body.InferReturnType(m.Scope, cls)
+				}
 			}
 		}
 	}
@@ -550,6 +582,23 @@ func (r *Root) analyzeModuleClassMethods(mod *Module) {
 		r.analyzeModuleClassMethods(sub)
 	}
 }
+
+// inferGemMethodReturnType tries to determine the return type of a gem method
+// when full InferReturnType failed (e.g. due to mid-body type errors). It runs
+// InferReturnType in tolerant mode which continues past mid-body errors.
+func inferGemMethodReturnType(m *Method) {
+	if m.Body == nil || len(m.Body.Statements) == 0 {
+		return
+	}
+	tolerantGetType = true
+	defer func() { tolerantGetType = false }()
+	m.Body.InferReturnType(m.Scope, nil)
+}
+
+// tolerantGetType causes Statements.TargetType to skip errors on individual
+// statements rather than aborting the entire method. Set to true only during
+// gem method analysis.
+var tolerantGetType bool
 
 func (r *Root) preAnalyzeInitializers() {
 	for _, class := range r.Classes {
@@ -842,6 +891,12 @@ func (r *Root) Analyze() error {
 	//      analyze all incompletely analyzed methods
 	//   if method set is fully analyzed, flag as complete
 
+	// Pre-pass: register module-level constants before the first pass so
+	// that method bodies inside modules can resolve them.
+	for _, mod := range r.TopLevelModules {
+		r.analyzeModuleConstants(mod, r.ScopeChain)
+	}
+
 	// First pass, just to pick up method calls
 	if len(r.Statements) > 0 {
 		err := (&Body{Statements: r.Statements}).InferReturnType(r.ScopeChain, nil)
@@ -853,10 +908,16 @@ func (r *Root) Analyze() error {
 	}
 
 
-	// Analyze module body statements (constants, etc.) and module classes (recursive)
+	// Analyze module body statements (constants, etc.) and module classes (recursive).
+	// Errors from gem-loaded modules are demoted to warnings so they don't block
+	// analysis of user code.
 	for _, mod := range r.TopLevelModules {
 		if err := r.analyzeModule(mod, r.ScopeChain); err != nil {
-			return err
+			if mod.fromGem {
+				fmt.Fprintf(os.Stderr, "warning: module %s: %v (continuing)\n", mod.name, err)
+			} else {
+				return err
+			}
 		}
 	}
 

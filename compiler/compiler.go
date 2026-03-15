@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -293,8 +294,19 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 
 	// Compile each top-level module (and nested sub-modules) into packages
 	for _, mod := range p.TopLevelModules {
-		if err := g.compileModulePackages(mod, "", p.ScopeChain, result); err != nil {
-			return nil, err
+		if mod.IsFromGem() {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Fprintf(os.Stderr, "warning: skipping gem module %s compilation: %v\n", mod.Name(), r)
+					}
+				}()
+				g.compileModulePackages(mod, "", p.ScopeChain, result)
+			}()
+		} else {
+			if err := g.compileModulePackages(mod, "", p.ScopeChain, result); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -344,7 +356,17 @@ func moduleHasContent(mod *parser.Module) bool {
 // separate Go packages. parentPath is the filesystem path prefix (e.g., "outer" for
 // a module nested under Outer). Each module with direct content (class methods or
 // classes) gets its own package file.
-func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string, scope parser.ScopeChain, result *CompileResult) error {
+func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string, scope parser.ScopeChain, result *CompileResult) (retErr error) {
+	if mod.IsFromGem() {
+		defer func() {
+			if r := recover(); r != nil {
+				var buf [4096]byte
+				n := runtime.Stack(buf[:], false)
+				fmt.Fprintf(os.Stderr, "warning: gem module %s compilation panic: %v\n%s\n", mod.Name(), r, buf[:n])
+				retErr = nil // don't propagate
+			}
+		}()
+	}
 	pkgName := strings.ToLower(mod.Name())
 	dirPath := pkgName
 	if parentPath != "" {
@@ -365,50 +387,135 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 		modDecls := []ast.Decl{}
 		modG.addConstants(mod.Constants)
 		for _, cls := range mod.Classes {
-			modDecls = append(modDecls, modG.CompileClass(cls)...)
+			if mod.IsFromGem() {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "warning: skipping gem class %s compilation: %v\n", cls.Name(), r)
+						}
+					}()
+					decls := modG.CompileClass(cls)
+					for _, d := range decls {
+						if validateDecl(d) {
+							modDecls = append(modDecls, d)
+						} else {
+							fmt.Fprintf(os.Stderr, "warning: skipping gem class %s decl (invalid Go AST)\n", cls.Name())
+						}
+					}
+				}()
+			} else {
+				modDecls = append(modDecls, modG.CompileClass(cls)...)
+			}
 		}
 		for _, m := range mod.ClassMethods {
-			modDecls = append(modDecls, modG.CompileClassMethod(m, nil)...)
+			if m.FromGem {
+				// Only compile gem methods whose return type was successfully inferred
+				if m.ReturnType() == nil && !m.IsUncallable() {
+					continue
+				}
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "warning: skipping gem method %s.%s (compile panic): %v\n", mod.Name(), m.Name, r)
+						}
+					}()
+					decls := modG.CompileClassMethod(m, nil)
+					// Validate each decl by attempting to format it — drop broken AST
+					for _, d := range decls {
+						if validateDecl(d) {
+							modDecls = append(modDecls, d)
+						} else {
+							fmt.Fprintf(os.Stderr, "warning: skipping gem method %s.%s (invalid Go AST)\n", mod.Name(), m.Name)
+						}
+					}
+				}()
+			} else {
+				modDecls = append(modDecls, modG.CompileClassMethod(m, nil)...)
+			}
 		}
 
-		modFile := &ast.File{
-			Name: ast.NewIdent(pkgName),
-		}
+		if len(modDecls) > 0 {
+			modFile := &ast.File{
+				Name: ast.NewIdent(pkgName),
+			}
 
-		modTopDecls := []ast.Decl{}
-		modImportSpecs := []ast.Spec{}
-		for imp := range modG.Imports {
-			modImportSpecs = append(modImportSpecs, &ast.ImportSpec{Path: bst.String(imp)})
-		}
-		if len(modImportSpecs) > 0 {
-			modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.IMPORT, Specs: modImportSpecs})
-		}
-		for _, spec := range modG.Constants {
-			modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.CONST, Specs: []ast.Spec{spec}})
-		}
-		for _, spec := range modG.GlobalVars {
-			modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.VAR, Specs: []ast.Spec{spec}})
-		}
-		modFile.Decls = append(modTopDecls, modDecls...)
+			modTopDecls := []ast.Decl{}
+			modImportSpecs := []ast.Spec{}
+			for imp := range modG.Imports {
+				modImportSpecs = append(modImportSpecs, &ast.ImportSpec{Path: bst.String(imp)})
+			}
+			if len(modImportSpecs) > 0 {
+				modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.IMPORT, Specs: modImportSpecs})
+			}
+			for _, spec := range modG.Constants {
+				modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.CONST, Specs: []ast.Spec{spec}})
+			}
+			for _, spec := range modG.GlobalVars {
+				modTopDecls = append(modTopDecls, &ast.GenDecl{Tok: token.VAR, Specs: []ast.Spec{spec}})
+			}
+			modFile.Decls = append(modTopDecls, modDecls...)
 
-		modSrc, err := formatAndImports(modFile, token.NewFileSet())
-		if err != nil {
-			return fmt.Errorf("error compiling module %s: %w", mod.Name(), err)
+			var modSrc string
+			var fmtErr error
+			if mod.IsFromGem() {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmtErr = fmt.Errorf("format panic: %v", r)
+						}
+					}()
+					modSrc, fmtErr = formatAndImports(modFile, token.NewFileSet())
+				}()
+			} else {
+				modSrc, fmtErr = formatAndImports(modFile, token.NewFileSet())
+			}
+			if fmtErr != nil {
+				if mod.IsFromGem() {
+					fmt.Fprintf(os.Stderr, "warning: gem module %s format error: %v\n", mod.Name(), fmtErr)
+				} else {
+					return fmt.Errorf("error compiling module %s: %w", mod.Name(), fmtErr)
+				}
+			} else {
+				filePath := dirPath + "/" + pkgName + ".go"
+				result.Files[filePath] = modSrc
+			}
 		}
-		filePath := dirPath + "/" + pkgName + ".go"
-		result.Files[filePath] = modSrc
 	}
 
 	// Recurse into sub-modules
 	for _, sub := range mod.Modules {
 		if moduleHasContent(sub) {
-			if err := g.compileModulePackages(sub, dirPath, scope, result); err != nil {
-				return err
+			if sub.IsFromGem() {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "warning: skipping gem sub-module %s compilation: %v\n", sub.Name(), r)
+						}
+					}()
+					g.compileModulePackages(sub, dirPath, scope, result)
+				}()
+			} else {
+				if err := g.compileModulePackages(sub, dirPath, scope, result); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
 	return nil
+}
+
+// validateDecl checks whether a Go AST declaration can be formatted without
+// panicking. Returns false if format.Node panics or errors (e.g., nil *ast.Ident).
+func validateDecl(d ast.Decl) (valid bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			valid = false
+		}
+	}()
+	var buf bytes.Buffer
+	err := format.Node(&buf, token.NewFileSet(), d)
+	return err == nil
 }
 
 func formatAndImports(f *ast.File, fset *token.FileSet) (string, error) {

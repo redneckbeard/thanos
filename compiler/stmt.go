@@ -59,8 +59,10 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 		}
 	case *parser.Condition:
 		cond := g.CompileExpr(n.Condition)
-		// If the condition is an Optional type, compare against nil
+		// If the condition is an Optional or Proc type, compare against nil
 		if _, isOpt := n.Condition.Type().(types.Optional); isOpt {
+			cond = bst.Binary(cond, token.NEQ, g.it.Get("nil"))
+		} else if _, isProc := n.Condition.Type().(*types.Proc); isProc {
 			cond = bst.Binary(cond, token.NEQ, g.it.Get("nil"))
 		}
 		// Remove conditional entirely if boolean value of cond expr is known at compile time

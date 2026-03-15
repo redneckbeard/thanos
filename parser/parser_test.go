@@ -518,6 +518,60 @@ foo("quux")`,
 			argumentTypes: map[string]types.Type{"x": types.IntType},
 			ReturnType:    types.IntType,
 		},
+		{
+			input: `def foo(bar)
+			  arr = []
+			  arr << bar
+			  arr.each { |x| x + 1 }
+			end
+			foo(5)`,
+			argumentTypes: map[string]types.Type{"bar": types.IntType},
+			ReturnType:    types.NewArray(types.IntType),
+		},
+		// Bracket assignment to an empty array with a typed value should
+		// refine the array element type.
+		{
+			input: `def foo(bar)
+			  arr = []
+			  arr[0] = bar
+			  arr
+			end
+			foo(5)`,
+			argumentTypes: map[string]types.Type{"bar": types.IntType},
+			ReturnType:    types.NewArray(types.IntType),
+		},
+		// Bracket-assignment-refined array should yield correct element
+		// type when iterated, so both branches of a conditional using
+		// elements from that array return the same type.
+		{
+			input: `def foo(bar)
+			  arr = []
+			  arr[0] = bar
+			  arr.each { |x| x + 1 }
+			end
+			foo(5)`,
+			argumentTypes: map[string]types.Type{"bar": types.IntType},
+			ReturnType:    types.NewArray(types.IntType),
+		},
+		// Conditional where both branches assign into an array — the branch
+		// types should match after bracket assignment refinement.
+		{
+			input: `def foo(items)
+			  thresh = []
+			  k = 0
+			  items.each do |j|
+			    if k > 0
+			      thresh[k] = j
+			    else
+			      k = j
+			    end
+			  end
+			  thresh
+			end
+			foo([1, 2, 3])`,
+			argumentTypes: map[string]types.Type{"items": types.NewArray(types.IntType)},
+			ReturnType:    types.NewArray(types.IntType),
+		},
 	}
 
 	for i, tt := range tests {
@@ -1463,7 +1517,7 @@ def foo(bar)
 	}
 	comments := []struct {
 		txt    string
-		Pos
+		lineNo int
 	}{
 		{"# some basic stuff about how this works", 1},
 		{"# tag", 4},
@@ -1472,7 +1526,7 @@ def foo(bar)
 	for _, c := range comments {
 		comment := p.Comments[c.lineNo]
 		if c.txt != comment.Text {
-			t.Fatalf("Comment on line %d did not match. Expected '%s', got '%s'", c.Pos, c.txt, comment.Text)
+			t.Fatalf("Comment on line %d did not match. Expected '%s', got '%s'", c.lineNo, c.txt, comment.Text)
 		}
 	}
 }

@@ -134,6 +134,7 @@ type classRegistry struct {
 	sync.Mutex
 	sync.WaitGroup
 	registry    map[string]*Class
+	builtins    map[string]bool
 	initialized bool
 }
 
@@ -176,6 +177,13 @@ func (cr *classRegistry) RegisterClass(cls *Class) {
 
 func (cr *classRegistry) Initialize() error {
 	cr.Wait()
+	// On first initialization, snapshot built-in class names.
+	if cr.builtins == nil {
+		cr.builtins = make(map[string]bool, len(cr.registry))
+		for name := range cr.registry {
+			cr.builtins[name] = true
+		}
+	}
 	for _, class := range cr.registry {
 		if class.parentName != "" && class.parent == nil {
 			parent, found := cr.registry[class.parentName]
@@ -188,6 +196,25 @@ func (cr *classRegistry) Initialize() error {
 	}
 	cr.initialized = true
 	return nil
+}
+
+// Reset removes all user-defined classes, keeping only built-in ones.
+// Used between test runs to prevent state leakage.
+func (cr *classRegistry) Reset() {
+	if cr.builtins == nil {
+		return
+	}
+	cr.Lock()
+	defer cr.Unlock()
+	for name := range cr.registry {
+		if !cr.builtins[name] {
+			delete(cr.registry, name)
+		}
+	}
+	// Clear parent-child links that reference user-defined classes
+	for _, cls := range cr.registry {
+		cls.children = nil
+	}
 }
 
 func (cr *classRegistry) Names() []string {

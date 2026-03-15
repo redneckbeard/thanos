@@ -49,13 +49,33 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				return nil, err
 			}
 			n.Reassignment = true
-			// Also type the RHS so all nested expressions get typed
+			// Type the RHS — in Ruby, arr[i] = val evaluates to val.
+			var valType types.Type
 			if i < len(n.Right) {
-				if _, err := GetType(n.Right[i], scope, class); err != nil {
+				var err error
+				if valType, err = GetType(n.Right[i], scope, class); err != nil {
 					return nil, err
 				}
+				// Refine empty array element type from the assigned value.
+				// arr[0] = 5 should refine arr from Array(AnyType) to Array(IntType).
+				if valType != nil && valType != types.AnyType {
+					if arr, ok := lhs.Type().(types.Array); ok {
+						if arr.Element == types.AnyType {
+							if ident, ok := lhs.Composite.(*IdentNode); ok {
+								scope.RefineVariableType(ident.Val, types.NewArray(valType))
+							}
+						} else if arr.Element != valType {
+							return nil, NewParseError(n, "Attempted to assign %s member to %s", valType, arr)
+						}
+					}
+				}
 			}
-			typelist = append(typelist, lhs.Type())
+			// Bracket assignment returns the assigned value, not the collection.
+			if valType != nil {
+				typelist = append(typelist, valType)
+			} else {
+				typelist = append(typelist, lhs.Type())
+			}
 			continue
 		case *IVarNode:
 			GetType(lhs, scope, class)
@@ -219,7 +239,7 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				}
 			}
 			local := scope.ResolveVar(localName)
-			if _, ok := local.(*IVar); ok || local == BadLocal {
+			if _, ok := local.(*IVar); ok || local == BadLocal || isMethodCallLocal(local) {
 				newLocal := &RubyLocal{_type: assignedType}
 				// Mark empty arrays and default hashes as refinable for type inference
 				if arrayType, ok := assignedType.(types.Array); ok && arrayType.Element == types.AnyType {
@@ -253,7 +273,7 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 					} else if _, ok := assignedType.(types.Optional); ok {
 						// Allow upgrading to Optional
 					} else {
-						return nil, NewParseError(n, "tried assigning type %s to local %s in scope %s but had previously assigned type %s", assignedType, localName, scope.Name(), local.Type())
+							return nil, NewParseError(n, "tried assigning type %s to local %s in scope %s but had previously assigned type %s", assignedType, localName, scope.Name(), local.Type())
 					}
 				}
 			}
@@ -302,6 +322,14 @@ func resolveNamespaceScope(namespace string, scope ScopeChain) Scope {
 		return current
 	}
 	return nil
+}
+
+// isMethodCallLocal returns true if the local is a *MethodCall (e.g., an
+// ivar accessor returned by Class.Get). Assigning to a name that shadows
+// an accessor should create a new local variable, not update the accessor.
+func isMethodCallLocal(local Local) bool {
+	_, ok := local.(*MethodCall)
+	return ok
 }
 
 func (n *AssignmentNode) Copy() Node {

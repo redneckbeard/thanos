@@ -48,6 +48,9 @@ Error: %s`, program, rubyErr.String())
 		return "", "", fmt.Errorf("Error parsing '"+program+"': ", err)
 	}
 	result, err := Compile(prog)
+	if err != nil {
+		return "", "", fmt.Errorf("Error compiling '"+program+"': %w", err)
+	}
 	mainSrc := result.MainFile()
 
 	// If there are multiple files (module packages), write a temp project directory

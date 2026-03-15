@@ -182,6 +182,7 @@ type Module struct {
 	Modules      []*Module
 	Classes      []*Class
 	ClassMethods []*Method
+	fromGem      bool // true if this module was loaded from a gem source file
 }
 
 func (mod *Module) String() string {
@@ -205,6 +206,7 @@ func (mod *Module) String() string {
 func (mod *Module) Type() types.Type     { return mod._type }
 func (mod *Module) SetType(t types.Type) { mod._type = t }
 func (mod *Module) Copy() Node           { return mod }
+func (mod *Module) IsFromGem() bool      { return mod.fromGem }
 
 func (mod *Module) TargetType(scope ScopeChain, class *Class) (types.Type, error) {
 	GetType(mod.Statements, scope.Extend(mod), nil)
@@ -347,6 +349,116 @@ func (cls *Class) String() string {
 func (cls *Class) Type() types.Type     { return cls._type }
 func (cls *Class) SetType(t types.Type) { cls._type = t }
 
+// generateClassMethodSpec builds a MethodSpec for a class method (def self.x)
+// that can be registered on a types.Class. This is the shared implementation
+// used by BuildType, PopSingletonTarget, and PopModule.
+//
+// Parameters:
+//   - m: the parser Method
+//   - funcName: the Go function name (e.g. "TransformerTransform" or "pkg.Lcs")
+//   - ownerClass: the types.Class that owns this method (for lazy PackagePath access)
+//   - analysisClass: the parser Class for body analysis (nil for module methods)
+//   - fromGem: if true, wrap InferReturnType in panic recovery
+func generateClassMethodSpec(m *Method, funcName string, ownerClass *types.Class, analysisClass *Class, fromGem bool) types.MethodSpec {
+	cm := m
+	methodBlock := m.Block
+	spec := types.MethodSpec{
+		ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+			needsAnalysis := cm.Body.ReturnType == nil
+			if !needsAnalysis && blockReturnType != nil && cm.Block != nil {
+				if local, ok := cm.Locals.Get(cm.Block.Name); ok {
+					if proc, ok := local.Type().(*types.Proc); ok && proc.ReturnType == nil {
+						needsAnalysis = true
+						cm.Body.ReturnType = nil
+					}
+				}
+			}
+			if needsAnalysis {
+				if fromGem {
+					func() {
+						defer func() { recover() }()
+						tolerantGetType = true
+						defer func() { tolerantGetType = false }()
+						err := cm.analyzeMethodBody(analysisClass, args, blockReturnType)
+						if cm.Name == "lcs" {
+							fmt.Fprintf(os.Stderr, "DEBUG spec: %s body RT=%v err=%v args=%v ptr=%p\n", cm.Name, cm.Body.ReturnType, err, args, cm)
+						}
+					}()
+				} else {
+					cm.analyzeMethodBody(analysisClass, args, blockReturnType)
+				}
+			}
+			// Ensure block return type is propagated even when re-analysis
+			// couldn't fully re-type the body (due to GetType memoization).
+			if blockReturnType != nil && cm.Block != nil {
+				cm.Block.ReturnType = blockReturnType
+			}
+			if rt := cm.ReturnType(); rt != nil {
+				// When block return type is known, fix composite types that
+				// contain NilType from the initial blockless analysis pass.
+				if blockReturnType != nil {
+					if arr, ok := rt.(types.Array); ok && arr.Element == types.NilType {
+						rt = types.NewArray(blockReturnType)
+						// Update the method body's return type so the compiled
+						// function signature uses the corrected type.
+						cm.Body.ReturnType = rt
+						// Also fix locals that have stale Array(NilType) from
+						// the initial analysis — the compiler uses local types
+						// for empty array literal element types.
+						cm.Locals.Each(func(name string, local Local) {
+							if rl, ok := local.(*RubyLocal); ok {
+								if la, isArr := rl.Type().(types.Array); isArr && (la.Element == types.NilType || la.Element == types.AnyType) {
+									rl.SetType(rt)
+								}
+							}
+						})
+					}
+				}
+				return rt, nil
+			}
+			if fromGem && len(args) > 0 {
+				return args[0], nil
+			}
+			return nil, nil
+		},
+		TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+			callArgs := types.UnwrapTypeExprs(args)
+			if blk != nil {
+				callArgs = append(callArgs, blk.FuncLit(it))
+			} else if methodBlock != nil {
+				callArgs = append(callArgs, it.Get("nil"))
+			}
+			t := types.Transform{
+				Expr: bst.Call(nil, funcName, callArgs...),
+			}
+			if ownerClass != nil && ownerClass.PackagePath != "" {
+				t.Imports = []string{ownerClass.PackagePath}
+			}
+			return t
+		},
+	}
+	if m.Block != nil {
+		spec.SetBlockArgs(func(receiverType types.Type, args []types.Type) []types.Type {
+			if cm.Body.ReturnType == nil && len(cm.Body.Statements) > 0 {
+				cm.analyzeMethodBody(analysisClass, args, nil)
+			}
+			if cm.Block != nil && len(cm.Block.Params) == 0 {
+				cm.extractYieldArgTypes()
+			}
+			blockArgTypes := []types.Type{}
+			if cm.Block != nil {
+				for _, p := range cm.Block.Params {
+					if p.Type() != nil {
+						blockArgTypes = append(blockArgTypes, p.Type())
+					}
+				}
+			}
+			return blockArgTypes
+		})
+	}
+	return spec
+}
+
 func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 	super := "Object"
 	if cls.Superclass != "" {
@@ -369,36 +481,11 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 	// Register class methods (def self.x) on the Class type itself
 	for _, m := range cls.ClassMethods {
 		m.Scope = append(m.Scope[:len(m.Scope)-1], ScopeChain{cls, m.Scope[len(m.Scope)-1]}...)
-		cm := m // capture for closure
 		funcName := cls.name + GoName(m.Name)
-		class.Def(m.Name, types.MethodSpec{
-			ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
-				if cm.Body.ReturnType == nil {
-					// Lazy analysis: set param types from call args and infer body
-					for i, param := range cm.Params {
-						if i < len(args) {
-							param._type = args[i]
-							cm.Locals.Set(param.Name, &RubyLocal{_type: args[i]})
-						}
-					}
-					cm.Body.InferReturnType(cm.Scope, cls)
-				}
-				return cm.ReturnType(), nil
-			},
-			TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
-				callName := funcName
-				if class.Package != "" {
-					callName = class.Package + "." + funcName
-				}
-				t := types.Transform{
-					Expr: bst.Call(nil, callName, types.UnwrapTypeExprs(args)...),
-				}
-				if class.PackagePath != "" {
-					t.Imports = []string{class.PackagePath}
-				}
-				return t
-			},
-		})
+		if class.Package != "" {
+			funcName = class.Package + "." + funcName
+		}
+		class.Def(m.Name, generateClassMethodSpec(m, funcName, class, cls, false))
 	}
 
 	class.Instance.Def("initialize", types.MethodSpec{
@@ -554,6 +641,9 @@ func (cls *Class) AddStatement(stmt Node) {
 
 //ClassNode implements Scope with these methods
 func (cls *Class) Get(name string) (Local, bool) {
+	if cls == nil {
+		return nil, false
+	}
 	if ivar, ok := cls.ivars[name]; ok && ivar.Readable {
 		// Return a synthetic MethodCall on self so the compiler generates
 		// field access (a.Field) rather than a bare identifier.

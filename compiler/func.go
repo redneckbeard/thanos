@@ -89,6 +89,25 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) []ast.Decl {
 func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix ...string) []ast.Decl {
 	decls := []ast.Decl{}
 
+	if m.Block != nil {
+		funcType := &ast.FuncType{
+			Params: &ast.FieldList{
+				List: g.GetFuncParams(m.Block.Params),
+			},
+			Results: &ast.FieldList{
+				List: g.GetReturnType(m.Block.ReturnType),
+			},
+		}
+		typeSpec := &ast.TypeSpec{
+			Name: g.it.Get(m.Name + strings.Title(m.Block.Name)),
+			Type: funcType,
+		}
+		decls = append(decls, &ast.GenDecl{
+			Tok:   token.TYPE,
+			Specs: []ast.Spec{typeSpec},
+		})
+	}
+
 	g.State.Push(InFuncDeclaration)
 	g.ScopeChain = m.Scope
 	g.pushTracker()
@@ -98,6 +117,12 @@ func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix
 	}()
 
 	params := g.GetFuncParams(m.Params)
+	if m.Block != nil {
+		params = append(params, &ast.Field{
+			Names: []*ast.Ident{g.it.Get(m.Block.Name)},
+			Type:  g.it.Get(m.Name + strings.Title(m.Block.Name)),
+		})
+	}
 
 	signature := &ast.FuncType{
 		Params: &ast.FieldList{

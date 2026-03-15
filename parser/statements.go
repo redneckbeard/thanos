@@ -77,7 +77,9 @@ func (stmts Statements) TargetType(scope ScopeChain, class *Class) (types.Type, 
 		switch s := stmt.(type) {
 		case *AssignmentNode:
 			if t, err := GetType(s, scope, class); err != nil {
-				return nil, err
+				if !tolerantGetType {
+					return nil, err
+				}
 			} else {
 				lastReturnedType = t
 			}
@@ -88,13 +90,17 @@ func (stmts Statements) TargetType(scope ScopeChain, class *Class) (types.Type, 
 			// cached value from the True side. Thus we call TargetType directly on
 			// the node instead of going through GetType.
 			if t, err := GetType(s, scope, class); err != nil {
-				return nil, err
+				if !tolerantGetType {
+					return nil, err
+				}
 			} else {
 				lastReturnedType = t
 			}
 		case *IVarNode:
 			if t, err := GetType(s, scope, class); err != nil {
-				return nil, err
+				if !tolerantGetType {
+					return nil, err
+				}
 			} else {
 				lastReturnedType = t
 			}
@@ -118,15 +124,22 @@ func (stmts Statements) TargetType(scope ScopeChain, class *Class) (types.Type, 
 						walking = false
 					}
 				}
+				var chainErr error
 				for i := len(chain) - 1; i >= 0; i-- {
 					if t, err := GetType(chain[i], scope, class); err != nil {
-						return nil, err
+						chainErr = err
+						break
 					} else {
 						lastReturnedType = t
 					}
 				}
+				if chainErr != nil && !tolerantGetType {
+					return nil, chainErr
+				}
 			} else if t, err := GetType(stmt, scope, class); err != nil {
-				return nil, err
+				if !tolerantGetType {
+					return nil, err
+				}
 			} else {
 				lastReturnedType = t
 			}

@@ -66,6 +66,7 @@ func loadAndRegisterFacades() []types.FacadeNamespace {
 }
 
 func ParseBytes(b []byte) (*Root, error) {
+	types.ClassRegistry.Reset()
 	types.ClassRegistry.Initialize()
 
 	// Load built-in facades so that gauntlet tests and stdin input

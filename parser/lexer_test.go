@@ -46,7 +46,7 @@ func TestLexer(t *testing.T) {
 		{LOGICALAND, "&&"},
 		{PIPE, "|"},
 		{LOGICALOR, "||"},
-		{NEWLINE, "\n"},
+		// No NEWLINE here: || triggers operator continuation (skipNewline)
 		{LT, "<"},
 		{GT, ">"},
 		{LTE, "<="},
