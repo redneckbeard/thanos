@@ -292,6 +292,250 @@ func clearUntypedNode(n Node) {
 	}
 }
 
+// clearAnyTypeNodes resets nodes that have AnyType so they will be re-resolved
+// using the now-refined scope. AnyType is a placeholder from nil declarations
+// (e.g., `k = nil`) that gets refined by later assignments. Nodes resolved
+// before the refinement have stale AnyType cached.
+func clearAnyTypeNode(n Node) bool {
+	if n == nil {
+		return false
+	}
+	cleared := false
+	if n.Type() == types.AnyType {
+		n.SetType(nil)
+		cleared = true
+	}
+	switch node := n.(type) {
+	case *MethodCall:
+		if clearAnyTypeNode(node.Receiver) {
+			cleared = true
+		}
+		for _, arg := range node.Args {
+			if clearAnyTypeNode(arg) {
+				cleared = true
+			}
+		}
+		if node.Block != nil && node.Block.Body != nil {
+			for _, s := range node.Block.Body.Statements {
+				if clearAnyTypeNode(s) {
+					cleared = true
+				}
+			}
+		}
+	case *AssignmentNode:
+		for _, l := range node.Left {
+			if clearAnyTypeNode(l) {
+				cleared = true
+			}
+		}
+		for _, r := range node.Right {
+			if clearAnyTypeNode(r) {
+				cleared = true
+			}
+		}
+	case *InfixExpressionNode:
+		if clearAnyTypeNode(node.Left) {
+			cleared = true
+		}
+		if clearAnyTypeNode(node.Right) {
+			cleared = true
+		}
+	case *Condition:
+		if clearAnyTypeNode(node.Condition) {
+			cleared = true
+		}
+		for _, s := range node.True {
+			if clearAnyTypeNode(s) {
+				cleared = true
+			}
+		}
+		if node.False != nil {
+			if stmts, ok := node.False.(Statements); ok {
+				for _, s := range stmts {
+					if clearAnyTypeNode(s) {
+						cleared = true
+					}
+				}
+			} else {
+				if clearAnyTypeNode(node.False) {
+					cleared = true
+				}
+			}
+		}
+	case *WhileNode:
+		if clearAnyTypeNode(node.Condition) {
+			cleared = true
+		}
+		for _, s := range node.Body {
+			if clearAnyTypeNode(s) {
+				cleared = true
+			}
+		}
+	case *ReturnNode:
+		for _, v := range node.Val {
+			if clearAnyTypeNode(v) {
+				cleared = true
+			}
+		}
+	case Statements:
+		for _, s := range node {
+			if clearAnyTypeNode(s) {
+				cleared = true
+			}
+		}
+	case *CaseNode:
+		if clearAnyTypeNode(node.Value) {
+			cleared = true
+		}
+		for _, w := range node.Whens {
+			for _, c := range w.Conditions {
+				if clearAnyTypeNode(c) {
+					cleared = true
+				}
+			}
+			for _, s := range w.Statements {
+				if clearAnyTypeNode(s) {
+					cleared = true
+				}
+			}
+		}
+	case *BracketAccessNode:
+		if clearAnyTypeNode(node.Composite) {
+			cleared = true
+		}
+		for _, arg := range node.Args {
+			if clearAnyTypeNode(arg) {
+				cleared = true
+			}
+		}
+	}
+	return cleared
+}
+
+// refineCompositeAnyIdents walks the AST and directly updates IdentNodes
+// whose type contains AnyType (e.g., Array(AnyType)) to match the refined
+// type from scope. Unlike clearing + re-evaluating, this approach handles
+// idents nested inside cached nodes (MethodCall, CaseNode, etc.) that would
+// not be re-evaluated on a second GetType pass.
+//
+// Does NOT recurse into blocks — block bodies have their own type inference
+// and idents there refer to the block's scope context.
+func refineCompositeAnyIdents(n Node, scope ScopeChain) bool {
+	if n == nil {
+		return false
+	}
+	refined := false
+	if ident, ok := n.(*IdentNode); ok {
+		if types.ContainsAnyType(ident.Type()) && ident.Type() != types.AnyType {
+			if local := scope.ResolveVar(ident.Val); local != BadLocal && local.Type() != nil && !types.ContainsAnyType(local.Type()) {
+				ident.SetType(local.Type())
+				refined = true
+			}
+		}
+		return refined
+	}
+	switch node := n.(type) {
+	case *MethodCall:
+		if refineCompositeAnyIdents(node.Receiver, scope) {
+			refined = true
+			// Receiver type changed — clear MethodCall type so it re-evaluates
+			// with the refined receiver on the next GetType pass.
+			node.SetType(nil)
+		}
+		for _, arg := range node.Args {
+			if refineCompositeAnyIdents(arg, scope) {
+				refined = true
+			}
+		}
+		// Skip blocks — see doc comment above.
+	case *AssignmentNode:
+		for _, r := range node.Right {
+			if refineCompositeAnyIdents(r, scope) {
+				refined = true
+			}
+		}
+	case *InfixExpressionNode:
+		if refineCompositeAnyIdents(node.Left, scope) {
+			refined = true
+			node.SetType(nil)
+		}
+		if refineCompositeAnyIdents(node.Right, scope) {
+			refined = true
+			node.SetType(nil)
+		}
+	case *Condition:
+		if refineCompositeAnyIdents(node.Condition, scope) {
+			refined = true
+		}
+		for _, s := range node.True {
+			if refineCompositeAnyIdents(s, scope) {
+				refined = true
+			}
+		}
+		if node.False != nil {
+			if stmts, ok := node.False.(Statements); ok {
+				for _, s := range stmts {
+					if refineCompositeAnyIdents(s, scope) {
+						refined = true
+					}
+				}
+			} else {
+				if refineCompositeAnyIdents(node.False, scope) {
+					refined = true
+				}
+			}
+		}
+	case *WhileNode:
+		if refineCompositeAnyIdents(node.Condition, scope) {
+			refined = true
+		}
+		for _, s := range node.Body {
+			if refineCompositeAnyIdents(s, scope) {
+				refined = true
+			}
+		}
+	case *ReturnNode:
+		for _, v := range node.Val {
+			if refineCompositeAnyIdents(v, scope) {
+				refined = true
+			}
+		}
+	case Statements:
+		for _, s := range node {
+			if refineCompositeAnyIdents(s, scope) {
+				refined = true
+			}
+		}
+	case *CaseNode:
+		if refineCompositeAnyIdents(node.Value, scope) {
+			refined = true
+		}
+		for _, w := range node.Whens {
+			for _, c := range w.Conditions {
+				if refineCompositeAnyIdents(c, scope) {
+					refined = true
+				}
+			}
+			for _, s := range w.Statements {
+				if refineCompositeAnyIdents(s, scope) {
+					refined = true
+				}
+			}
+		}
+	case *BracketAccessNode:
+		if refineCompositeAnyIdents(node.Composite, scope) {
+			refined = true
+			node.SetType(nil)
+		}
+		for _, arg := range node.Args {
+			if refineCompositeAnyIdents(arg, scope) {
+				refined = true
+			}
+		}
+	}
+	return refined
+}
+
 func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 	// To guess the right return type of a method, we have to:
 
@@ -307,6 +551,26 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 	// afterward when m.Locals is fully populated.
 
 	lastReturnedType, err := GetType(b.Statements, scope, class)
+
+	// After the first pass, variables declared with nil (AnyType) have been
+	// refined by subsequent assignments. Re-resolve any nodes that still have
+	// AnyType so they pick up the refined types from the scope.
+	anyCleared := false
+	for _, stmt := range b.Statements {
+		if clearAnyTypeNode(stmt) {
+			anyCleared = true
+		}
+		// Directly update ident nodes whose type contains AnyType (e.g.,
+		// Array(AnyType)) to match the refined scope type. This is done
+		// in-place rather than clear+re-evaluate because cached parent
+		// nodes prevent re-evaluation of nested idents.
+		if refineCompositeAnyIdents(stmt, scope) {
+			anyCleared = true
+		}
+	}
+	if anyCleared {
+		lastReturnedType, err = GetType(b.Statements, scope, class)
+	}
 	if err != nil {
 		return err
 	}

@@ -113,6 +113,32 @@ func getGenericType(t reflect.Type, rcvr Type, typeParam string) Type {
 	return nil
 }
 
+// ContainsAnyType returns true if the type is AnyType or contains AnyType
+// as a component (e.g., Array(AnyType), Hash(AnyType, IntType)).
+func ContainsAnyType(t Type) bool {
+	if t == nil {
+		return false
+	}
+	if t == AnyType {
+		return true
+	}
+	switch v := t.(type) {
+	case Array:
+		return ContainsAnyType(v.Element)
+	case Hash:
+		return ContainsAnyType(v.Key) || ContainsAnyType(v.Value)
+	case Optional:
+		return ContainsAnyType(v.Element)
+	case *Tuple:
+		for _, el := range v.Elements {
+			if ContainsAnyType(el) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type Multiple []Type
 
 func (t Multiple) GoType() string    { return "" }
