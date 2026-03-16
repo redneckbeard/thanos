@@ -403,6 +403,10 @@ func (r *Root) AddCall(c *MethodCall) {
 				r.ScopeChain.Set(rcvr.Val, uncalled)
 				return
 			}
+		case *ScopeAccessNode:
+			// Register the call in the target module/class's MethodSet so
+			// that analyzeModuleClassMethods can populate param types later.
+			r.registerScopedCall(rcvr, c)
 		}
 	} else if c.MethodName == "include" && r.currentClass != nil {
 		// Handle `include` immediately during parsing so cls.Includes is
@@ -462,6 +466,152 @@ func (r *Root) AddCall(c *MethodCall) {
 	}
 }
 
+// registerScopedCall registers a method call in the target module or class's
+// MethodSet when the receiver is a ScopeAccessNode (e.g. Diff::LCS::Internals.lcs).
+// This allows analyzeModuleClassMethods to populate param types from calls.
+func (r *Root) registerScopedCall(rcvr *ScopeAccessNode, c *MethodCall) {
+	var targetMod *Module
+	var targetCls *Class
+	func() {
+		defer func() { recover() }()
+		constant, err := rcvr.Walk(r.ScopeChain)
+		if err != nil {
+			if Tracer != nil {
+				Tracer.Record("scoped-call-err", fmt.Sprintf("%s.%s: %v", rcvr, c.MethodName, err))
+			}
+			return
+		}
+		if Tracer != nil {
+			Tracer.Record("scoped-call-resolved", fmt.Sprintf("%s.%s => %T", rcvr, c.MethodName, constant))
+		}
+		switch resolved := constant.(type) {
+		case *Module:
+			targetMod = resolved
+		case *Class:
+			targetCls = resolved
+		}
+	}()
+	if targetMod != nil {
+		targetMod.MethodSet.Calls[c.MethodName] = append(
+			targetMod.MethodSet.Calls[c.MethodName], c)
+		if !r.loadingGem {
+			for _, m := range targetMod.ClassMethods {
+				if m.Name == c.MethodName {
+					m.AnalyzeArguments(nil, c, nil)
+					break
+				}
+			}
+		}
+	} else if targetCls != nil {
+		targetCls.MethodSet.Calls[c.MethodName] = append(
+			targetCls.MethodSet.Calls[c.MethodName], c)
+		if !r.loadingGem {
+			for _, m := range targetCls.ClassMethods {
+				if m.Name == c.MethodName {
+					m.AnalyzeArguments(targetCls, c, nil)
+					break
+				}
+			}
+		}
+	}
+}
+
+// resolveDeferredScopedCalls walks all recorded calls across every MethodSet
+// looking for calls with ScopeAccessNode receivers that weren't resolved during
+// parsing (because the target module/class wasn't loaded yet). Now that all
+// modules are available, it resolves them and registers in the target's Calls map.
+func (r *Root) resolveDeferredScopedCalls() {
+	r.resolveScopedCallsInMethodSet(r.MethodSetStack.Peek())
+	for _, cls := range r.Classes {
+		r.resolveScopedCallsInMethodSet(cls.MethodSet)
+	}
+	for _, mod := range r.TopLevelModules {
+		r.resolveScopedCallsInModule(mod)
+	}
+}
+
+func (r *Root) resolveScopedCallsInModule(mod *Module) {
+	r.resolveScopedCallsInMethodSet(mod.MethodSet)
+	for _, cls := range mod.Classes {
+		r.resolveScopedCallsInMethodSet(cls.MethodSet)
+	}
+	for _, sub := range mod.Modules {
+		r.resolveScopedCallsInModule(sub)
+	}
+}
+
+func (r *Root) resolveScopedCallsInMethodSet(ms *MethodSet) {
+	for _, calls := range ms.Calls {
+		for _, c := range calls {
+			rcvr, ok := c.Receiver.(*ScopeAccessNode)
+			if !ok {
+				continue
+			}
+			var targetMod *Module
+			var targetCls *Class
+			func() {
+				defer func() { recover() }()
+				constant, err := rcvr.Walk(r.ScopeChain)
+				if err != nil {
+					return
+				}
+				switch resolved := constant.(type) {
+				case *Module:
+					targetMod = resolved
+				case *Class:
+					targetCls = resolved
+				}
+			}()
+			if targetMod != nil {
+				// Avoid duplicate registration
+				if !r.callAlreadyRegistered(targetMod.MethodSet, c) {
+					targetMod.MethodSet.Calls[c.MethodName] = append(
+						targetMod.MethodSet.Calls[c.MethodName], c)
+					if Tracer != nil {
+						Tracer.Record("deferred-scoped-call", fmt.Sprintf("%s.%s => module %s", rcvr, c.MethodName, targetMod.name))
+					}
+				}
+				// Eagerly populate param types on the target method
+				for _, m := range targetMod.ClassMethods {
+					if m.Name == c.MethodName {
+						func() {
+							defer func() { recover() }()
+							m.AnalyzeArguments(nil, c, nil)
+						}()
+						break
+					}
+				}
+			} else if targetCls != nil {
+				if !r.callAlreadyRegistered(targetCls.MethodSet, c) {
+					targetCls.MethodSet.Calls[c.MethodName] = append(
+						targetCls.MethodSet.Calls[c.MethodName], c)
+					if Tracer != nil {
+						Tracer.Record("deferred-scoped-call", fmt.Sprintf("%s.%s => class %s", rcvr, c.MethodName, targetCls.name))
+					}
+				}
+				for _, m := range targetCls.ClassMethods {
+					if m.Name == c.MethodName {
+						func() {
+							defer func() { recover() }()
+							m.AnalyzeArguments(targetCls, c, nil)
+						}()
+						break
+					}
+				}
+			}
+		}
+	}
+}
+
+func (r *Root) callAlreadyRegistered(ms *MethodSet, c *MethodCall) bool {
+	for _, existing := range ms.Calls[c.MethodName] {
+		if existing == c {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Root) AddStatement(n Node) {
 	switch n.(type) {
 	case *Method:
@@ -476,13 +626,28 @@ func (r *Root) AddStatement(n Node) {
 func (r *Root) analyzeClassMethodBodies() {
 	// Analyze class methods on top-level classes
 	for _, cls := range r.Classes {
+		Tracer.Record("enter-class", fmt.Sprintf("%s (classMethods=%d)", cls.name, len(cls.ClassMethods)))
 		for _, m := range cls.ClassMethods {
+			Tracer.Record("analyze-args", fmt.Sprintf("%s.%s (%d calls)", cls.name, m.Name, len(cls.MethodSet.Calls[m.Name])))
+			for _, c := range cls.MethodSet.Calls[m.Name] {
+				func() {
+					defer func() { recover() }()
+					m.AnalyzeArguments(cls, c, nil)
+				}()
+			}
 			if m.Body.ReturnType == nil {
+				Tracer.Record("infer-return", fmt.Sprintf("%s.%s (attempting)", cls.name, m.Name))
 				m.Body.InferReturnType(m.Scope, cls)
 			}
+			retStr := "nil"
+			if m.Body.ReturnType != nil {
+				retStr = m.Body.ReturnType.String()
+			}
+			Tracer.Record("method-result", fmt.Sprintf("%s.%s => %s", cls.name, m.Name, retStr))
 		}
 	}
 	// Analyze class methods in module classes (recursive)
+	Tracer.Record("enter-modules", fmt.Sprintf("%d top-level modules", len(r.TopLevelModules)))
 	for _, mod := range r.TopLevelModules {
 		r.analyzeModuleClassMethods(mod)
 	}
@@ -546,27 +711,89 @@ func (r *Root) analyzeModule(mod *Module, parentScope ScopeChain) error {
 }
 
 func (r *Root) analyzeModuleClassMethods(mod *Module) {
-	// Analyze class methods defined directly on the module (def self.x inside module)
-	for _, m := range mod.ClassMethods {
-		if m.Body.ReturnType == nil && len(m.Body.Statements) > 0 {
-			if m.FromGem {
+	// Analyze class methods defined directly on the module (def self.x inside module).
+	// Multi-pass analysis for module class methods. The first pass populates
+	// params and infers return types. Subsequent passes re-analyze gem methods
+	// whose bodies contain calls to sibling methods that may have gained return
+	// types in a previous pass (e.g. lcs calling replace_next_larger).
+	Tracer.Record("enter-module", fmt.Sprintf("%s (classMethods=%d, subModules=%d, classes=%d)", mod.name, len(mod.ClassMethods), len(mod.Modules), len(mod.Classes)))
+	// Two-pass analysis for module class methods. Pass 0 analyzes all methods,
+	// populating return types (tolerant mode for gems). Pass 1 re-analyzes gem
+	// methods with full type resets so that calls to sibling methods (which now
+	// have return types from pass 0) resolve correctly inside the body.
+	for pass := 0; pass < 2; pass++ {
+		Tracer.Record("pass", fmt.Sprintf("%s pass %d", mod.name, pass))
+		for _, m := range mod.ClassMethods {
+			// Populate param types from recorded calls (mirrors Method.Analyze).
+			Tracer.Record("analyze-args", fmt.Sprintf("%s.%s (%d calls, pass %d)", mod.name, m.Name, len(mod.MethodSet.Calls[m.Name]), pass))
+			for _, c := range mod.MethodSet.Calls[m.Name] {
 				func() {
 					defer func() { recover() }()
-					if err := m.Body.InferReturnType(m.Scope, nil); err != nil {
-						// Analysis failed (e.g. mid-body type mismatch). Try to
-						// determine the return type from the last statement anyway.
-						inferGemMethodReturnType(m)
-					}
+					m.AnalyzeArguments(nil, c, nil)
 				}()
-			} else {
-				m.Body.InferReturnType(m.Scope, nil)
 			}
+			// Log param types after AnalyzeArguments
+			for _, p := range m.Params {
+				if p.Type() != nil {
+					Tracer.Record("param-type", fmt.Sprintf("%s.%s param %s => %s", mod.name, m.Name, p.Name, p.Type()))
+				}
+			}
+			if pass > 0 && m.FromGem && len(m.Body.Statements) > 0 {
+				// Re-analyze all gem methods on pass 1: their bodies may have
+				// stale cached types from an earlier analysis pass where sibling
+				// methods weren't yet resolved.
+				Tracer.Record("body-reset", fmt.Sprintf("%s.%s (pass %d, retType=%v, tolerant=%v)", mod.name, m.Name, pass, m.Body.ReturnType, m.Body.tolerantInfer))
+				m.Body.ReturnType = nil
+				m.Body.tolerantInfer = false
+				m.Body.clearCachedTypes()
+				newLocals := NewScope(m.Locals.Name())
+				for _, p := range m.Params {
+					if p.Type() != nil {
+						newLocals.Set(p.Name, &RubyLocal{_type: p.Type()})
+					}
+				}
+				m.Locals = newLocals
+				m.Scope = m.Scope[:len(m.Scope)-1].Extend(newLocals)
+			}
+			if m.Body.ReturnType == nil && len(m.Body.Statements) > 0 {
+				Tracer.Record("infer-return", fmt.Sprintf("%s.%s (attempting, pass %d)", mod.name, m.Name, pass))
+				if m.FromGem {
+					func() {
+						defer func() { recover() }()
+						if err := m.Body.InferReturnType(m.Scope, nil); err != nil {
+							Tracer.Record("infer-fallback", fmt.Sprintf("%s.%s strict failed: %v", mod.name, m.Name, err))
+							inferGemMethodReturnType(m)
+						}
+					}()
+				} else {
+					m.Body.InferReturnType(m.Scope, nil)
+				}
+			}
+			// Log result after inference attempt
+			retStr := "nil"
+			if m.Body.ReturnType != nil {
+				retStr = m.Body.ReturnType.String()
+			}
+			tolerantStr := ""
+			if m.Body.tolerantInfer {
+				tolerantStr = " [tolerant]"
+			}
+			Tracer.Record("method-result", fmt.Sprintf("%s.%s => %s%s", mod.name, m.Name, retStr, tolerantStr))
 		}
 	}
 	// Analyze class methods on classes within the module
 	for _, cls := range mod.Classes {
+		Tracer.Record("enter-module-class", fmt.Sprintf("%s::%s (classMethods=%d)", mod.name, cls.name, len(cls.ClassMethods)))
 		for _, m := range cls.ClassMethods {
+			Tracer.Record("analyze-args", fmt.Sprintf("%s::%s.%s (%d calls)", mod.name, cls.name, m.Name, len(cls.MethodSet.Calls[m.Name])))
+			for _, c := range cls.MethodSet.Calls[m.Name] {
+				func() {
+					defer func() { recover() }()
+					m.AnalyzeArguments(cls, c, nil)
+				}()
+			}
 			if m.Body.ReturnType == nil && len(m.Body.Statements) > 0 {
+				Tracer.Record("infer-return", fmt.Sprintf("%s::%s.%s (attempting)", mod.name, cls.name, m.Name))
 				if m.FromGem {
 					func() {
 						defer func() { recover() }()
@@ -576,6 +803,11 @@ func (r *Root) analyzeModuleClassMethods(mod *Module) {
 					m.Body.InferReturnType(m.Scope, cls)
 				}
 			}
+			retStr := "nil"
+			if m.Body.ReturnType != nil {
+				retStr = m.Body.ReturnType.String()
+			}
+			Tracer.Record("method-result", fmt.Sprintf("%s::%s.%s => %s", mod.name, cls.name, m.Name, retStr))
 		}
 	}
 	for _, sub := range mod.Modules {
@@ -593,6 +825,12 @@ func inferGemMethodReturnType(m *Method) {
 	tolerantGetType = true
 	defer func() { tolerantGetType = false }()
 	m.Body.InferReturnType(m.Scope, nil)
+	if m.Body.ReturnType != nil {
+		m.Body.tolerantInfer = true
+		Tracer.Record("tolerant-result", fmt.Sprintf("%s => %s (errors skipped)", m.Name, m.Body.ReturnType))
+	} else {
+		Tracer.Record("tolerant-result", fmt.Sprintf("%s => nil (still failed)", m.Name))
+	}
 }
 
 // tolerantGetType causes Statements.TargetType to skip errors on individual
@@ -632,43 +870,37 @@ func (r *Root) AnalyzeMethodSet(ms *MethodSet, rcvr types.Type) error {
 	for unanalyzedCount > 0 {
 		successes := 0
 		if initialize, ok := ms.Methods["initialize"]; ok && !initialize.analyzed {
-			if Tracer != nil {
-				owner := "global"
-				if ms.Class != nil {
-					owner = ms.Class.name
-				}
-				Tracer.Record("analyze-method", fmt.Sprintf("%s#initialize (%d calls)", owner, len(ms.Calls["initialize"])))
+			owner := "global"
+			if ms.Class != nil {
+				owner = ms.Class.name
 			}
+			Tracer.Record("analyze-method", fmt.Sprintf("%s#initialize (%d calls)", owner, len(ms.Calls["initialize"])))
 			err = initialize.Analyze(ms)
 			if err == nil {
 				initialize.analyzed = true
 				successes++
-			} else if Tracer != nil {
+			} else {
 				Tracer.Record("error", err.Error())
 			}
 		}
 		for _, name := range ms.Order {
 			m := ms.Methods[name]
 			if !m.analyzed {
-				if Tracer != nil {
-					owner := "global"
-					if ms.Class != nil {
-						owner = ms.Class.name
-					}
-					Tracer.Record("analyze-method", fmt.Sprintf("%s#%s (%d calls)", owner, name, len(ms.Calls[name])))
+				owner := "global"
+				if ms.Class != nil {
+					owner = ms.Class.name
 				}
+				Tracer.Record("analyze-method", fmt.Sprintf("%s#%s (%d calls)", owner, name, len(ms.Calls[name])))
 				err = m.Analyze(ms)
 				if err == nil {
 					m.analyzed = true
 					successes++
-					if Tracer != nil {
-						retType := "nil"
-						if m.ReturnType() != nil {
-							retType = m.ReturnType().String()
-						}
-						Tracer.Record("method-typed", fmt.Sprintf("%s => %s", name, retType))
+					retType := "nil"
+					if m.ReturnType() != nil {
+						retType = m.ReturnType().String()
 					}
-				} else if Tracer != nil {
+					Tracer.Record("method-typed", fmt.Sprintf("%s => %s", name, retType))
+				} else {
 					Tracer.Record("error", err.Error())
 				}
 			}
@@ -918,43 +1150,37 @@ func (r *Root) Analyze() error {
 
 	// Pre-pass: register module-level constants before the first pass so
 	// that method bodies inside modules can resolve them.
-	if Tracer != nil {
-		Tracer.SetPhase("module-constants")
-	}
+	Tracer.SetPhase("module-constants")
 	for _, mod := range r.TopLevelModules {
-		if Tracer != nil {
-			Tracer.Record("analyze-module-constants", mod.name)
-		}
+		Tracer.Record("analyze-module-constants", mod.name)
 		r.analyzeModuleConstants(mod, r.ScopeChain)
 	}
 
 	// First pass, just to pick up method calls
-	if Tracer != nil {
-		Tracer.SetPhase("first-pass (top-level statements)")
-	}
+	Tracer.SetPhase("first-pass (top-level statements)")
 	if len(r.Statements) > 0 {
 		err := (&Body{Statements: r.Statements}).InferReturnType(r.ScopeChain, nil)
 		if err != nil {
-			if Tracer != nil {
-				Tracer.Record("error", err.Error())
-			}
+			Tracer.Record("error", err.Error())
 			if parseError, ok := err.(*ParseError); ok && parseError.terminal {
 				return err
 			}
 		}
 	}
 
+	// Resolve scoped cross-module calls (e.g. Diff::LCS::Internals.lcs) that
+	// couldn't be resolved during parsing because the target module wasn't loaded
+	// yet. Must run before module-bodies so that param types are available when
+	// method bodies are first analyzed.
+	Tracer.SetPhase("deferred-scoped-calls")
+	r.resolveDeferredScopedCalls()
 
 	// Analyze module body statements (constants, etc.) and module classes (recursive).
 	// Errors from gem-loaded modules are demoted to warnings so they don't block
 	// analysis of user code.
-	if Tracer != nil {
-		Tracer.SetPhase("module-bodies")
-	}
+	Tracer.SetPhase("module-bodies")
 	for _, mod := range r.TopLevelModules {
-		if Tracer != nil {
-			Tracer.Record("analyze-module", mod.name)
-		}
+		Tracer.Record("analyze-module", mod.name)
 		if err := r.analyzeModule(mod, r.ScopeChain); err != nil {
 			if mod.fromGem {
 				fmt.Fprintf(os.Stderr, "warning: module %s: %v (continuing)\n", mod.name, err)
@@ -966,29 +1192,21 @@ func (r *Root) Analyze() error {
 
 	// Pre-pass: analyze initialize methods in forward order so that ivar
 	// types are available when child classes reference inherited fields.
-	if Tracer != nil {
-		Tracer.SetPhase("initialize-pre-pass")
-	}
+	Tracer.SetPhase("initialize-pre-pass")
 	r.preAnalyzeInitializers()
 
 	// Work backwards through class declarations so that child classes are
 	// analyzed before parents and method calls on inherited methods propagate
 	// upward
-	if Tracer != nil {
-		Tracer.SetPhase("class-method-sets (reverse order)")
-	}
+	Tracer.SetPhase("class-method-sets (reverse order)")
 	for i := len(r.Classes) - 1; i >= 0; i-- {
 		class := r.Classes[i]
-		if Tracer != nil {
-			Tracer.Record("analyze-class", class.name)
-		}
+		Tracer.Record("analyze-class", class.name)
 		if err := r.AnalyzeMethodSet(class.MethodSet, class.Type()); err != nil {
 			return err
 		}
 	}
-	if Tracer != nil {
-		Tracer.SetPhase("global-method-set")
-	}
+	Tracer.SetPhase("global-method-set")
 	if err := r.AnalyzeMethodSet(r.MethodSetStack.Peek(), nil); err != nil {
 		return err
 	}
@@ -997,17 +1215,13 @@ func (r *Root) Analyze() error {
 	// The ReturnType closure only fires when the method is called, but the
 	// compiler emits all class methods. Run after all method sets are analyzed
 	// so constants and instance types are fully resolved.
-	if Tracer != nil {
-		Tracer.SetPhase("class-method-bodies")
-	}
+	Tracer.SetPhase("class-method-bodies")
 	r.analyzeClassMethodBodies()
 
 	// Before the second pass, clear cached types on statements that
 	// contain unresolved inner calls (e.g., mixin methods whose block
 	// params couldn't be typed in the first pass).
-	if Tracer != nil {
-		Tracer.SetPhase("second-pass (re-infer top-level)")
-	}
+	Tracer.SetPhase("second-pass (re-infer top-level)")
 	r.clearUnresolvedTypes(r.Statements)
 
 	if len(r.Statements) > 0 {
@@ -1017,9 +1231,7 @@ func (r *Root) Analyze() error {
 		}
 	}
 
-	if Tracer != nil {
-		Tracer.SetPhase("loose-call-resolution")
-	}
+	Tracer.SetPhase("loose-call-resolution")
 	for _, calls := range r.MethodSetStack.Peek().Calls {
 		for _, c := range calls {
 			GetType(c, r.ScopeChain, r.MethodSetStack.Peek().Class)

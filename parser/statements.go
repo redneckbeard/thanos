@@ -176,6 +176,120 @@ type Body struct {
 	Statements      Statements
 	ReturnType      types.Type
 	ExplicitReturns []*ReturnNode
+	tolerantInfer   bool // true if ReturnType was set via tolerant (error-skipping) mode
+}
+
+// clearCachedTypes resets cached type information on all statements in the body
+// so they will be re-inferred on the next analysis pass.
+func (b *Body) clearCachedTypes() {
+	for _, stmt := range b.Statements {
+		clearNodeType(stmt)
+	}
+}
+
+func clearNodeType(n Node) {
+	if n == nil {
+		return
+	}
+	n.SetType(nil)
+	switch node := n.(type) {
+	case *MethodCall:
+		clearNodeType(node.Receiver)
+		for _, arg := range node.Args {
+			clearNodeType(arg)
+		}
+		if node.Block != nil && node.Block.Body != nil {
+			for _, s := range node.Block.Body.Statements {
+				clearNodeType(s)
+			}
+		}
+	case *AssignmentNode:
+		for _, l := range node.Left {
+			clearNodeType(l)
+		}
+		for _, r := range node.Right {
+			clearNodeType(r)
+		}
+	case *InfixExpressionNode:
+		clearNodeType(node.Left)
+		clearNodeType(node.Right)
+	case *Condition:
+		clearNodeType(node.Condition)
+		for _, s := range node.True {
+			clearNodeType(s)
+		}
+		if node.False != nil {
+			if stmts, ok := node.False.(Statements); ok {
+				for _, s := range stmts {
+					clearNodeType(s)
+				}
+			} else {
+				clearNodeType(node.False)
+			}
+		}
+	case *WhileNode:
+		clearNodeType(node.Condition)
+		for _, s := range node.Body {
+			clearNodeType(s)
+		}
+	case *ReturnNode:
+		for _, v := range node.Val {
+			clearNodeType(v)
+		}
+	case Statements:
+		for _, s := range node {
+			clearNodeType(s)
+		}
+	case *CaseNode:
+		clearNodeType(node.Value)
+		for _, w := range node.Whens {
+			for _, c := range w.Conditions {
+				clearNodeType(c)
+			}
+			for _, s := range w.Statements {
+				clearNodeType(s)
+			}
+		}
+	}
+}
+
+// clearUntypedNodes resets nodes that have nil cached types so they'll be
+// re-resolved on the next analysis pass. Nodes with valid types are preserved.
+func (b *Body) clearUntypedNodes() {
+	for _, stmt := range b.Statements {
+		clearUntypedNode(stmt)
+	}
+}
+
+func clearUntypedNode(n Node) {
+	if n == nil {
+		return
+	}
+	// Only clear nodes that had no resolved type — these are the ones that
+	// need re-resolution. Nodes with types are left intact.
+	switch node := n.(type) {
+	case *MethodCall:
+		if node.Type() == nil {
+			// Recurse into args and receiver
+			clearUntypedNode(node.Receiver)
+			for _, arg := range node.Args {
+				clearUntypedNode(arg)
+			}
+		}
+	case *AssignmentNode:
+		if node.Type() == nil {
+			for _, l := range node.Left {
+				clearUntypedNode(l)
+			}
+			for _, r := range node.Right {
+				clearUntypedNode(r)
+			}
+		}
+	case Statements:
+		for _, s := range node {
+			clearUntypedNode(s)
+		}
+	}
 }
 
 func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
@@ -228,11 +342,48 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 		for _, r := range b.ExplicitReturns {
 			t, _ := GetType(r, scope, class)
 			if !t.Equals(lastReturnedType) {
-				return NewParseError(r, "Detected conflicting return types %s and %s in method '%s'", lastReturnedType, t, scope.Name())
+				// When one path returns nil and another returns a concrete
+				// type, unify them as Optional(T) instead of erroring.
+				unified := unifyReturnTypes(lastReturnedType, t)
+				if unified != nil {
+					lastReturnedType = unified
+				} else {
+					return NewParseError(r, "Detected conflicting return types %s and %s in method '%s'", lastReturnedType, t, scope.Name())
+				}
 			}
 		}
 	}
 	b.ReturnType = lastReturnedType
+	return nil
+}
+
+// unifyReturnTypes reconciles two differing return types. If one is NilType
+// and the other is concrete, returns Optional(concrete). If one is already
+// Optional and the other is its inner type or NilType, returns the Optional.
+// Returns nil if the types cannot be unified.
+func unifyReturnTypes(a, b types.Type) types.Type {
+	if a == types.NilType && b != types.NilType {
+		if _, ok := b.(types.Optional); ok {
+			return b
+		}
+		return types.NewOptional(b)
+	}
+	if b == types.NilType && a != types.NilType {
+		if _, ok := a.(types.Optional); ok {
+			return a
+		}
+		return types.NewOptional(a)
+	}
+	if optA, ok := a.(types.Optional); ok {
+		if b.Equals(optA.Element) || b == types.NilType {
+			return a
+		}
+	}
+	if optB, ok := b.(types.Optional); ok {
+		if a.Equals(optB.Element) || a == types.NilType {
+			return b
+		}
+	}
 	return nil
 }
 

@@ -72,13 +72,16 @@ type Param struct {
 }
 
 func (p *Param) Type() types.Type {
+	if p._type != nil {
+		if p.Kind == Splat {
+			return types.NewArray(p._type)
+		}
+		return p._type
+	}
 	if p.Default != nil {
 		return p.Default.Type()
 	}
-	if p.Kind == Splat && p._type != nil {
-		return types.NewArray(p._type)
-	}
-	return p._type
+	return nil
 }
 
 func (p *Param) String() string {
@@ -565,7 +568,15 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 				return err
 			}
 			//TODO this is happening in at least three places
-			method.Locals.Set(p.Name, &RubyLocal{_type: t})
+			local := &RubyLocal{_type: t}
+			// When the default is nil, the actual type will come from a
+			// call-site argument or a body reassignment (e.g. `x ||= val`).
+			// Use AnyType so the variable can be refined later.
+			if _, isNil := p.Default.(*NilNode); isNil && t == types.NilType {
+				local._type = types.AnyType
+				local.MarkAsRefinable()
+			}
+			method.Locals.Set(p.Name, local)
 		}
 	}
 

@@ -34,23 +34,38 @@ func (t Optional) ClassName() string { return "Optional" }
 func (t Optional) IsMultiple() bool  { return false }
 
 func (t Optional) HasMethod(method string) bool {
-	return t.Instance.HasMethod(method)
+	if t.Instance.HasMethod(method) {
+		return true
+	}
+	return t.Element.HasMethod(method)
 }
 
 func (t Optional) MethodReturnType(m string, b Type, args []Type) (Type, error) {
-	return t.Instance.MustResolve(m).ReturnType(t, b, args)
+	if t.Instance.HasMethod(m) {
+		return t.Instance.MustResolve(m).ReturnType(t, b, args)
+	}
+	return t.Element.MethodReturnType(m, b, args)
 }
 
 func (t Optional) GetMethodSpec(m string) (MethodSpec, bool) {
-	return t.Instance.Resolve(m)
+	if spec, ok := t.Instance.Resolve(m); ok {
+		return spec, true
+	}
+	return t.Element.GetMethodSpec(m)
 }
 
 func (t Optional) BlockArgTypes(m string, args []Type) []Type {
-	return t.Instance.MustResolve(m).blockArgs(t, args)
+	if t.Instance.HasMethod(m) {
+		return t.Instance.MustResolve(m).blockArgs(t, args)
+	}
+	return t.Element.BlockArgTypes(m, args)
 }
 
 func (t Optional) TransformAST(m string, rcvr ast.Expr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
-	return t.Instance.MustResolve(m).TransformAST(TypeExpr{Expr: rcvr, Type: t}, args, blk, it)
+	if t.Instance.HasMethod(m) {
+		return t.Instance.MustResolve(m).TransformAST(TypeExpr{Expr: rcvr, Type: t}, args, blk, it)
+	}
+	return t.Element.TransformAST(m, rcvr, args, blk, it)
 }
 
 func init() {

@@ -379,10 +379,7 @@ func generateClassMethodSpec(m *Method, funcName string, ownerClass *types.Class
 						defer func() { recover() }()
 						tolerantGetType = true
 						defer func() { tolerantGetType = false }()
-						err := cm.analyzeMethodBody(analysisClass, args, blockReturnType)
-						if cm.Name == "lcs" {
-							fmt.Fprintf(os.Stderr, "DEBUG spec: %s body RT=%v err=%v args=%v ptr=%p\n", cm.Name, cm.Body.ReturnType, err, args, cm)
-						}
+						cm.analyzeMethodBody(analysisClass, args, blockReturnType)
 					}()
 				} else {
 					cm.analyzeMethodBody(analysisClass, args, blockReturnType)
@@ -394,10 +391,22 @@ func generateClassMethodSpec(m *Method, funcName string, ownerClass *types.Class
 				cm.Block.ReturnType = blockReturnType
 			}
 			if rt := cm.ReturnType(); rt != nil {
+				// Fix Array(AnyType) return when args provide element type info.
+				// This handles methods like `lcs(seq1, seq2)` that build empty
+				// arrays and append elements from typed input arrays.
+				if arr, ok := rt.(types.Array); ok && arr.Element == types.AnyType {
+					for _, arg := range args {
+						if argArr, ok := arg.(types.Array); ok && argArr.Element != types.AnyType {
+							rt = types.NewArray(argArr.Element)
+							cm.Body.ReturnType = rt
+							break
+						}
+					}
+				}
 				// When block return type is known, fix composite types that
-				// contain NilType from the initial blockless analysis pass.
+				// contain NilType or AnyType from the initial blockless analysis pass.
 				if blockReturnType != nil {
-					if arr, ok := rt.(types.Array); ok && arr.Element == types.NilType {
+					if arr, ok := rt.(types.Array); ok && (arr.Element == types.NilType || arr.Element == types.AnyType) {
 						rt = types.NewArray(blockReturnType)
 						// Update the method body's return type so the compiled
 						// function signature uses the corrected type.

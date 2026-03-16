@@ -240,12 +240,25 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 			}
 			local := scope.ResolveVar(localName)
 			if _, ok := local.(*IVar); ok || local == BadLocal || isMethodCallLocal(local) {
-				newLocal := &RubyLocal{_type: assignedType}
+				localType := assignedType
+				// When a variable's first assignment is nil (e.g. `k = nil`),
+				// treat it as a declaration with unknown type rather than
+				// locking it to NilType. This allows subsequent assignments
+				// (e.g. `k = some_method(...)`) to refine the type.
+				if local == BadLocal && assignedType == types.NilType {
+					if _, isNil := n.Right[i].(*NilNode); isNil {
+						localType = types.AnyType
+					}
+				}
+				newLocal := &RubyLocal{_type: localType}
 				// Mark empty arrays and default hashes as refinable for type inference
 				if arrayType, ok := assignedType.(types.Array); ok && arrayType.Element == types.AnyType {
 					newLocal.MarkAsRefinable()
 				}
 				if hashType, ok := assignedType.(types.Hash); ok && hashType.HasDefault && hashType.Key == types.AnyType {
+					newLocal.MarkAsRefinable()
+				}
+				if localType == types.AnyType {
 					newLocal.MarkAsRefinable()
 				}
 				scope.Set(localName, newLocal)
@@ -263,7 +276,10 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 					n.Reassignment = true
 				}
 				if local.Type() != assignedType {
-					if arr, ok := local.Type().(types.Array); ok {
+					if rl, ok := local.(*RubyLocal); ok && rl.IsRefinable() && local.Type() == types.AnyType {
+						// Variable was declared with nil (AnyType); refine to the concrete type.
+						rl.SetType(assignedType)
+					} else if arr, ok := local.Type().(types.Array); ok {
 						if arr.Element != assignedType {
 							return nil, NewParseError(n, "Attempted to assign %s member to %s", assignedType, arr)
 						}

@@ -35,6 +35,9 @@ func NewTracer() *AnalysisTracer {
 }
 
 func (t *AnalysisTracer) SetPhase(phase string) {
+	if t == nil {
+		return
+	}
 	t.Events = append(t.Events, TraceEvent{
 		Phase:  phase,
 		Action: "phase",
@@ -45,6 +48,9 @@ func (t *AnalysisTracer) SetPhase(phase string) {
 }
 
 func (t *AnalysisTracer) Enter(action, node string, line int) {
+	if t == nil {
+		return
+	}
 	t.Events = append(t.Events, TraceEvent{
 		Phase:  t.phase,
 		Action: action,
@@ -56,6 +62,9 @@ func (t *AnalysisTracer) Enter(action, node string, line int) {
 }
 
 func (t *AnalysisTracer) Exit(action, node string, line int, typ types.Type) {
+	if t == nil {
+		return
+	}
 	t.depth--
 	if t.depth < 0 {
 		t.depth = 0
@@ -75,6 +84,9 @@ func (t *AnalysisTracer) Exit(action, node string, line int, typ types.Type) {
 }
 
 func (t *AnalysisTracer) Record(action, detail string) {
+	if t == nil {
+		return
+	}
 	t.Events = append(t.Events, TraceEvent{
 		Phase:  t.phase,
 		Action: action,
@@ -84,6 +96,9 @@ func (t *AnalysisTracer) Record(action, detail string) {
 }
 
 func (t *AnalysisTracer) RecordScope(action, name string, scope ScopeChain) {
+	if t == nil {
+		return
+	}
 	names := make([]string, len(scope))
 	for i, s := range scope {
 		names[i] = s.Name()
@@ -129,18 +144,6 @@ func (t *AnalysisTracer) WriteProcess(w io.Writer) {
 			fmt.Fprintln(w, strings.Join(parts, " "))
 		}
 	}
-}
-
-// traceGetType logs entry/exit around GetType when tracer is active.
-func traceGetType(n Node, scope ScopeChain, class *Class) (types.Type, error) {
-	if Tracer == nil {
-		return GetType(n, scope, class)
-	}
-	nodeStr := nodeLabel(n)
-	Tracer.Enter("GetType", nodeStr, n.LineNo())
-	t, err := GetType(n, scope, class)
-	Tracer.Exit("GetType", nodeStr, n.LineNo(), t)
-	return t, err
 }
 
 // nodeLabel returns a concise label for a node suitable for trace output.

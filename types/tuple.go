@@ -24,7 +24,11 @@ func NewTuple(elements []Type) *Tuple {
 func (t *Tuple) GoType() string {
 	parts := make([]string, len(t.Elements))
 	for i, el := range t.Elements {
-		parts[i] = el.GoType()
+		if el != nil {
+			parts[i] = el.GoType()
+		} else {
+			parts[i] = "interface{}"
+		}
 	}
 	return fmt.Sprintf("tuple(%s)", strings.Join(parts, ", "))
 }
