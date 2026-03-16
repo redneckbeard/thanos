@@ -287,6 +287,7 @@ type Class struct {
 	Aliases          []Alias
 	Includes         []string
 	ClassMethods     []*Method
+	DataDefine       bool // true if created via Data.define or Struct.new
 }
 
 // IsUsed reports whether the class was ever instantiated (has calls to

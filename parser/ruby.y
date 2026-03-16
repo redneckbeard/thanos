@@ -1024,11 +1024,6 @@ primary:
   {
     r := root(yylex)
     module := r.PopModule()
-    if parent := r.moduleStack.Peek(); parent != nil {
-      parent.Modules = append(parent.Modules, module)
-    } else {
-      r.TopLevelModules = append(r.TopLevelModules, module)
-    }
     // Pop intermediate modules from :: chains (e.g., Diff and LCS in Diff::LCS::Internals)
     for i := 0; i < r.cpathDepth; i++ {
       r.PopIntermediateModule()

@@ -304,6 +304,25 @@ func (m *Method) Analyze(ms *MethodSet) error {
 			if doubleSplat != nil && doubleSplat.Type() != nil && param.Kind == Keyword {
 				m.Locals.Set(param.Name, &RubyLocal{_type: doubleSplat.Type().(types.Hash).Value})
 			} else if len(ms.Calls[m.Name]) == 0 {
+				if ms.Class != nil && ms.Class.DataDefine && m.Name == "initialize" {
+					// Data.define class whose initialize is never called.
+					// Use AnyType for all fields so the class can compile
+					// with interface{} types. Fields are refined later if
+					// concrete .new() calls are discovered.
+					for _, p := range m.Params {
+						if p.Type() == nil {
+							p._type = types.AnyType
+							m.Locals.Set(p.Name, &RubyLocal{_type: types.AnyType})
+						}
+					}
+					for _, ivar := range ms.Class.IVars(nil) {
+						if ivar.Type() == nil {
+							ivar._type = types.AnyType
+						}
+					}
+					// Don't mark as uncallable — let the body be analyzed.
+					break
+				}
 				if m.FromGem {
 					// Gem method is never called — can't infer param types.
 					// Mark as uncallable and skip without erroring.
@@ -1104,6 +1123,19 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 					if arr, ok := blockArgTypes[i].(types.Array); ok && arr.Element == types.AnyType {
 						local.MarkAsRefinable()
 					}
+					if hash, ok := blockArgTypes[i].(types.Hash); ok {
+						// Mark hashes with AnyType key/value as refinable so bracket
+						// access and element mutation (<<, push) can refine them.
+						needsRefine := hash.Key == types.AnyType || hash.Value == types.AnyType
+						if !needsRefine {
+							if arr, ok := hash.Value.(types.Array); ok && arr.Element == types.AnyType {
+								needsRefine = true
+							}
+						}
+						if needsRefine {
+							local.MarkAsRefinable()
+						}
+					}
 					blockScope.Set(p.Name, local)
 				}
 			}
@@ -1112,10 +1144,12 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 				return nil, err
 			}
 			blockRetType = c.Block.Body.ReturnType
-			// Propagate refined block param types back to argTypes.
-			// When a block param was refinable (e.g. empty array) and got
-			// refined during block body inference, update the corresponding
-			// method arg type so MethodReturnType sees the refined type.
+			// Propagate refined block param types back to argTypes and receiverType.
+			// When a block param was refinable (e.g. empty array or hash with
+			// AnyType) and got refined during block body inference, update the
+			// corresponding method arg type so MethodReturnType sees the refined
+			// type. For methods like tap where the block param IS the receiver,
+			// also update receiverType so the return type reflects the refinement.
 			for i, p := range c.Block.Params {
 				if p.Kind == Destructured {
 					continue
@@ -1128,6 +1162,12 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 				origType := blockArgTypes[i]
 				if refined == nil || refined == origType {
 					continue
+				}
+				// If this block param's original type matched the receiver,
+				// update receiverType so MethodReturnType sees the refinement.
+				// This handles methods like tap where the block receives the receiver.
+				if origType == receiverType {
+					receiverType = refined
 				}
 				// Find the argType that matches the original unrefined type
 				for j, at := range argTypes {

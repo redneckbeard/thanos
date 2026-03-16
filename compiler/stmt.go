@@ -58,6 +58,9 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 			})
 		}
 	case *parser.Condition:
+		if n.TypeGuard {
+			return // runtime type check — redundant in Go
+		}
 		cond := g.CompileExpr(n.Condition)
 		// If the condition is an Optional or Proc type, compare against nil
 		if _, isOpt := n.Condition.Type().(types.Optional); isOpt {

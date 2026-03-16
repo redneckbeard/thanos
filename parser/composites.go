@@ -240,6 +240,7 @@ func (n *BracketAccessNode) TargetType(locals ScopeChain, class *Class) (types.T
 				refined := types.NewDefaultHash(keyType, comp.Value)
 				if ident, ok := n.Composite.(*IdentNode); ok {
 					locals.RefineVariableType(ident.Val, refined)
+					ident.SetType(refined) // Update cached type for downstream refinements
 				}
 			}
 		}

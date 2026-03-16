@@ -65,7 +65,9 @@ func (t Optional) TransformAST(m string, rcvr ast.Expr, args []TypeExpr, blk *Bl
 	if t.Instance.HasMethod(m) {
 		return t.Instance.MustResolve(m).TransformAST(TypeExpr{Expr: rcvr, Type: t}, args, blk, it)
 	}
-	return t.Element.TransformAST(m, rcvr, args, blk, it)
+	// Dereference the pointer so the inner type's method sees a value receiver
+	deref := &ast.StarExpr{X: rcvr}
+	return t.Element.TransformAST(m, deref, args, blk, it)
 }
 
 func init() {

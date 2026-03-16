@@ -50,6 +50,7 @@ type Root struct {
 	facades             types.FacadeConfig
 	loadPaths           []string
 	loadingGem          bool // true while parsing gem source files
+	dataDefineNames     map[string]bool // fully-qualified names assigned via Data.define
 }
 
 func NewRoot() *Root {
@@ -58,12 +59,13 @@ func NewRoot() *Root {
 	ResetGlobalVars()
 	ResetDuckInterfaces()
 	p := &Root{
-		State:          &Stack[State]{},
-		StringStack:    &Stack[*StringNode]{},
-		moduleStack:    &Stack[*Module]{},
-		MethodSetStack: &Stack[*MethodSet]{stack: []*MethodSet{globalMethodSet}},
-		Comments:       make(map[int]Comment),
-		ScopeChain:     ScopeChain{NewScope(Main)},
+		State:           &Stack[State]{},
+		StringStack:     &Stack[*StringNode]{},
+		moduleStack:     &Stack[*Module]{},
+		MethodSetStack:  &Stack[*MethodSet]{stack: []*MethodSet{globalMethodSet}},
+		Comments:        make(map[int]Comment),
+		ScopeChain:      ScopeChain{NewScope(Main)},
+		dataDefineNames: make(map[string]bool),
 	}
 	types.ClassRegistry.Initialize()
 	return p
@@ -245,6 +247,32 @@ func (r *Root) PopModule() *Module {
 	r.ScopeChain = r.ScopeChain[:len(r.ScopeChain)-1]
 	r.ScopeChain.Set(module.Name(), module)
 	module.Parent = r.moduleStack.Peek()
+
+	// Register in parent's Modules list if not already there (reopened modules are already registered)
+	if parent := r.moduleStack.Peek(); parent != nil {
+		found := false
+		for _, m := range parent.Modules {
+			if m == module {
+				found = true
+				break
+			}
+		}
+		if !found {
+			parent.Modules = append(parent.Modules, module)
+		}
+	} else {
+		found := false
+		for _, m := range r.TopLevelModules {
+			if m == module {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.TopLevelModules = append(r.TopLevelModules, module)
+		}
+	}
+
 	return module
 }
 
@@ -738,10 +766,11 @@ func (r *Root) analyzeModuleClassMethods(mod *Module) {
 					Tracer.Record("param-type", fmt.Sprintf("%s.%s param %s => %s", mod.name, m.Name, p.Name, p.Type()))
 				}
 			}
-			if pass > 0 && m.FromGem && len(m.Body.Statements) > 0 {
-				// Re-analyze all gem methods on pass 1: their bodies may have
-				// stale cached types from an earlier analysis pass where sibling
-				// methods weren't yet resolved.
+			if pass > 0 && m.FromGem && len(m.Body.Statements) > 0 && (m.Body.tolerantInfer || m.Body.ReturnType == nil) {
+				// Re-analyze gem methods that were inferred via tolerant mode
+				// (errors skipped) or failed entirely. Methods that resolved
+				// cleanly are left alone — resetting them causes cascading
+				// failures when demand-driven callers need their return types.
 				Tracer.Record("body-reset", fmt.Sprintf("%s.%s (pass %d, retType=%v, tolerant=%v)", mod.name, m.Name, pass, m.Body.ReturnType, m.Body.tolerantInfer))
 				m.Body.ReturnType = nil
 				m.Body.tolerantInfer = false
@@ -913,6 +942,70 @@ func (r *Root) AnalyzeMethodSet(ms *MethodSet, rcvr types.Type) error {
 	return err
 }
 
+// applyDataDefineFlags walks all classes and sets DataDefine=true for any class
+// whose fully-qualified name was recorded in dataDefineNames. This handles gem
+// classes where the Data.define assignment was lost from root.Statements due to
+// nested loadFile calls but was captured earlier by recordDataDefineNames.
+func (r *Root) applyDataDefineFlags() {
+	if len(r.dataDefineNames) == 0 {
+		return
+	}
+	// Check root-level classes
+	for _, cls := range r.Classes {
+		if r.dataDefineNames[cls.Name()] {
+			cls.DataDefine = true
+		}
+	}
+	// Check classes inside modules (recursively)
+	var walkModule func(mod *Module, prefix string)
+	walkModule = func(mod *Module, prefix string) {
+		fqPrefix := prefix + mod.Name()
+		for _, cls := range mod.Classes {
+			fqn := fqPrefix + "::" + cls.Name()
+			if r.dataDefineNames[fqn] {
+				cls.DataDefine = true
+			}
+		}
+		for _, sub := range mod.Modules {
+			walkModule(sub, fqPrefix+"::")
+		}
+	}
+	for _, mod := range r.TopLevelModules {
+		walkModule(mod, "")
+	}
+}
+
+// recordDataDefineNames scans root.Statements for `X = Data.define(...)` or
+// `X = Struct.new(...)` assignments and records the fully-qualified constant name.
+// Called from loadFile after parsing, before require-stripping can lose statements.
+func (r *Root) recordDataDefineNames() {
+	for _, stmt := range r.Statements {
+		assign, ok := stmt.(*AssignmentNode)
+		if !ok || len(assign.Left) != 1 || len(assign.Right) != 1 {
+			continue
+		}
+		constNode, isConst := assign.Left[0].(*ConstantNode)
+		if !isConst {
+			continue
+		}
+		call, isCall := assign.Right[0].(*MethodCall)
+		if !isCall {
+			continue
+		}
+		rcvr, isConstRcvr := call.Receiver.(*ConstantNode)
+		isStructNew := isConstRcvr && rcvr.Val == "Struct" && call.MethodName == "new"
+		isDataDefine := isConstRcvr && rcvr.Val == "Data" && call.MethodName == "define"
+		if !isStructNew && !isDataDefine {
+			continue
+		}
+		fqn := constNode.Val
+		if constNode.Namespace != "" {
+			fqn = constNode.Namespace + "::" + constNode.Val
+		}
+		r.dataDefineNames[fqn] = true
+	}
+}
+
 func (r *Root) expandStructDefinitions() {
 	var remaining []Node
 	for _, stmt := range r.Statements {
@@ -951,6 +1044,7 @@ func (r *Root) expandStructDefinitions() {
 		}
 		r.PushClass(className, assign.LineNo())
 		cls := r.currentClass
+		cls.DataDefine = true
 		// Create attr_accessor for each symbol argument
 		// (Data.define is immutable in Ruby, but we use attr_accessor for Go compatibility)
 		for _, arg := range call.Args {
@@ -1132,6 +1226,9 @@ func rewriteNode(n Node, fields map[string]bool, cls *Class) Node {
 
 func (r *Root) Analyze() error {
 	r.expandStructDefinitions()
+	// Apply DataDefine flag to classes whose Data.define/Struct.new assignments
+	// were recorded during loadFile but lost before expandStructDefinitions ran.
+	r.applyDataDefineFlags()
 	if len(r.Errors) > 0 {
 		for _, err := range r.Errors {
 			if parseError, ok := err.(*ParseError); ok && parseError.terminal {

@@ -29,11 +29,11 @@ func (n *InfixExpressionNode) TargetType(locals ScopeChain, class *Class) (types
 	if err != nil {
 		return nil, err
 	}
-	// When the LHS type is nil (e.g., Data.define field with unknown type)
-	// and the RHS type is known, infer the LHS type from the RHS.
-	// This handles patterns like `action == "+"` where action's type is
-	// only discoverable from usage context.
-	if tl == nil && tr != nil {
+	// When the LHS type is nil or AnyType (e.g., Data.define field with
+	// unknown type) and the RHS type is known, infer the LHS type from the
+	// RHS. This handles patterns like `action == "+"` where action's type
+	// is only discoverable from usage context.
+	if (tl == nil || tl == types.AnyType) && tr != nil && tr != types.AnyType {
 		n.Left.SetType(tr)
 		tl = tr
 	}

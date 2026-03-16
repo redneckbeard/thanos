@@ -12,6 +12,7 @@ type Condition struct {
 	True       Statements
 	False      Node
 	elseBranch bool
+	TypeGuard  bool // true if this is a `fail/raise unless is_a?` pattern (skip in compilation)
 	Pos
 	_type      types.Type
 }
@@ -35,7 +36,137 @@ func (n *Condition) isBlockGivenGuard() bool {
 	return false
 }
 
+// isTypeGuard checks if this Condition is a `fail/raise "..." unless type_check`
+// pattern. If so, it extracts type information from is_a?/nil? calls and refines
+// local variable types. Returns true if the pattern was recognized and handled.
+func (n *Condition) isTypeGuard(locals ScopeChain) bool {
+	// Must be: fail/raise "..." unless condition
+	// AST: Condition{Condition: Not(check), True: [fail/raise(string)]}
+	if n.False != nil || len(n.True) != 1 {
+		return false
+	}
+	call, isCall := n.True[0].(*MethodCall)
+	if !isCall || call.Receiver != nil {
+		return false
+	}
+	if call.MethodName != "fail" && call.MethodName != "raise" {
+		return false
+	}
+	not, isNot := n.Condition.(*NotExpressionNode)
+	if !isNot {
+		return false
+	}
+	// Walk the inner expression to find type guards on AnyType locals.
+	guards := extractTypeGuards(not.Arg)
+	if len(guards) == 0 {
+		return false
+	}
+	// Apply type refinements.
+	for _, g := range guards {
+		local, found := locals.Get(g.name)
+		if !found || (local.Type() != types.AnyType && local.Type() != nil) {
+			continue
+		}
+		t := g.resolvedType
+		if g.nullable {
+			t = types.NewOptional(t)
+		}
+		locals.Set(g.name, &RubyLocal{_type: t})
+	}
+	return true
+}
+
+// typeGuardInfo holds the result of analyzing a single is_a?/nil? guard.
+type typeGuardInfo struct {
+	name         string     // local variable name
+	resolvedType types.Type // type from is_a?(X)
+	nullable     bool       // true if nil? was also present (nil? || is_a?)
+}
+
+// extractTypeGuards walks a boolean expression tree of is_a?/nil? calls.
+// Returns nil if any part of the expression is not a type guard.
+func extractTypeGuards(expr Node) []typeGuardInfo {
+	switch e := expr.(type) {
+	case *MethodCall:
+		if e.Receiver == nil {
+			return nil
+		}
+		ident, isIdent := e.Receiver.(*IdentNode)
+		if !isIdent {
+			return nil
+		}
+		switch e.MethodName {
+		case "is_a?", "kind_of?":
+			if len(e.Args) != 1 {
+				return nil
+			}
+			constNode, isConst := e.Args[0].(*ConstantNode)
+			if !isConst {
+				return nil
+			}
+			cls, err := types.ClassRegistry.Get(constNode.Val)
+			if err != nil {
+				return nil
+			}
+			return []typeGuardInfo{{name: ident.Val, resolvedType: cls.Instance.(types.Type)}}
+		case "nil?":
+			return []typeGuardInfo{{name: ident.Val, nullable: true}}
+		}
+		return nil
+	case *InfixExpressionNode:
+		if e.Operator != "||" && e.Operator != "&&" {
+			return nil
+		}
+		left := extractTypeGuards(e.Left)
+		if left == nil {
+			return nil
+		}
+		right := extractTypeGuards(e.Right)
+		if right == nil {
+			return nil
+		}
+		// Merge: for `x.nil? || x.is_a?(Integer)`, combine into one entry.
+		merged := mergeTypeGuards(append(left, right...))
+		return merged
+	}
+	return nil
+}
+
+// mergeTypeGuards combines guards for the same variable. For example,
+// {name: "x", nullable: true} + {name: "x", resolvedType: IntType} →
+// {name: "x", resolvedType: IntType, nullable: true}.
+func mergeTypeGuards(guards []typeGuardInfo) []typeGuardInfo {
+	byName := make(map[string]*typeGuardInfo)
+	for i := range guards {
+		g := &guards[i]
+		if existing, ok := byName[g.name]; ok {
+			if g.resolvedType != nil {
+				existing.resolvedType = g.resolvedType
+			}
+			if g.nullable {
+				existing.nullable = true
+			}
+		} else {
+			byName[g.name] = g
+		}
+	}
+	var result []typeGuardInfo
+	for _, g := range byName {
+		if g.resolvedType != nil {
+			result = append(result, *g)
+		}
+	}
+	return result
+}
+
 func (n *Condition) TargetType(locals ScopeChain, class *Class) (types.Type, error) {
+	// Detect `fail/raise "..." unless x.is_a?(Type)` patterns — runtime
+	// type checks that are redundant in Go. Refine local types and treat
+	// the entire statement as a no-op.
+	if n.isTypeGuard(locals) {
+		n.TypeGuard = true
+		return types.NilType, nil
+	}
 	if n.Condition != nil {
 		GetType(n.Condition, locals, class)
 	}

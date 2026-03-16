@@ -12,6 +12,9 @@ func (g *GoProgram) CompileBlockStmt(node parser.Node) *ast.BlockStmt {
 	defer g.BlockStack.Pop()
 	switch n := node.(type) {
 	case *parser.Condition:
+		if n.TypeGuard {
+			return blockStmt // runtime type check — redundant in Go
+		}
 		if n.False != nil {
 			g.CompileStmt(n)
 			return blockStmt

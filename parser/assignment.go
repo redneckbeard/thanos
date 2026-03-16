@@ -278,7 +278,13 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				if local.Type() != assignedType {
 					if rl, ok := local.(*RubyLocal); ok && rl.IsRefinable() && local.Type() == types.AnyType {
 						// Variable was declared with nil (AnyType); refine to the concrete type.
-						rl.SetType(assignedType)
+						// Unwrap Optional — the variable was already nil-capable from
+						// its declaration, so Optional(T) collapses to T.
+						refined := assignedType
+						if opt, ok := assignedType.(types.Optional); ok {
+							refined = opt.Element
+						}
+						rl.SetType(refined)
 					} else if arr, ok := local.Type().(types.Array); ok {
 						if arr.Element != assignedType {
 							return nil, NewParseError(n, "Attempted to assign %s member to %s", assignedType, arr)

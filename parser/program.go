@@ -18,15 +18,6 @@ import (
 // NoGems disables gem source resolution via system Ruby. Facades still work.
 var NoGems bool
 
-// deferredGemLoad records a gem require that failed on first attempt and should
-// be retried after all other files are processed (earlier files may create the
-// modules that later files need).
-type deferredGemLoad struct {
-	name    string // require name (e.g., "diff/lcs/internals")
-	path    string // absolute path to the .rb file
-	lastErr error  // error from most recent attempt
-}
-
 // builtinRequires lists require names that thanos handles natively via its
 // type system. These are silently stripped without needing a facade or gem source.
 var builtinRequires = map[string]bool{
@@ -329,12 +320,15 @@ func loadFile(absPath string, root *Root, loaded map[string]bool) error {
 		return pErr
 	}
 
+	// Record Data.define / Struct.new assignments before require-stripping
+	// can lose them (nested loadFile calls overwrite root.Statements).
+	root.recordDataDefineNames()
+
 	// Scan statements for require/require_relative calls, resolve and load them,
 	// then strip them from the Root. Gem files that fail to load are deferred and
 	// retried after all other files are processed.
 	dir := filepath.Dir(absPath)
 	var remaining []Node
-	var deferred []deferredGemLoad
 	for _, stmt := range root.Statements {
 		if call, ok := stmt.(*MethodCall); ok && call.Receiver == nil {
 			switch call.MethodName {
@@ -377,14 +371,14 @@ func loadFile(absPath string, root *Root, loaded map[string]bool) error {
 						}
 						// No facade — try resolving via Ruby load paths
 						if gemPath := resolveGemRequire(name, root.loadPaths); gemPath != "" {
-							fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
-							savedErrors := append([]error{}, root.Errors...)
-							if err := safeLoadFile(gemPath, root, loaded); err != nil {
-								// Defer for retry — earlier files may create modules this file needs.
-								deferred = append(deferred, deferredGemLoad{name: name, path: gemPath})
-								delete(loaded, gemPath)
+							if !loaded[gemPath] {
+								fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
+								savedErrors := append([]error{}, root.Errors...)
+								if err := safeLoadFile(gemPath, root, loaded); err != nil {
+									fmt.Fprintf(os.Stderr, "warning: require '%s' (%s): load failed:\n%v\n", name, gemPath, err)
+								}
+								root.Errors = savedErrors
 							}
-							root.Errors = savedErrors
 							continue // strip
 						}
 						return fmt.Errorf("line %d: cannot locate source for require '%s' (no facade and no gem source found)", call.LineNo(), name)
@@ -395,29 +389,6 @@ func loadFile(absPath string, root *Root, loaded map[string]bool) error {
 		remaining = append(remaining, stmt)
 	}
 	root.Statements = remaining
-
-	// Retry deferred gem loads — earlier files may have created modules that
-	// later files need. Loop until no more progress is made.
-	for len(deferred) > 0 {
-		var stillDeferred []deferredGemLoad
-		for _, d := range deferred {
-			savedErrors := append([]error{}, root.Errors...)
-			if err := safeLoadFile(d.path, root, loaded); err != nil {
-				d.lastErr = err
-				stillDeferred = append(stillDeferred, d)
-				delete(loaded, d.path)
-			}
-			root.Errors = savedErrors
-		}
-		if len(stillDeferred) == len(deferred) {
-			// No progress — warn about remaining failures and stop.
-			for _, d := range stillDeferred {
-				fmt.Fprintf(os.Stderr, "warning: require '%s': %v (continuing without this dependency)\n", d.name, d.lastErr)
-			}
-			break
-		}
-		deferred = stillDeferred
-	}
 
 	return nil
 }
@@ -472,7 +443,6 @@ func registerFacadeNamespaces(root *Root, namespaces []types.FacadeNamespace) {
 func stripRequires(root *Root, allFacades types.FacadeConfig) {
 	var remaining []Node
 	var loaded map[string]bool
-	var deferred []deferredGemLoad
 	for _, stmt := range root.Statements {
 		if call, ok := stmt.(*MethodCall); ok && call.Receiver == nil && call.MethodName == "require" {
 			if len(call.Args) == 1 {
@@ -491,19 +461,19 @@ func stripRequires(root *Root, allFacades types.FacadeConfig) {
 					}
 					// No facade — try resolving via Ruby load paths
 					if gemPath := resolveGemRequire(name, root.loadPaths); gemPath != "" {
-						fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
 						if loaded == nil {
 							loaded = make(map[string]bool)
 						}
-						savedErrors := append([]error{}, root.Errors...)
-						if err := safeLoadFile(gemPath, root, loaded); err != nil {
-							// Defer for retry — earlier files may create modules this file needs.
-							deferred = append(deferred, deferredGemLoad{name: name, path: gemPath})
-							delete(loaded, gemPath)
+						if !loaded[gemPath] {
+							fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
+							savedErrors := append([]error{}, root.Errors...)
+							if err := safeLoadFile(gemPath, root, loaded); err != nil {
+								fmt.Fprintf(os.Stderr, "warning: require '%s' (%s): load failed:\n%v\n", name, gemPath, err)
+							}
+							// Always restore errors — gem parsing may add terminal errors
+							// via AddCall that shouldn't block user code analysis.
+							root.Errors = savedErrors
 						}
-						// Always restore errors — gem parsing may add terminal errors
-						// via AddCall that shouldn't block user code analysis.
-						root.Errors = savedErrors
 						continue // strip
 					}
 				}
@@ -512,27 +482,4 @@ func stripRequires(root *Root, allFacades types.FacadeConfig) {
 		remaining = append(remaining, stmt)
 	}
 	root.Statements = remaining
-
-	// Retry deferred gem loads.
-	if len(deferred) > 0 && loaded != nil {
-		for len(deferred) > 0 {
-			var stillDeferred []deferredGemLoad
-			for _, d := range deferred {
-				savedErrors := append([]error{}, root.Errors...)
-				if err := safeLoadFile(d.path, root, loaded); err != nil {
-					d.lastErr = err
-					stillDeferred = append(stillDeferred, d)
-					delete(loaded, d.path)
-				}
-				root.Errors = savedErrors
-			}
-			if len(stillDeferred) == len(deferred) {
-				for _, d := range stillDeferred {
-					fmt.Fprintf(os.Stderr, "warning: require '%s': %v (continuing without this dependency)\n", d.name, d.lastErr)
-				}
-				break
-			}
-			deferred = stillDeferred
-		}
-	}
 }

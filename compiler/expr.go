@@ -827,7 +827,11 @@ func (g *GoProgram) stringElements(node *parser.StringNode) []ast.Expr {
 }
 
 func (g *GoProgram) CompileSuperNode(node *parser.SuperNode) ast.Expr {
-	_, method, _ := node.Class.GetAncestorMethod(node.Method.Name)
+	_, method, found := node.Class.GetAncestorMethod(node.Method.Name)
+	if !found && node.Class.DataDefine {
+		// Data.define super in initialize just sets fields — Go struct handles this.
+		return g.it.Get("nil")
+	}
 	params := []*ast.Field{
 		{
 			Names: []*ast.Ident{g.currentRcvr},

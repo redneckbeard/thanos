@@ -180,7 +180,7 @@ func (g *GoProgram) GetFuncParams(rubyParams []*parser.Param) []*ast.Field {
 			})
 		}
 	}
-	if splat != nil {
+	if splat != nil && splat.Type() != nil {
 		params = append(params, &ast.Field{
 			Names: []*ast.Ident{g.it.Get(splat.Name)},
 			Type:  &ast.Ellipsis{Elt: g.it.Get(splat.Type().(types.Array).Inner().GoType())},
