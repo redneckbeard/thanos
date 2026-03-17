@@ -15,6 +15,9 @@ func NewFoo() *Foo {
 	newInstance := &Foo{}
 	return newInstance
 }
+
+var FooClass = stdlib.NewMetaclass[Foo]("Foo")
+
 func (f *Foo) A() bool {
 	return true
 }
@@ -31,6 +34,9 @@ func NewBar() *Bar {
 	newInstance := &Bar{}
 	return newInstance
 }
+
+var BarClass = stdlib.NewMetaclass[Bar]("Bar")
+
 func (b *Bar) A() bool {
 	super := func(b *Bar) bool {
 		return true
@@ -53,6 +59,9 @@ func NewBaz() *Baz {
 	newInstance := &Baz{}
 	return newInstance
 }
+
+var BazClass = stdlib.NewMetaclass[Baz]("Baz")
+
 func (b *Baz) B(x float64, y int) float64 {
 	super := func(b *Baz, x float64, y int) float64 {
 		b.baz = x + float64(y)
@@ -72,6 +81,9 @@ func NewQuux() *Quux {
 	newInstance := &Quux{}
 	return newInstance
 }
+
+var QuuxClass = stdlib.NewMetaclass[Quux]("Quux")
+
 func (q *Quux) A() bool {
 	super := func(q *Quux) bool {
 		return true

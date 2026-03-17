@@ -136,6 +136,23 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 
 	g.BlockStack.Pop()
 
+	// Generate metaclass var: var ChangeClass = stdlib.NewMetaclass[Change]("Change")
+	// This supports `obj.class` which compiles to ChangeClass.
+	metaclassVarName := c.Name() + "Class"
+	qualifiedName := c.QualifiedName()
+	decls = append(decls, &ast.GenDecl{
+		Tok: token.VAR,
+		Specs: []ast.Spec{
+			&ast.ValueSpec{
+				Names: []*ast.Ident{g.it.Get(metaclassVarName)},
+				Values: []ast.Expr{
+					bst.Call("stdlib", fmt.Sprintf("NewMetaclass[%s]", g.localName(qualifiedName)), &ast.BasicLit{Kind: token.STRING, Value: fmt.Sprintf("%q", qualifiedName)}),
+				},
+			},
+		},
+	})
+	g.AddImports("github.com/redneckbeard/thanos/stdlib")
+
 	var hasToS bool
 	if c.IsUsed() {
 		for _, m := range c.Methods(nil) {

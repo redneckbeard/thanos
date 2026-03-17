@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/redneckbeard/thanos/stdlib"
+)
 
 type Vehicle struct {
 	starting_miles int
@@ -14,6 +18,9 @@ func NewVehicle(starting_miles int) *Vehicle {
 	newInstance.Initialize(starting_miles)
 	return newInstance
 }
+
+var VehicleClass = stdlib.NewMetaclass[Vehicle]("Vehicle")
+
 func (v *Vehicle) Initialize(starting_miles int) int {
 	v.starting_miles = starting_miles
 	v.no_reader = "unexported"
@@ -51,6 +58,9 @@ func NewCar(starting_miles int) *Car {
 	newInstance.Initialize(starting_miles)
 	return newInstance
 }
+
+var CarClass = stdlib.NewMetaclass[Car]("Car")
+
 func (c *Car) Drive(x int) int {
 	super := func(c *Car, x int) int {
 		c.starting_miles += x

@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/redneckbeard/thanos/stdlib"
+)
 
 const CTDriverLICENSE_AGE = 18
 const CTDriverKIND_MOTORCYCLE = "motorcycle"
@@ -20,6 +24,9 @@ func NewCTDriver(age int) *CTDriver {
 	newInstance.Initialize(age)
 	return newInstance
 }
+
+var CTDriverClass = stdlib.NewMetaclass[CTDriver]("CTDriver")
+
 func (c *CTDriver) Initialize(age int) int {
 	c.age = age
 	return c.age
@@ -36,6 +43,9 @@ func NewCrossStateCommercialCTDriver() *CrossStateCommercialCTDriver {
 	newInstance := &CrossStateCommercialCTDriver{}
 	return newInstance
 }
+
+var CrossStateCommercialCTDriverClass = stdlib.NewMetaclass[CrossStateCommercialCTDriver]("CrossStateCommercialCTDriver")
+
 func main() {
 	if NewCTDriver(19).Can_drive() {
 		fmt.Println(CrossStateCommercialCTDriverLICENSE_AGE)

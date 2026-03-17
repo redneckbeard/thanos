@@ -1084,7 +1084,9 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 		// For mixin-provided methods on user-defined types, defer analysis
 		// until the class's methods have been analyzed (so extractYieldArgTypes
 		// can populate block param types for getElementType resolution).
-		if ms, ok := classMethodSets[receiverType]; ok && ms.Class != nil {
+		// Skip deferral for methods that resolve directly on the built-in type
+		// (e.g., Object#class) since they don't depend on user method analysis.
+		if ms, ok := classMethodSets[receiverType]; ok && ms.Class != nil && c.Block != nil {
 			allAnalyzed := true
 			for _, m := range ms.Methods {
 				if !m.analyzed {

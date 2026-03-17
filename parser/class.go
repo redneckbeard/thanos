@@ -522,6 +522,12 @@ func (cls *Class) BuildType(outerScope ScopeChain) *types.Class {
 			if _, _, inherited := cls.GetAncestorMethod(name); inherited {
 				continue
 			}
+			// Check if the method exists as a built-in on Object (the root
+			// of all instance types). We check ObjectType directly because
+			// the parent chain may not be established yet at this point.
+			if types.ObjectType.HasMethod(name) {
+				continue
+			}
 			for _, call := range list {
 				if _, ok := call.Receiver.(*SelfNode); ok {
 					call.Receiver = nil

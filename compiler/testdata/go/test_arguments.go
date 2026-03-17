@@ -39,6 +39,9 @@ func NewFoo(foo int) *Foo {
 	newInstance.Initialize(foo)
 	return newInstance
 }
+
+var FooClass = stdlib.NewMetaclass[Foo]("Foo")
+
 func (f *Foo) Initialize(foo int) int {
 	f.foo = foo
 	return f.foo
