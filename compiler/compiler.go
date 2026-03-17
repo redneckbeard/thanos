@@ -429,6 +429,9 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 					}
 				}()
 			} else {
+				if m.IsUncallable() {
+					continue
+				}
 				modDecls = append(modDecls, modG.CompileClassMethod(m, nil)...)
 			}
 		}

@@ -323,9 +323,9 @@ func (m *Method) Analyze(ms *MethodSet) error {
 					// Don't mark as uncallable — let the body be analyzed.
 					break
 				}
-				if m.FromGem {
-					// Gem method is never called — can't infer param types.
-					// Mark as uncallable and skip without erroring.
+				// Method is never called — can't infer param types.
+				if m.ClassMethod || m.FromGem || ms.Class != nil {
+					// Class/module methods and gem methods: prune silently.
 					m.uncallable = true
 					return nil
 				}

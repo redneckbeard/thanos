@@ -20,6 +20,9 @@ func (g *GoProgram) CompileModule(mod *parser.Module) []ast.Decl {
 
 	// Compile module class methods (def self.x) as standalone functions
 	for _, m := range mod.ClassMethods {
+		if m.IsUncallable() {
+			continue
+		}
 		decls = append(decls, g.CompileClassMethod(m, nil, mod.Name())...)
 	}
 
@@ -168,6 +171,9 @@ func (g *GoProgram) CompileClass(c *parser.Class) []ast.Decl {
 
 	// Compile class methods (def self.x) as standalone functions
 	for _, m := range c.ClassMethods {
+		if m.IsUncallable() {
+			continue
+		}
 		decls = append(decls, g.CompileClassMethod(m, c)...)
 	}
 
