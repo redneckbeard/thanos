@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/redneckbeard/thanos/stdlib"
 	"github.com/redneckbeard/thanos/types"
@@ -247,6 +248,19 @@ func (n *BracketAccessNode) TargetType(locals ScopeChain, class *Class) (types.T
 		return comp.Value, nil
 	case types.String:
 		return types.StringType, nil
+	case *types.SynthStruct:
+		if len(n.Args) > 0 {
+			if _, err := GetType(n.Args[0], locals, class); err != nil {
+				return nil, err
+			}
+			if intNode, ok := n.Args[0].(*IntNode); ok {
+				idx, _ := strconv.Atoi(intNode.Val)
+				if idx >= 0 && idx < len(comp.Fields) {
+					return comp.Fields[idx].Type, nil
+				}
+			}
+		}
+		return types.AnyType, nil
 	default:
 		arg := n.Args[0]
 		if _, err := GetType(arg, locals, class); err != nil {

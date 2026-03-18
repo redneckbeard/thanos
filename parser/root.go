@@ -58,6 +58,7 @@ func NewRoot() *Root {
 	classMethodSets = make(map[types.Type]*MethodSet)
 	ResetGlobalVars()
 	ResetDuckInterfaces()
+	ResetSynthStructs()
 	p := &Root{
 		State:           &Stack[State]{},
 		StringStack:     &Stack[*StringNode]{},

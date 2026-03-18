@@ -61,7 +61,20 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				if valType != nil && valType != types.AnyType {
 					if arr, ok := lhs.Type().(types.Array); ok {
 						if arr.Element == types.AnyType {
-							if ident, ok := lhs.Composite.(*IdentNode); ok {
+							// Check if the value is a Tuple — promote to SynthStruct
+							if tuple, isTuple := valType.(*types.Tuple); isTuple {
+								if ident, ok := lhs.Composite.(*IdentNode); ok {
+									ss := promoteTupleToSynthStruct(ident.Val, tuple, scope)
+									if ss != nil {
+										valType = ss
+										// Set the type on the RHS ArrayNode so the compiler sees it
+										if i < len(n.Right) {
+											n.Right[i].SetType(ss)
+										}
+										scope.RefineVariableType(ident.Val, types.NewArray(ss))
+									}
+								}
+							} else if ident, ok := lhs.Composite.(*IdentNode); ok {
 								scope.RefineVariableType(ident.Val, types.NewArray(valType))
 							}
 						} else if arr.Element != valType {

@@ -161,6 +161,9 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 		decls = append(decls, g.compileDuckInterface(iface)...)
 	}
 
+	// Emit synthesized struct declarations (from Tuple promotion)
+	decls = append(decls, g.compileSynthStructs()...)
+
 	// Emit package-level vars for global variables ($var)
 	for name, t := range parser.GlobalVars() {
 		if t != nil {

@@ -212,6 +212,20 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		return g.CompileStringNode(n)
 
 	case *parser.ArrayNode:
+		// SynthStruct: compile as &StructName{Field0: v0, Field1: v1, ...}
+		if ss, ok := n.Type().(*types.SynthStruct); ok {
+			elts := []ast.Expr{}
+			for i, arg := range n.Args {
+				elts = append(elts, &ast.KeyValueExpr{
+					Key:   g.it.Get(ss.Fields[i].Name),
+					Value: g.CompileExpr(arg),
+				})
+			}
+			return &ast.UnaryExpr{Op: token.AND, X: &ast.CompositeLit{
+				Type: g.it.Get(ss.Name),
+				Elts: elts,
+			}}
+		}
 		// Tuple arrays (heterogeneous literals) cannot be compiled as Go slices.
 		// They are only valid in contexts that consume them element-by-element
 		// (e.g., string % formatting). If we reach here, the context doesn't support it.
