@@ -216,6 +216,14 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		if ss, ok := n.Type().(*types.SynthStruct); ok {
 			elts := []ast.Expr{}
 			for i, arg := range n.Args {
+				// When an element is a Condition with AnyType but the target field
+				// has a concrete type (e.g., self-referencing pointer), narrow the
+				// Condition's type so the compiled temp var matches the field type.
+				if cond, isCond := arg.(*parser.Condition); isCond {
+					if cond.Type() == types.AnyType && ss.Fields[i].Type != types.AnyType {
+						cond.SetType(ss.Fields[i].Type)
+					}
+				}
 				elts = append(elts, &ast.KeyValueExpr{
 					Key:   g.it.Get(ss.Fields[i].Name),
 					Value: g.CompileExpr(arg),
