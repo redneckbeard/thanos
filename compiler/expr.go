@@ -1112,6 +1112,13 @@ func (g *GoProgram) CompileHashNew(n *parser.MethodCall, h types.Hash) ast.Expr 
 			}
 		}
 	}
+	// If still unrefined, try the enclosing method's return type. This handles
+	// cases like Hash.new { ... }.tap { ... } where there's no LHS variable.
+	if (h.Key == types.AnyType || h.Value == types.AnyType) && g.currentMethod != nil {
+		if retHash, ok := g.currentMethod.ReturnType().(types.Hash); ok && retHash.HasDefault {
+			h = retHash
+		}
+	}
 	keyType := h.Key.GoType()
 	valType := h.Value.GoType()
 	g.AddImports("github.com/redneckbeard/thanos/stdlib")
