@@ -71,6 +71,28 @@ func (t Optional) TransformAST(m string, rcvr ast.Expr, args []TypeExpr, blk *Bl
 }
 
 func init() {
+	// Logical operators on Optional: compare against nil without dereferencing.
+	optLogical := func(tok token.Token) MethodSpec {
+		return MethodSpec{
+			ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
+				return BoolType, nil
+			},
+			TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+				left := bst.Binary(rcvr.Expr, token.NEQ, it.Get("nil"))
+				right := args[0].Expr
+				if args[0].Type != BoolType {
+					if _, isOpt := args[0].Type.(Optional); isOpt {
+						right = bst.Binary(right, token.NEQ, it.Get("nil"))
+					}
+				}
+				return Transform{
+					Expr: bst.Binary(left, tok, right),
+				}
+			},
+		}
+	}
+	OptionalClass.Instance.Def("&&", optLogical(token.LAND))
+
 	OptionalClass.Instance.Def("||", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			opt := r.(Optional)

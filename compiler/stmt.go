@@ -521,6 +521,37 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 		}
 	}
 	if !tautological {
+		// When declaring a variable with nil RHS and the variable has been
+		// refined to a concrete type, emit `var x T` instead of `x := nil`
+		// so Go knows the type (untyped nil is invalid in short declarations).
+		if !node.Reassignment && !node.OpAssignment && len(node.Right) == 1 {
+			if _, isNil := node.Right[0].(*parser.NilNode); isNil {
+				emitted := false
+				for i, left := range node.Left {
+					if ident, ok := left.(*parser.IdentNode); ok {
+						var resolvedType types.Type
+						if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local.Type() != nil && local.Type() != types.AnyType && local.Type() != types.NilType {
+							resolvedType = local.Type()
+						}
+						if resolvedType != nil {
+							g.appendToCurrentBlock(&ast.DeclStmt{
+								Decl: &ast.GenDecl{
+									Tok: token.VAR,
+									Specs: []ast.Spec{&ast.ValueSpec{
+										Names: []*ast.Ident{lhs[i].(*ast.Ident)},
+										Type:  g.it.Get(resolvedType.GoType()),
+									}},
+								},
+							})
+							emitted = true
+						}
+					}
+				}
+				if emitted {
+					return
+				}
+			}
+		}
 		g.appendToCurrentBlock(assignFunc(lhs, rhs))
 	}
 }

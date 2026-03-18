@@ -372,6 +372,10 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 			return rangeIndex
 		} else {
 			idx := g.CompileExpr(n.Args[0])
+			// Dereference Optional indices: *int → int for slice access
+			if _, isOpt := n.Args[0].Type().(types.Optional); isOpt {
+				idx = &ast.StarExpr{X: idx}
+			}
 			idx = g.negativeIndex(rcvr, n.Args[0], idx)
 			var index ast.Expr = &ast.IndexExpr{
 				X:     rcvr,
@@ -385,6 +389,10 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 	case *parser.BracketAssignmentNode:
 		rcvr := g.CompileExpr(n.Composite)
 		idx := g.CompileExpr(n.Args[0])
+		// Dereference Optional indices: *int → int for slice access
+		if _, isOpt := n.Args[0].Type().(types.Optional); isOpt {
+			idx = &ast.StarExpr{X: idx}
+		}
 		idx = g.negativeIndex(rcvr, n.Args[0], idx)
 		return &ast.IndexExpr{
 			X:     rcvr,
