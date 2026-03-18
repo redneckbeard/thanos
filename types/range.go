@@ -121,14 +121,37 @@ func init() {
 		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
 			stripBlockReturn(blk)
 			lower, upper, inclusive, ok := rangeComponents(rcvr.Expr)
-			if !ok {
-				return Transform{Expr: rcvr.Expr}
+			if ok {
+				i := blk.Args[0]
+				loop := rangeForLoop(i.(*ast.Ident), lower, upper, inclusive, blk.Statements)
+				return Transform{
+					Expr:  rcvr.Expr,
+					Stmts: []ast.Stmt{loop},
+				}
 			}
+			// Variable range: generate for-loop accessing struct fields.
+			// _end := rcvr.Upper; if !rcvr.Inclusive { _end-- }
+			// for i := rcvr.Lower; i <= _end; i++ { body }
 			i := blk.Args[0]
-			loop := rangeForLoop(i.(*ast.Ident), lower, upper, inclusive, blk.Statements)
+			endVar := it.New("_rangeEnd")
+			stmts := []ast.Stmt{
+				bst.Define(endVar, &ast.SelectorExpr{X: rcvr.Expr, Sel: it.Get("Upper")}),
+				&ast.IfStmt{
+					Cond: &ast.UnaryExpr{
+						Op: token.NOT,
+						X:  &ast.SelectorExpr{X: rcvr.Expr, Sel: it.Get("Inclusive")},
+					},
+					Body: &ast.BlockStmt{List: []ast.Stmt{
+						&ast.IncDecStmt{X: endVar, Tok: token.DEC},
+					}},
+				},
+				rangeForLoop(i.(*ast.Ident),
+					&ast.SelectorExpr{X: rcvr.Expr, Sel: it.Get("Lower")},
+					endVar, true, blk.Statements),
+			}
 			return Transform{
 				Expr:  rcvr.Expr,
-				Stmts: []ast.Stmt{loop},
+				Stmts: stmts,
 			}
 		},
 	})

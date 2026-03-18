@@ -84,6 +84,15 @@ func (p *Param) Type() types.Type {
 	return nil
 }
 
+// HasNilDefault returns true if the parameter has an explicit nil default value.
+func (p *Param) HasNilDefault() bool {
+	if p.Default == nil {
+		return false
+	}
+	_, isNil := p.Default.(*NilNode)
+	return isNil
+}
+
 func (p *Param) String() string {
 	switch p.Kind {
 	case Positional:
@@ -333,12 +342,24 @@ func (m *Method) Analyze(ms *MethodSet) error {
 			} else {
 				return NewParseError(m, "unable to detect type signature of method '%s' because it is never called", name)
 			}
-		} else {
+		} else if !param.HasNilDefault() {
+			// For nil-default params, AnalyzeArguments already set the
+			// local to AnyType (refinable). Don't overwrite with NilType.
 			m.Locals.Set(param.Name, &RubyLocal{_type: param.Type()})
 		}
 	}
 	if err := m.analyzeMethodBody(ms.Class, nil, nil); err != nil {
 		return err
+	}
+	// After body analysis, wrap nil-default params in Optional.
+	// The body refined the local to a concrete type (e.g., IntType via ||=);
+	// the param signature should be Optional(concrete) since callers can pass nil.
+	for _, param := range m.Params {
+		if param.HasNilDefault() && param._type == nil {
+			if local, ok := m.Locals.Get(param.Name); ok && local.Type() != nil && local.Type() != types.AnyType {
+				param._type = types.NewOptional(local.Type())
+			}
+		}
 	}
 	for _, c := range ms.Calls[m.Name] {
 		c.Method = m
@@ -672,6 +693,10 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 				// Default was nil — adopt the actual call-site type
 				param._type = t
 				method.Scope.Set(param.Name, &RubyLocal{_type: t})
+			} else if err == nil && t != types.NilType && param.HasNilDefault() {
+				// Param has nil default but caller passed a concrete type.
+				// Don't overwrite — the body analysis will refine the local,
+				// and we'll wrap in Optional post-analysis.
 			} else if err == nil && t != param.Type() {
 				if param.Kind == Splat {
 					if splat, ok := arg.(*SplatNode); ok {

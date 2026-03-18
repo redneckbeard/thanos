@@ -431,6 +431,17 @@ func (r *Root) AddCall(c *MethodCall) {
 				r.ScopeChain.Set(rcvr.Val, uncalled)
 				return
 			}
+		case *ConstantNode:
+			// Register the call in the target module/class's MethodSet when
+			// the receiver is a simple constant (e.g. Internals.lcs).
+			if resolved := r.ScopeChain.ResolveVar(rcvr.Val); resolved != BadLocal {
+				switch target := resolved.(type) {
+				case *Module:
+					target.MethodSet.AddCall(c)
+				case *Class:
+					target.MethodSet.AddCall(c)
+				}
+			}
 		case *ScopeAccessNode:
 			// Register the call in the target module/class's MethodSet so
 			// that analyzeModuleClassMethods can populate param types later.
@@ -796,6 +807,14 @@ func (r *Root) analyzeModuleClassMethods(mod *Module) {
 					}()
 				} else {
 					m.Body.InferReturnType(m.Scope, nil)
+				}
+			}
+			// After body analysis, wrap nil-default params in Optional.
+			for _, p := range m.Params {
+				if p.HasNilDefault() && p._type == nil {
+					if local, ok := m.Locals.Get(p.Name); ok && local.Type() != nil && local.Type() != types.AnyType {
+						p._type = types.NewOptional(local.Type())
+					}
 				}
 			}
 			// Log result after inference attempt
