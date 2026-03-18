@@ -158,7 +158,19 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		if n.MethodCall != nil {
 			return g.CompileExpr(n.MethodCall)
 		}
-		return g.it.Get(n.Val)
+		ident := g.it.Get(n.Val)
+		// Dereference nil-default params that were refined to concrete types.
+		// The Go param is *T but after ||= the analysis refined the local to T.
+		if !g.suppressDeref && g.currentMethod != nil {
+			for _, p := range g.currentMethod.Params {
+				if p.Name == n.Val && p.HasNilDefault() {
+					if _, isOpt := n.Type().(types.Optional); !isOpt {
+						return &ast.StarExpr{X: ident}
+					}
+				}
+			}
+		}
+		return ident
 	case *parser.IVarNode:
 		ivar := n.NormalizedVal()
 		if n.IVar().Readable && n.IVar().Writeable {
@@ -172,6 +184,8 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		return g.it.Get(g.cvarGoName(n))
 	case *parser.GVarNode:
 		return g.it.Get(n.NormalizedVal())
+	case *parser.NilNode:
+		return g.it.Get("nil")
 	case *parser.BooleanNode:
 		return g.it.Get(n.Val)
 	case *parser.IntNode:
@@ -884,7 +898,13 @@ func (g *GoProgram) CompileArgs(call *parser.MethodCall, args parser.ArgsNode) [
 			} else if _, ok := args[i].(*parser.KeyValuePair); ok {
 				argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(p.Default)})
 			} else {
-				argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(args[i])})
+				compiled := g.CompileArg(args[i])
+				if _, isOpt := p.Type().(types.Optional); isOpt {
+					if _, isNil := args[i].(*parser.NilNode); !isNil {
+						compiled = g.wrapPtr(compiled, p.Type().(types.Optional).Element)
+					}
+				}
+				argExprs = append(argExprs, types.TypeExpr{p.Type(), compiled})
 			}
 		case parser.Keyword:
 
@@ -1036,6 +1056,14 @@ func (g *GoProgram) CompileArg(node parser.Node) ast.Expr {
 		return g.CompileExpr(assignment.Left[0])
 	}
 	return g.CompileExpr(node)
+}
+
+// wrapPtr wraps an expression in stdlib.Ptr[T](...) to convert a value to a pointer.
+func (g *GoProgram) wrapPtr(expr ast.Expr, elemType types.Type) ast.Expr {
+	return &ast.CallExpr{
+		Fun:  g.it.Get(fmt.Sprintf("stdlib.Ptr[%s]", elemType.GoType())),
+		Args: []ast.Expr{expr},
+	}
 }
 
 func (g *GoProgram) CompileKeyFromDoubleSplatArg(key string, node parser.Node) ast.Expr {

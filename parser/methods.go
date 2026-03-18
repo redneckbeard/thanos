@@ -24,6 +24,16 @@ type MethodSet struct {
 	Module  *Module
 }
 
+func (ms *MethodSet) ModuleName() string {
+	if ms.Class != nil {
+		return ms.Class.Name()
+	}
+	if ms.Module != nil {
+		return ms.Module.name
+	}
+	return "<unknown>"
+}
+
 func (ms *MethodSet) AddMethod(m *Method) {
 	ms.Methods[m.Name] = m
 	ms.Order = append(ms.Order, m.Name)
@@ -379,6 +389,24 @@ func (m *Method) Analyze(ms *MethodSet) error {
 	return nil
 }
 
+// resetForReanalysis clears body state so the method can be re-analyzed
+// with updated sibling return types. Preserves param types from AnalyzeArguments.
+func (m *Method) resetForReanalysis() {
+	m.Body.ReturnType = nil
+	m.Body.tolerantInfer = false
+	m.Body.clearCachedTypes()
+	m.analyzed = false
+	m.uncallable = false
+	newLocals := NewScope(m.Locals.Name())
+	for _, p := range m.Params {
+		if p.Type() != nil {
+			newLocals.Set(p.Name, &RubyLocal{_type: p.Type()})
+		}
+	}
+	m.Locals = newLocals
+	m.Scope = m.Scope[:len(m.Scope)-1].Extend(newLocals)
+}
+
 // resetBlockCallTypes clears cached types on blk.call() nodes,
 // block_given? conditionals, and any MethodCall that takes a blk.call()
 // result as an argument (e.g., result << yield(item)). This allows the
@@ -689,14 +717,19 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 			}
 		} else {
 			t, err := GetType(arg, scope, class)
-			if err == nil && t != param.Type() && param.Type() == types.NilType {
+			if err == nil && t != param.Type() && param.Type() == types.NilType && !param.HasNilDefault() {
 				// Default was nil — adopt the actual call-site type
 				param._type = t
 				method.Scope.Set(param.Name, &RubyLocal{_type: t})
-			} else if err == nil && t != types.NilType && param.HasNilDefault() {
-				// Param has nil default but caller passed a concrete type.
-				// Don't overwrite — the body analysis will refine the local,
-				// and we'll wrap in Optional post-analysis.
+			} else if err == nil && param.HasNilDefault() {
+				// Param has nil default. If caller passed a concrete type, set
+				// the local so body analysis can refine it. If caller passed nil,
+				// set as AnyType so ||= refinement can discover the concrete type.
+				if t != types.NilType {
+					method.Scope.Set(param.Name, &RubyLocal{_type: t})
+				} else {
+					method.Scope.Set(param.Name, &RubyLocal{_type: types.AnyType})
+				}
 			} else if err == nil && t != param.Type() {
 				if param.Kind == Splat {
 					if splat, ok := arg.(*SplatNode); ok {

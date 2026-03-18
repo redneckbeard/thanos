@@ -25,7 +25,7 @@ func (g *GoProgram) CompileBlockStmt(node parser.Node) *ast.BlockStmt {
 		last := len(n) - 1
 		for i, s := range n {
 			if i == last {
-				if g.State.Peek() == InReturnStatement && s.Type() != types.NilType {
+				if g.State.Peek() == InReturnStatement && (s.Type() != types.NilType || g.methodReturnsOptional()) {
 					t := s.Type()
 					s = &parser.ReturnNode{Val: parser.ArgsNode{s}}
 					s.SetType(t)

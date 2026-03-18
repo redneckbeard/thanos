@@ -38,11 +38,13 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) []ast.Decl {
 		g.State.Push(InMethodDeclaration)
 	}
 	g.ScopeChain = m.Scope
+	g.currentMethod = m
 	g.pushTracker()
 	defer func() {
 		g.State.Pop()
 		g.popTracker()
 		g.currentRcvr = nil
+		g.currentMethod = nil
 	}()
 	params := g.GetFuncParams(m.Params)
 	if m.Block != nil {
@@ -110,10 +112,12 @@ func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix
 
 	g.State.Push(InFuncDeclaration)
 	g.ScopeChain = m.Scope
+	g.currentMethod = m
 	g.pushTracker()
 	defer func() {
 		g.State.Pop()
 		g.popTracker()
+		g.currentMethod = nil
 	}()
 
 	params := g.GetFuncParams(m.Params)

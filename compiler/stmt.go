@@ -49,12 +49,12 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 				}
 			default:
 				g.appendToCurrentBlock(&ast.ReturnStmt{
-					Results: g.mapToExprs(n.Val),
+					Results: g.wrapOptionalReturn(g.mapToExprs(n.Val), n.Val),
 				})
 			}
 		} else {
 			g.appendToCurrentBlock(&ast.ReturnStmt{
-				Results: g.mapToExprs(n.Val),
+				Results: g.wrapOptionalReturn(g.mapToExprs(n.Val), n.Val),
 			})
 		}
 	case *parser.Condition:
@@ -160,8 +160,9 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 				g.Finalizers = append(g.Finalizers, transform.Finalizers...)
 			}
 			if g.State.Peek() == InReturnStatement && n.Type() != types.NilType {
+				results := g.wrapOptionalReturn([]ast.Expr{transform.Expr}, []parser.Node{n})
 				g.appendToCurrentBlock(&ast.ReturnStmt{
-					Results: []ast.Expr{transform.Expr},
+					Results: results,
 				})
 				// A Transform may yield only statements, in which case Expr could be
 				// nil.  It could also return an expression solely for the purposes of
@@ -397,9 +398,24 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 			return
 		}
 		// For ||= with Optional types, compile as: if x == nil { _v := rhs; x = &_v }
+		// Also handles nil-default params where the ident was refined to the
+		// concrete type during analysis but the param signature is *T.
 		if infix.Operator == "||" {
-			if _, isOpt := infix.Left.Type().(types.Optional); isOpt {
+			isOpt := false
+			if _, ok := infix.Left.Type().(types.Optional); ok {
+				isOpt = true
+			} else if ident, ok := infix.Left.(*parser.IdentNode); ok && g.currentMethod != nil {
+				for _, p := range g.currentMethod.Params {
+					if p.Name == ident.Val && p.HasNilDefault() {
+						isOpt = true
+						break
+					}
+				}
+			}
+			if isOpt {
+				g.suppressDeref = true
 				lhs := g.CompileExpr(node.Left[0])
+				g.suppressDeref = false
 				rhs := g.CompileExpr(infix.Right)
 				tmp := g.it.New("v")
 				g.appendToCurrentBlock(&ast.IfStmt{
@@ -874,4 +890,39 @@ func containsAnyType(t types.Type) bool {
 		return h.Key == types.AnyType || h.Value == types.AnyType
 	}
 	return false
+}
+
+func (g *GoProgram) methodReturnsOptional() bool {
+	if g.currentMethod == nil {
+		return false
+	}
+	_, isOpt := g.currentMethod.ReturnType().(types.Optional)
+	return isOpt
+}
+
+// wrapOptionalReturn wraps return expressions in stdlib.Ptr[T]() when the
+// current method returns Optional(T) and the expression is a concrete value.
+func (g *GoProgram) wrapOptionalReturn(exprs []ast.Expr, nodes []parser.Node) []ast.Expr {
+	if g.currentMethod == nil {
+		return exprs
+	}
+	retType := g.currentMethod.ReturnType()
+	opt, isOpt := retType.(types.Optional)
+	if !isOpt {
+		return exprs
+	}
+	for i, expr := range exprs {
+		// Don't wrap nil returns
+		if ident, ok := expr.(*ast.Ident); ok && ident.Name == "nil" {
+			continue
+		}
+		// Don't wrap if the node is already Optional-typed
+		if i < len(nodes) {
+			if _, nodeOpt := nodes[i].Type().(types.Optional); nodeOpt {
+				continue
+			}
+		}
+		exprs[i] = g.wrapPtr(expr, opt.Element)
+	}
+	return exprs
 }

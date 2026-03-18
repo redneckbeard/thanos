@@ -594,12 +594,20 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 		}
 		b.Statements = append(b.Statements, ret)
 	default:
-		if finalStatement.Type() != types.NilType && scope.Name() != Main {
-			ret := &ReturnNode{Val: []Node{finalStatement}}
-			if _, err := GetType(ret, scope, class); err != nil {
-				return err
+		if scope.Name() != Main {
+			if finalStatement.Type() != types.NilType {
+				ret := &ReturnNode{Val: []Node{finalStatement}}
+				if _, err := GetType(ret, scope, class); err != nil {
+					return err
+				}
+				b.Statements[finalStatementIdx] = ret
+			} else if len(b.ExplicitReturns) > 0 {
+				// Method has explicit returns and ends with nil — still emit
+				// return nil so the Optional return type is satisfied.
+				ret := &ReturnNode{Val: []Node{finalStatement}}
+				ret.SetType(types.NilType)
+				b.Statements[finalStatementIdx] = ret
 			}
-			b.Statements[finalStatementIdx] = ret
 		}
 	}
 	if len(b.ExplicitReturns) > 0 {

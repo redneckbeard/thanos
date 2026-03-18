@@ -63,6 +63,8 @@ type GoProgram struct {
 	cs              *commentState
 	orderSafeHashes map[string]bool
 	modulePrefix    string // non-empty when compiling a module into its own package
+	currentMethod   *parser.Method
+	suppressDeref   bool // suppress *T dereference during ||= compilation
 }
 
 // localName strips the module prefix from a qualified name when compiling

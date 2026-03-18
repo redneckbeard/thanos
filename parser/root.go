@@ -750,117 +750,67 @@ func (r *Root) analyzeModule(mod *Module, parentScope ScopeChain) error {
 }
 
 func (r *Root) analyzeModuleClassMethods(mod *Module) {
-	// Analyze class methods defined directly on the module (def self.x inside module).
-	// Multi-pass analysis for module class methods. The first pass populates
-	// params and infers return types. Subsequent passes re-analyze gem methods
-	// whose bodies contain calls to sibling methods that may have gained return
-	// types in a previous pass (e.g. lcs calling replace_next_larger).
 	Tracer.Record("enter-module", fmt.Sprintf("%s (classMethods=%d, subModules=%d, classes=%d)", mod.name, len(mod.ClassMethods), len(mod.Modules), len(mod.Classes)))
-	// Two-pass analysis for module class methods. Pass 0 analyzes all methods,
-	// populating return types (tolerant mode for gems). Pass 1 re-analyzes gem
-	// methods with full type resets so that calls to sibling methods (which now
-	// have return types from pass 0) resolve correctly inside the body.
+	// Two-pass analysis for module class methods. Pass 0 analyzes all methods.
+	// Pass 1 re-analyzes methods that failed or used tolerant mode, since
+	// sibling methods now have return types from pass 0.
 	for pass := 0; pass < 2; pass++ {
 		Tracer.Record("pass", fmt.Sprintf("%s pass %d", mod.name, pass))
 		for _, m := range mod.ClassMethods {
-			// Populate param types from recorded calls (mirrors Method.Analyze).
-			Tracer.Record("analyze-args", fmt.Sprintf("%s.%s (%d calls, pass %d)", mod.name, m.Name, len(mod.MethodSet.Calls[m.Name]), pass))
-			for _, c := range mod.MethodSet.Calls[m.Name] {
-				func() {
-					defer func() { recover() }()
-					m.AnalyzeArguments(nil, c, nil)
-				}()
-			}
-			// Log param types after AnalyzeArguments
-			for _, p := range m.Params {
-				if p.Type() != nil {
-					Tracer.Record("param-type", fmt.Sprintf("%s.%s param %s => %s", mod.name, m.Name, p.Name, p.Type()))
-				}
-			}
 			if pass > 0 && m.FromGem && len(m.Body.Statements) > 0 && (m.Body.tolerantInfer || m.Body.ReturnType == nil) {
-				// Re-analyze gem methods that were inferred via tolerant mode
-				// (errors skipped) or failed entirely. Methods that resolved
-				// cleanly are left alone — resetting them causes cascading
-				// failures when demand-driven callers need their return types.
-				Tracer.Record("body-reset", fmt.Sprintf("%s.%s (pass %d, retType=%v, tolerant=%v)", mod.name, m.Name, pass, m.Body.ReturnType, m.Body.tolerantInfer))
-				m.Body.ReturnType = nil
-				m.Body.tolerantInfer = false
-				m.Body.clearCachedTypes()
-				newLocals := NewScope(m.Locals.Name())
-				for _, p := range m.Params {
-					if p.Type() != nil {
-						newLocals.Set(p.Name, &RubyLocal{_type: p.Type()})
-					}
-				}
-				m.Locals = newLocals
-				m.Scope = m.Scope[:len(m.Scope)-1].Extend(newLocals)
+				Tracer.Record("body-reset", fmt.Sprintf("%s.%s (pass %d)", mod.name, m.Name, pass))
+				m.resetForReanalysis()
 			}
-			if m.Body.ReturnType == nil && len(m.Body.Statements) > 0 {
-				Tracer.Record("infer-return", fmt.Sprintf("%s.%s (attempting, pass %d)", mod.name, m.Name, pass))
-				if m.FromGem {
-					func() {
-						defer func() { recover() }()
-						if err := m.Body.InferReturnType(m.Scope, nil); err != nil {
-							Tracer.Record("infer-fallback", fmt.Sprintf("%s.%s strict failed: %v", mod.name, m.Name, err))
-							inferGemMethodReturnType(m)
-						}
-					}()
-				} else {
-					m.Body.InferReturnType(m.Scope, nil)
-				}
+			if m.analyzed && m.Body.ReturnType != nil && !m.Body.tolerantInfer {
+				continue // resolved cleanly on a prior pass
 			}
-			// After body analysis, wrap nil-default params in Optional.
-			for _, p := range m.Params {
-				if p.HasNilDefault() && p._type == nil {
-					if local, ok := m.Locals.Get(p.Name); ok && local.Type() != nil && local.Type() != types.AnyType {
-						p._type = types.NewOptional(local.Type())
-					}
-				}
-			}
-			// Log result after inference attempt
-			retStr := "nil"
-			if m.Body.ReturnType != nil {
-				retStr = m.Body.ReturnType.String()
-			}
-			tolerantStr := ""
-			if m.Body.tolerantInfer {
-				tolerantStr = " [tolerant]"
-			}
-			Tracer.Record("method-result", fmt.Sprintf("%s.%s => %s%s", mod.name, m.Name, retStr, tolerantStr))
+			r.analyzeModuleMethod(m, mod.MethodSet)
 		}
 	}
-	// Analyze class methods on classes within the module
 	for _, cls := range mod.Classes {
 		Tracer.Record("enter-module-class", fmt.Sprintf("%s::%s (classMethods=%d)", mod.name, cls.name, len(cls.ClassMethods)))
 		for _, m := range cls.ClassMethods {
-			Tracer.Record("analyze-args", fmt.Sprintf("%s::%s.%s (%d calls)", mod.name, cls.name, m.Name, len(cls.MethodSet.Calls[m.Name])))
-			for _, c := range cls.MethodSet.Calls[m.Name] {
-				func() {
-					defer func() { recover() }()
-					m.AnalyzeArguments(cls, c, nil)
-				}()
-			}
-			if m.Body.ReturnType == nil && len(m.Body.Statements) > 0 {
-				Tracer.Record("infer-return", fmt.Sprintf("%s::%s.%s (attempting)", mod.name, cls.name, m.Name))
-				if m.FromGem {
-					func() {
-						defer func() { recover() }()
-						m.Body.InferReturnType(m.Scope, cls)
-					}()
-				} else {
-					m.Body.InferReturnType(m.Scope, cls)
-				}
-			}
-			retStr := "nil"
-			if m.Body.ReturnType != nil {
-				retStr = m.Body.ReturnType.String()
-			}
-			Tracer.Record("method-result", fmt.Sprintf("%s::%s.%s => %s", mod.name, cls.name, m.Name, retStr))
+			r.analyzeModuleMethod(m, cls.MethodSet)
 		}
 	}
 	for _, sub := range mod.Modules {
 		r.analyzeModuleClassMethods(sub)
 	}
+}
+
+// analyzeModuleMethod runs Method.Analyze for a single module/class method,
+// with panic recovery for gem methods and tolerant-mode fallback.
+func (r *Root) analyzeModuleMethod(m *Method, ms *MethodSet) {
+	Tracer.Record("analyze-method", fmt.Sprintf("%s.%s (%d calls, gem=%v)", ms.ModuleName(), m.Name, len(ms.Calls[m.Name]), m.FromGem))
+	var err error
+	if m.FromGem {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					Tracer.Record("analyze-panic", fmt.Sprintf("%s.%s: %v", ms.ModuleName(), m.Name, r))
+				}
+			}()
+			err = m.Analyze(ms)
+		}()
+		// If strict analysis failed, try tolerant mode for return type inference.
+		if err != nil || (m.Body.ReturnType == nil && len(m.Body.Statements) > 0 && !m.uncallable) {
+			Tracer.Record("infer-fallback", fmt.Sprintf("%s.%s strict failed: %v", ms.ModuleName(), m.Name, err))
+			func() {
+				defer func() { recover() }()
+				inferGemMethodReturnType(m)
+			}()
+		}
+	} else {
+		err = m.Analyze(ms)
+		if err != nil {
+			Tracer.Record("analyze-error", fmt.Sprintf("%s.%s: %v", ms.ModuleName(), m.Name, err))
+		}
+	}
+	retStr := "nil"
+	if m.Body.ReturnType != nil {
+		retStr = m.Body.ReturnType.String()
+	}
+	Tracer.Record("method-result", fmt.Sprintf("%s.%s => %s", ms.ModuleName(), m.Name, retStr))
 }
 
 // inferGemMethodReturnType tries to determine the return type of a gem method
