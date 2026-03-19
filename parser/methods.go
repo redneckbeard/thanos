@@ -1134,6 +1134,19 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			if method.Body.ReturnType != nil && !types.ContainsAnyType(method.Body.ReturnType) {
 				method.Body.frozen = true
 			}
+			// After body analysis, wrap nil-default params in Optional
+			// using the refined local type (mirrors Analyze post-fixup).
+			for _, param := range method.Params {
+				if param.HasNilDefault() && (param._type == nil || param._type == types.NilType || param._type == types.AnyType) {
+					if local, ok := method.Locals.Get(param.Name); ok && local.Type() != nil && local.Type() != types.AnyType {
+						if _, alreadyOpt := local.Type().(types.Optional); alreadyOpt {
+							param._type = local.Type()
+						} else {
+							param._type = types.NewOptional(local.Type())
+						}
+					}
+				}
+			}
 			if method.Name == "initialize" {
 				if cls, ok := receiverType.(*types.Class); ok {
 					return cls.Instance.(types.Type), nil
