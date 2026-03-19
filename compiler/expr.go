@@ -630,7 +630,6 @@ func (g *GoProgram) TransformInfixExpressionNode(node *parser.InfixExpressionNod
 	leftExpr := g.CompileExpr(node.Left)
 	leftType := node.Left.Type()
 	// Auto-dereference Optional operands in arithmetic/comparison operators.
-	// Skip equality (== !=), logical (|| &&), and nil-related operators.
 	derefOp := node.Operator == "+" || node.Operator == "-" || node.Operator == "*" || node.Operator == "/" ||
 		node.Operator == "%" || node.Operator == "<<" || node.Operator == ">>" ||
 		node.Operator == "<" || node.Operator == ">" || node.Operator == "<=" || node.Operator == ">="
