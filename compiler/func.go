@@ -92,12 +92,20 @@ func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix
 	decls := []ast.Decl{}
 
 	if m.Block != nil {
+		blockRetType := m.Block.ReturnType
+		// If block return type is unknown, infer from the method's return
+		// type (e.g., method returns []int → block returns int).
+		if blockRetType == nil && m.ReturnType() != nil {
+			if retArr, ok := m.ReturnType().(types.Array); ok && retArr.Element != types.AnyType {
+				blockRetType = retArr.Element
+			}
+		}
 		funcType := &ast.FuncType{
 			Params: &ast.FieldList{
 				List: g.GetFuncParams(m.Block.Params),
 			},
 			Results: &ast.FieldList{
-				List: g.GetReturnType(m.Block.ReturnType),
+				List: g.GetReturnType(blockRetType),
 			},
 		}
 		typeSpec := &ast.TypeSpec{
@@ -113,6 +121,16 @@ func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix
 	g.State.Push(InFuncDeclaration)
 	g.ScopeChain = m.Scope
 	g.currentMethod = m
+	// Ensure block param is in scope for compilation (may have been lost
+	// during resetForReanalysis which rebuilds locals from Params only).
+	if m.Block != nil {
+		if _, found := g.ScopeChain.Get(m.Block.Name); !found {
+			g.ScopeChain.Set(m.Block.Name, &parser.RubyLocal{})
+			if local, ok := g.ScopeChain.Get(m.Block.Name); ok {
+				local.(*parser.RubyLocal).SetType(types.NewProc())
+			}
+		}
+	}
 	g.pushTracker()
 	defer func() {
 		g.State.Pop()

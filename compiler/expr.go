@@ -243,6 +243,30 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		// Handle empty arrays with AnyType
 		arrayType := n.Type().(types.Array)
 		elementType := arrayType.Element
+		// When element type is AnyType and the method returns a typed
+		// array, use the return type's element for empty arrays. This
+		// handles cases where block-scoped refinement (e.g., via <<)
+		// didn't propagate to the AST node type in tolerant mode.
+		if elementType == types.AnyType && len(n.Args) == 0 && g.currentMethod != nil {
+			// Check LHS scope first
+			if len(g.CurrentLhs) > 0 {
+				if ident, ok := g.CurrentLhs[0].(*parser.IdentNode); ok {
+					if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local != parser.BadLocal {
+						if arr, ok := local.Type().(types.Array); ok && arr.Element != types.AnyType {
+							elementType = arr.Element
+						}
+					}
+				}
+			}
+			// Fall back to method return type for arrays that end up returned
+			if elementType == types.AnyType {
+				if rt := g.currentMethod.ReturnType(); rt != nil {
+					if retArr, ok := rt.(types.Array); ok && retArr.Element != types.AnyType {
+						elementType = retArr.Element
+					}
+				}
+			}
+		}
 
 		// Check if element type is Optional (array contains nil)
 		_, isOptional := elementType.(types.Optional)
