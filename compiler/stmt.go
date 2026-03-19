@@ -63,9 +63,21 @@ func (g *GoProgram) CompileStmt(node parser.Node) {
 		}
 		cond := g.CompileExpr(n.Condition)
 		// If the condition is an Optional or Proc type, compare against nil
-		if _, isOpt := n.Condition.Type().(types.Optional); isOpt {
-			cond = bst.Binary(cond, token.NEQ, g.it.Get("nil"))
-		} else if _, isProc := n.Condition.Type().(*types.Proc); isProc {
+		condType := n.Condition.Type()
+		if ident, ok := n.Condition.(*parser.IdentNode); ok {
+			if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local != parser.BadLocal && local.Type() != nil {
+				condType = local.Type()
+			}
+		}
+		nilCheck := false
+		if _, isOpt := condType.(types.Optional); isOpt {
+			nilCheck = true
+		} else if _, isProc := condType.(*types.Proc); isProc {
+			nilCheck = true
+		} else if condType == types.FuncType {
+			nilCheck = true
+		}
+		if nilCheck {
 			cond = bst.Binary(cond, token.NEQ, g.it.Get("nil"))
 		}
 		// Remove conditional entirely if boolean value of cond expr is known at compile time
