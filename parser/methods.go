@@ -1064,6 +1064,10 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 								break
 							}
 						}
+						// Also check instance methods on the module
+						if method == nil {
+							method = mod.MethodSet.Methods[c.MethodName]
+						}
 						if method != nil {
 							break
 						}

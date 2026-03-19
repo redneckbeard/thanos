@@ -548,6 +548,12 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 									}},
 								},
 							})
+							// Register in compiler scope so later references
+							// to this variable can resolve its Optional type.
+							g.ScopeChain.Set(ident.Val, &parser.RubyLocal{})
+							if local, ok := g.ScopeChain.Get(ident.Val); ok {
+								local.(*parser.RubyLocal).SetType(resolvedType)
+							}
 							emitted = true
 						}
 					}
@@ -558,13 +564,17 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 			}
 		}
 		// When reassigning a concrete value to an Optional variable, wrap in stdlib.Ptr[T]()
+		// Skip wrapping if the RHS is already Optional (e.g., method returning *int).
 		if node.Reassignment {
 			for i, left := range node.Left {
 				if ident, ok := left.(*parser.IdentNode); ok && i < len(rhs) {
 					if local := g.ScopeChain.ResolveVar(ident.Val); local != nil {
 						if opt, ok := local.Type().(types.Optional); ok {
 							if _, isNil := node.Right[i].(*parser.NilNode); !isNil {
-								rhs[i] = g.wrapPtr(rhs[i], opt.Element)
+								rhsType := node.Right[i].Type()
+								if _, rhsOpt := rhsType.(types.Optional); !rhsOpt {
+									rhs[i] = g.wrapPtr(rhs[i], opt.Element)
+								}
 							}
 						}
 					}

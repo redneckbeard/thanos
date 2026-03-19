@@ -547,7 +547,7 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 	if b.frozen {
 		// Even when frozen, propagate variable types to ident nodes that
 		// missed their types during tolerant analysis.
-		resolveUntypedIdents(b.Statements)
+		resolveUntypedIdents(b.Statements, scope)
 		return nil
 	}
 	// To guess the right return type of a method, we have to:
@@ -643,7 +643,7 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 	// in blocks have their types set on scope locals, but ident nodes referencing
 	// them may not have been typed (if GetType was skipped due to errors).
 	// Walk all assignments to build a type map, then set types on nil-typed idents.
-	resolveUntypedIdents(b.Statements)
+	resolveUntypedIdents(b.Statements, scope)
 
 	b.ReturnType = lastReturnedType
 	return nil
@@ -652,11 +652,102 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 // resolveUntypedIdents propagates variable types from assignments to all
 // ident node references. This ensures ident nodes inside blocks have types
 // even when tolerant analysis skipped some GetType calls.
-func resolveUntypedIdents(stmts Statements) {
+func resolveUntypedIdents(stmts Statements, scope ScopeChain) {
 	varTypes := map[string]types.Type{}
 	collectVarTypes(stmts, varTypes)
+	// Also collect from scope — variables refined during analysis have
+	// their types stored on scope locals even when ident nodes and
+	// assignment RHS nodes lost their types in tolerant mode.
+	if scope != nil {
+		collectVarTypesFromScope(stmts, scope, varTypes)
+	}
 	if len(varTypes) > 0 {
 		applyVarTypes(stmts, varTypes)
+	}
+}
+
+// collectVarTypesFromScope resolves ident names from the scope chain and
+// adds concrete types to the map. This catches variables whose types are
+// in the scope but not on any AST node (common after tolerant analysis).
+func collectVarTypesFromScope(stmts Statements, scope ScopeChain, varTypes map[string]types.Type) {
+	seen := map[string]bool{}
+	collectIdentNames(stmts, seen)
+	for name := range seen {
+		if _, already := varTypes[name]; already {
+			continue
+		}
+		if local := scope.ResolveVar(name); local != nil && local != BadLocal {
+			t := local.Type()
+			if t != nil && t != types.AnyType && t != types.NilType {
+				varTypes[name] = t
+			}
+		}
+	}
+}
+
+func collectIdentNames(stmts Statements, names map[string]bool) {
+	for _, stmt := range stmts {
+		collectIdentNamesNode(stmt, names)
+	}
+}
+
+func collectIdentNamesNode(n Node, names map[string]bool) {
+	if n == nil {
+		return
+	}
+	if ident, ok := n.(*IdentNode); ok {
+		names[ident.Val] = true
+		return
+	}
+	switch node := n.(type) {
+	case *MethodCall:
+		collectIdentNamesNode(node.Receiver, names)
+		for _, arg := range node.Args {
+			collectIdentNamesNode(arg, names)
+		}
+		if node.Block != nil && node.Block.Body != nil {
+			collectIdentNames(node.Block.Body.Statements, names)
+		}
+	case *AssignmentNode:
+		for _, l := range node.Left {
+			collectIdentNamesNode(l, names)
+		}
+		for _, r := range node.Right {
+			collectIdentNamesNode(r, names)
+		}
+	case *InfixExpressionNode:
+		collectIdentNamesNode(node.Left, names)
+		collectIdentNamesNode(node.Right, names)
+	case *Condition:
+		collectIdentNamesNode(node.Condition, names)
+		for _, s := range node.True {
+			collectIdentNamesNode(s, names)
+		}
+		if node.False != nil {
+			if stmts, ok := node.False.(Statements); ok {
+				collectIdentNames(stmts, names)
+			} else {
+				collectIdentNamesNode(node.False, names)
+			}
+		}
+	case *WhileNode:
+		collectIdentNamesNode(node.Condition, names)
+		for _, s := range node.Body {
+			collectIdentNamesNode(s, names)
+		}
+	case *ReturnNode:
+		for _, v := range node.Val {
+			collectIdentNamesNode(v, names)
+		}
+	case Statements:
+		collectIdentNames(node, names)
+	case *BracketAccessNode:
+		collectIdentNamesNode(node.Composite, names)
+		for _, arg := range node.Args {
+			collectIdentNamesNode(arg, names)
+		}
+	case *NotExpressionNode:
+		collectIdentNamesNode(node.Arg, names)
 	}
 }
 

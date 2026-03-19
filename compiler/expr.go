@@ -373,7 +373,17 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		} else {
 			idx := g.CompileExpr(n.Args[0])
 			// Dereference Optional indices: *int → int for slice access
-			if _, isOpt := n.Args[0].Type().(types.Optional); isOpt {
+			isOpt := false
+			if _, ok := n.Args[0].Type().(types.Optional); ok {
+				isOpt = true
+			} else if ident, ok := n.Args[0].(*parser.IdentNode); ok {
+				if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local != parser.BadLocal {
+					if _, ok := local.Type().(types.Optional); ok {
+						isOpt = true
+					}
+				}
+			}
+			if isOpt {
 				idx = &ast.StarExpr{X: idx}
 			}
 			idx = g.negativeIndex(rcvr, n.Args[0], idx)
@@ -390,7 +400,17 @@ func (g *GoProgram) CompileExpr(node parser.Node) ast.Expr {
 		rcvr := g.CompileExpr(n.Composite)
 		idx := g.CompileExpr(n.Args[0])
 		// Dereference Optional indices: *int → int for slice access
-		if _, isOpt := n.Args[0].Type().(types.Optional); isOpt {
+		isOpt := false
+		if _, ok := n.Args[0].Type().(types.Optional); ok {
+			isOpt = true
+		} else if ident, ok := n.Args[0].(*parser.IdentNode); ok {
+			if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local != parser.BadLocal {
+				if _, ok := local.Type().(types.Optional); ok {
+					isOpt = true
+				}
+			}
+		}
+		if isOpt {
 			idx = &ast.StarExpr{X: idx}
 		}
 		idx = g.negativeIndex(rcvr, n.Args[0], idx)
@@ -629,6 +649,18 @@ func (g *GoProgram) TransformInfixExpressionNode(node *parser.InfixExpressionNod
 	}
 	leftExpr := g.CompileExpr(node.Left)
 	leftType := node.Left.Type()
+	// Resolve type from compiler scope when the ident node's type doesn't
+	// reflect the refined Optional type (common after tolerant gem analysis
+	// where block-local types are lost).
+	if ident, ok := node.Left.(*parser.IdentNode); ok {
+		if _, isOpt := leftType.(types.Optional); !isOpt {
+			if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local != parser.BadLocal {
+				if opt, ok := local.Type().(types.Optional); ok {
+					leftType = opt
+				}
+			}
+		}
+	}
 	// Optional in boolean context: k && expr → k != nil && expr
 	// Only for && — Ruby's || with Optional is used for nil-coalescing (x || default)
 	if node.Operator == "&&" {
@@ -649,7 +681,15 @@ func (g *GoProgram) TransformInfixExpressionNode(node *parser.InfixExpressionNod
 	}
 	transform := g.getTransform(nil, leftExpr, leftType, node.Operator, parser.ArgsNode{node.Right}, nil, false)
 	if derefOp {
-		if _, ok := node.Right.Type().(types.Optional); ok {
+		rightType := node.Right.Type()
+		if rightType == nil || rightType == types.AnyType {
+			if ident, ok := node.Right.(*parser.IdentNode); ok {
+				if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local != parser.BadLocal {
+					rightType = local.Type()
+				}
+			}
+		}
+		if _, ok := rightType.(types.Optional); ok {
 			if binExpr, ok := transform.Expr.(*ast.BinaryExpr); ok {
 				binExpr.Y = &ast.StarExpr{X: binExpr.Y}
 			}
