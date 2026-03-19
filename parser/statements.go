@@ -545,6 +545,9 @@ func refineCompositeAnyIdents(n Node, scope ScopeChain) bool {
 
 func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 	if b.frozen {
+		// Even when frozen, propagate variable types to ident nodes that
+		// missed their types during tolerant analysis.
+		resolveUntypedIdents(b.Statements)
 		return nil
 	}
 	// To guess the right return type of a method, we have to:
@@ -678,6 +681,12 @@ func collectVarTypesNode(n Node, varTypes map[string]types.Type) {
 					// Also infer from RHS type: k = replace_next_larger(...)
 					// The RHS node's type tells us what k should be.
 					rType := node.Right[i].Type()
+					if rType == nil {
+						// For MethodCalls, check if the Method has a known return type
+						if mc, ok := node.Right[i].(*MethodCall); ok && mc.Method != nil && mc.Method.ReturnType() != nil {
+							rType = mc.Method.ReturnType()
+						}
+					}
 					if rType != nil && rType != types.AnyType && rType != types.NilType {
 						// For nil-init vars reassigned to concrete type, wrap in Optional
 						if _, isNil := node.Right[0].(*NilNode); isNil && !node.Reassignment {
@@ -697,6 +706,12 @@ func collectVarTypesNode(n Node, varTypes map[string]types.Type) {
 			collectVarTypesNode(r, varTypes)
 		}
 	case *MethodCall:
+		// If the MethodCall's type is nil but its resolved Method has a
+		// return type, propagate it. This happens when tolerant analysis
+		// skipped SetType on the node but successfully analyzed the method.
+		if node.Type() == nil && node.Method != nil && node.Method.ReturnType() != nil {
+			node.SetType(node.Method.ReturnType())
+		}
 		collectVarTypesNode(node.Receiver, varTypes)
 		for _, arg := range node.Args {
 			collectVarTypesNode(arg, varTypes)
