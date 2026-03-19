@@ -42,10 +42,33 @@ func (t Simple) ClassName() string   { return "" }
 func (t Simple) Equals(t2 Type) bool { return t == t2 }
 
 // lies but needed for now
-func (t Simple) HasMethod(m string) bool                                      { return false }
-func (t Simple) MethodReturnType(m string, b Type, args []Type) (Type, error) { return nil, nil }
-func (t Simple) GetMethodSpec(m string) (MethodSpec, bool)                    { return MethodSpec{}, false }
-func (t Simple) BlockArgTypes(m string, args []Type) []Type                   { return []Type{nil} }
+func (t Simple) HasMethod(m string) bool {
+	// AnyType (interface{}) supports universal methods that work on any value.
+	if t == AnyType {
+		switch m {
+		case "nil?", "==", "!=", "eql?", "class", "is_a?", "dup":
+			return true
+		}
+	}
+	return false
+}
+func (t Simple) MethodReturnType(m string, b Type, args []Type) (Type, error) {
+	if t == AnyType {
+		switch m {
+		case "nil?":
+			return BoolType, nil
+		case "==", "!=", "eql?", "is_a?":
+			return BoolType, nil
+		case "class":
+			return AnyType, nil
+		case "dup":
+			return AnyType, nil
+		}
+	}
+	return nil, nil
+}
+func (t Simple) GetMethodSpec(m string) (MethodSpec, bool) { return MethodSpec{}, false }
+func (t Simple) BlockArgTypes(m string, args []Type) []Type { return []Type{nil} }
 func (t Simple) TransformAST(m string, rcvr ast.Expr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
 	return Transform{}
 }

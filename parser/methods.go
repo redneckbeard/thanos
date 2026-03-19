@@ -724,13 +724,16 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 				method.Scope.Set(param.Name, &RubyLocal{_type: t})
 			} else if err == nil && param.HasNilDefault() {
 				// Param has nil default. If caller passed a concrete type, set
-				// the local so body analysis can refine it. If caller passed nil,
-				// set as AnyType so ||= refinement can discover the concrete type.
-				if t != types.NilType {
-					method.Scope.Set(param.Name, &RubyLocal{_type: t})
-				} else {
-					method.Scope.Set(param.Name, &RubyLocal{_type: types.AnyType})
+				// the local so body analysis can refine it. If caller passed nil
+				// or AnyType, use AnyType so refinement can discover the concrete type.
+				// Always mark as refinable — nil-default params can be nil or concrete.
+				localType := t
+				if t == types.NilType || t == types.AnyType {
+					localType = types.AnyType
 				}
+				rl := &RubyLocal{_type: localType}
+				rl.MarkAsRefinable()
+				method.Scope.Set(param.Name, rl)
 			} else if err == nil && t != param.Type() {
 				if param.Kind == Splat {
 					if splat, ok := arg.(*SplatNode); ok {
@@ -1080,6 +1083,19 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 	if method != nil {
 		//TODO should be consolidated with AnalyzeArguments/AnalyzeMethodSet
 		c.Method = method
+		// If the body is frozen (concrete return type locked in from a prior
+		// analysis), return the cached result immediately. This prevents
+		// AnalyzeArguments from overwriting param types that were refined
+		// during the successful first analysis.
+		if method.Body.frozen && method.Body.ReturnType != nil {
+			if method.Name == "initialize" {
+				if cls, ok := receiverType.(*types.Class); ok {
+					return cls.Instance.(types.Type), nil
+				}
+				return receiverType, nil
+			}
+			return method.ReturnType(), nil
+		}
 		method.AnalyzeArguments(class, c, scope)
 		// Guard against re-entrant analysis (e.g., list.each calls user's each
 		// which calls @items.each — avoid infinite recursion).
@@ -1137,7 +1153,7 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			// After body analysis, wrap nil-default params in Optional
 			// using the refined local type (mirrors Analyze post-fixup).
 			for _, param := range method.Params {
-				if param.HasNilDefault() && (param._type == nil || param._type == types.NilType || param._type == types.AnyType) {
+					if param.HasNilDefault() && (param._type == nil || param._type == types.NilType || param._type == types.AnyType) {
 					if local, ok := method.Locals.Get(param.Name); ok && local.Type() != nil && local.Type() != types.AnyType {
 						if _, alreadyOpt := local.Type().(types.Optional); alreadyOpt {
 							param._type = local.Type()
