@@ -84,6 +84,8 @@ func init() {
 		},
 	})
 
+	ObjectType.Alias("==", "eql?")
+
 	ObjectType.Def("class", MethodSpec{
 		ReturnType: func(receiverType Type, blockReturnType Type, args []Type) (Type, error) {
 			return MetaclassType, nil

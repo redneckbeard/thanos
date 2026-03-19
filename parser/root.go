@@ -1095,6 +1095,106 @@ func (r *Root) expandStructDefinitions() {
 				kwargsSpec[i] = types.KwargSpec{Name: name}
 			}
 			fields := fieldNames // capture for closure
+			className := cls.Name()
+
+			// deconstruct: returns array of field values in definition order
+			// e.g., Point.new(1, 2).deconstruct → [1, 2]
+			classType.Instance.Def("deconstruct", types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					return types.NewArray(types.AnyType), nil
+				},
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					elts := make([]ast.Expr, len(fields))
+					for i, name := range fields {
+						elts[i] = &ast.SelectorExpr{X: rcvr.Expr, Sel: it.Get(GoName(name))}
+					}
+					return types.Transform{
+						Expr: &ast.CompositeLit{
+							Type: &ast.ArrayType{Elt: it.Get("int")},
+							Elts: elts,
+						},
+					}
+				},
+			})
+
+			// to_h: returns hash of field names (symbols) to values
+			// e.g., Point.new(1, 2).to_h → {x: 1, y: 2}
+			classType.Instance.Def("to_h", types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					return types.NewHash(types.SymbolType, types.AnyType), nil
+				},
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					mapIdent := it.New("h_")
+					// h_ := stdlib.NewOrderedMap[string, int]()
+					stmts := []ast.Stmt{
+						bst.Define(mapIdent, bst.Call("stdlib", "NewOrderedMap[string, int]")),
+					}
+					for _, name := range fields {
+						stmts = append(stmts, &ast.ExprStmt{
+							X: bst.Call(mapIdent, "Set",
+								bst.String(name),
+								&ast.SelectorExpr{X: rcvr.Expr, Sel: it.Get(GoName(name))},
+							),
+						})
+					}
+					return types.Transform{
+						Stmts:   stmts,
+						Expr:    mapIdent,
+						Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+					}
+				},
+			})
+
+			// inspect: returns string like "#<data Point x=1, y=2>"
+			classType.Instance.Def("inspect", types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					return types.StringType, nil
+				},
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					// Build: stdlib.DataInspect("Point", []string{"x", "y"}, []interface{}{p.X, p.Y})
+					nameElts := make([]ast.Expr, len(fields))
+					valElts := make([]ast.Expr, len(fields))
+					for i, name := range fields {
+						nameElts[i] = bst.String(name)
+						valElts[i] = &ast.SelectorExpr{X: rcvr.Expr, Sel: it.Get(GoName(name))}
+					}
+					namesArr := &ast.CompositeLit{
+						Type: &ast.ArrayType{Elt: it.Get("string")},
+						Elts: nameElts,
+					}
+					valsArr := &ast.CompositeLit{
+						Type: &ast.ArrayType{
+							Elt: &ast.InterfaceType{Methods: &ast.FieldList{}},
+						},
+						Elts: valElts,
+					}
+					return types.Transform{
+						Expr:    bst.Call("stdlib", "DataInspect", bst.String(className), namesArr, valsArr),
+						Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
+					}
+				},
+			})
+
+			// members: class method returning array of field name symbols
+			// e.g., Point.members → [:x, :y]
+			classType.Def("members", types.MethodSpec{
+				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
+					return types.NewArray(types.StringType), nil
+				},
+				TransformAST: func(rcvr types.TypeExpr, args []types.TypeExpr, blk *types.Block, it bst.IdentTracker) types.Transform {
+					elts := make([]ast.Expr, len(fields))
+					for i, name := range fields {
+						elts[i] = bst.String(name)
+					}
+					return types.Transform{
+						Expr: &ast.CompositeLit{
+							Type: &ast.ArrayType{Elt: it.Get("string")},
+							Elts: elts,
+						},
+					}
+				},
+			})
+
 			classType.Instance.Def("with", types.MethodSpec{
 				ReturnType: func(receiverType types.Type, blockReturnType types.Type, args []types.Type) (types.Type, error) {
 					return receiverType, nil
