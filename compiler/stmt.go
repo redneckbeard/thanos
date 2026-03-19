@@ -533,6 +533,11 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 						if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local.Type() != nil && local.Type() != types.AnyType && local.Type() != types.NilType {
 							resolvedType = local.Type()
 						}
+						// Also check the ident node's own type — the analysis may
+						// have refined it in a block scope that's no longer on the chain.
+						if resolvedType == nil && ident.Type() != nil && ident.Type() != types.AnyType && ident.Type() != types.NilType {
+							resolvedType = ident.Type()
+						}
 						if resolvedType != nil {
 							g.appendToCurrentBlock(&ast.DeclStmt{
 								Decl: &ast.GenDecl{
@@ -549,6 +554,20 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 				}
 				if emitted {
 					return
+				}
+			}
+		}
+		// When reassigning a concrete value to an Optional variable, wrap in stdlib.Ptr[T]()
+		if node.Reassignment {
+			for i, left := range node.Left {
+				if ident, ok := left.(*parser.IdentNode); ok && i < len(rhs) {
+					if local := g.ScopeChain.ResolveVar(ident.Val); local != nil {
+						if opt, ok := local.Type().(types.Optional); ok {
+							if _, isNil := node.Right[i].(*parser.NilNode); !isNil {
+								rhs[i] = g.wrapPtr(rhs[i], opt.Element)
+							}
+						}
+					}
 				}
 			}
 		}

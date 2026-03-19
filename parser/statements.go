@@ -333,6 +333,12 @@ func clearAnyTypeNode(n Node) bool {
 			if clearAnyTypeNode(r) {
 				cleared = true
 			}
+			// Clear nil-init assignments so they can be re-evaluated after
+			// the variable's type has been refined by later assignments.
+			if _, isNil := r.(*NilNode); isNil && !node.Reassignment {
+				node.SetType(nil)
+				cleared = true
+			}
 		}
 	case *InfixExpressionNode:
 		if clearAnyTypeNode(node.Left) {

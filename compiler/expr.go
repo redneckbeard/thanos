@@ -627,7 +627,27 @@ func (g *GoProgram) TransformInfixExpressionNode(node *parser.InfixExpressionNod
 			}
 		}
 	}
-	transform := g.getTransform(nil, g.CompileExpr(node.Left), node.Left.Type(), node.Operator, parser.ArgsNode{node.Right}, nil, false)
+	leftExpr := g.CompileExpr(node.Left)
+	leftType := node.Left.Type()
+	// Auto-dereference Optional operands in arithmetic/comparison operators.
+	// Skip equality (== !=), logical (|| &&), and nil-related operators.
+	derefOp := node.Operator == "+" || node.Operator == "-" || node.Operator == "*" || node.Operator == "/" ||
+		node.Operator == "%" || node.Operator == "<<" || node.Operator == ">>" ||
+		node.Operator == "<" || node.Operator == ">" || node.Operator == "<=" || node.Operator == ">="
+	if derefOp {
+		if _, ok := leftType.(types.Optional); ok {
+			leftExpr = &ast.StarExpr{X: leftExpr}
+			leftType = leftType.(types.Optional).Element
+		}
+	}
+	transform := g.getTransform(nil, leftExpr, leftType, node.Operator, parser.ArgsNode{node.Right}, nil, false)
+	if derefOp {
+		if _, ok := node.Right.Type().(types.Optional); ok {
+			if binExpr, ok := transform.Expr.(*ast.BinaryExpr); ok {
+				binExpr.Y = &ast.StarExpr{X: binExpr.Y}
+			}
+		}
+	}
 	// Rewrite hash-accessed mutations: h.Get(k) = append(...) → h.Set(k, ...)
 	if ba, ok := node.Left.(*parser.BracketAccessNode); ok {
 		if _, isHash := ba.Composite.Type().(types.Hash); isHash {
@@ -929,9 +949,13 @@ func (g *GoProgram) CompileArgs(call *parser.MethodCall, args parser.ArgsNode) [
 				argExprs = append(argExprs, types.TypeExpr{p.Type(), g.CompileArg(p.Default)})
 			} else {
 				compiled := g.CompileArg(args[i])
-				if _, isOpt := p.Type().(types.Optional); isOpt {
+				if optParam, isOpt := p.Type().(types.Optional); isOpt {
 					if _, isNil := args[i].(*parser.NilNode); !isNil {
-						compiled = g.wrapPtr(compiled, p.Type().(types.Optional).Element)
+						// Don't wrap if arg type already matches the param's Optional type
+						argType := args[i].Type()
+						if argType == nil || !argType.Equals(optParam) {
+							compiled = g.wrapPtr(compiled, optParam.Element)
+						}
 					}
 				}
 				argExprs = append(argExprs, types.TypeExpr{p.Type(), compiled})
