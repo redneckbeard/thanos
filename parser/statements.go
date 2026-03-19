@@ -635,8 +635,164 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 			}
 		}
 	}
+	// Post-analysis pass: propagate variable types to all ident nodes.
+	// During tolerant analysis, block scopes are transient — variables declared
+	// in blocks have their types set on scope locals, but ident nodes referencing
+	// them may not have been typed (if GetType was skipped due to errors).
+	// Walk all assignments to build a type map, then set types on nil-typed idents.
+	resolveUntypedIdents(b.Statements)
+
 	b.ReturnType = lastReturnedType
 	return nil
+}
+
+// resolveUntypedIdents propagates variable types from assignments to all
+// ident node references. This ensures ident nodes inside blocks have types
+// even when tolerant analysis skipped some GetType calls.
+func resolveUntypedIdents(stmts Statements) {
+	varTypes := map[string]types.Type{}
+	collectVarTypes(stmts, varTypes)
+	if len(varTypes) > 0 {
+		applyVarTypes(stmts, varTypes)
+	}
+}
+
+func collectVarTypes(stmts Statements, varTypes map[string]types.Type) {
+	for _, stmt := range stmts {
+		collectVarTypesNode(stmt, varTypes)
+	}
+}
+
+func collectVarTypesNode(n Node, varTypes map[string]types.Type) {
+	if n == nil {
+		return
+	}
+	switch node := n.(type) {
+	case *AssignmentNode:
+		// Collect types from LHS ident nodes (if typed)
+		for i, l := range node.Left {
+			if ident, ok := l.(*IdentNode); ok {
+				if ident.Type() != nil && ident.Type() != types.AnyType && ident.Type() != types.NilType {
+					varTypes[ident.Val] = ident.Type()
+				} else if i < len(node.Right) {
+					// Also infer from RHS type: k = replace_next_larger(...)
+					// The RHS node's type tells us what k should be.
+					rType := node.Right[i].Type()
+					if rType != nil && rType != types.AnyType && rType != types.NilType {
+						// For nil-init vars reassigned to concrete type, wrap in Optional
+						if _, isNil := node.Right[0].(*NilNode); isNil && !node.Reassignment {
+							// This is the k = nil declaration — skip, the reassignment
+							// will provide the concrete type
+						} else if existing, ok := varTypes[ident.Val]; ok {
+							// Keep the existing (possibly Optional) type
+							_ = existing
+						} else {
+							varTypes[ident.Val] = rType
+						}
+					}
+				}
+			}
+		}
+		for _, r := range node.Right {
+			collectVarTypesNode(r, varTypes)
+		}
+	case *MethodCall:
+		collectVarTypesNode(node.Receiver, varTypes)
+		for _, arg := range node.Args {
+			collectVarTypesNode(arg, varTypes)
+		}
+		if node.Block != nil && node.Block.Body != nil {
+			collectVarTypes(node.Block.Body.Statements, varTypes)
+		}
+	case *Condition:
+		collectVarTypesNode(node.Condition, varTypes)
+		for _, s := range node.True {
+			collectVarTypesNode(s, varTypes)
+		}
+		if node.False != nil {
+			if stmts, ok := node.False.(Statements); ok {
+				collectVarTypes(stmts, varTypes)
+			} else {
+				collectVarTypesNode(node.False, varTypes)
+			}
+		}
+	case *WhileNode:
+		for _, s := range node.Body {
+			collectVarTypesNode(s, varTypes)
+		}
+	case Statements:
+		collectVarTypes(node, varTypes)
+	}
+}
+
+func applyVarTypes(stmts Statements, varTypes map[string]types.Type) {
+	for _, stmt := range stmts {
+		applyVarTypesNode(stmt, varTypes)
+	}
+}
+
+func applyVarTypesNode(n Node, varTypes map[string]types.Type) {
+	if n == nil {
+		return
+	}
+	if ident, ok := n.(*IdentNode); ok {
+		if ident.Type() == nil || ident.Type() == types.AnyType {
+			if t, found := varTypes[ident.Val]; found {
+				ident.SetType(t)
+			}
+		}
+		return
+	}
+	switch node := n.(type) {
+	case *MethodCall:
+		applyVarTypesNode(node.Receiver, varTypes)
+		for _, arg := range node.Args {
+			applyVarTypesNode(arg, varTypes)
+		}
+		if node.Block != nil && node.Block.Body != nil {
+			applyVarTypes(node.Block.Body.Statements, varTypes)
+		}
+	case *AssignmentNode:
+		for _, l := range node.Left {
+			applyVarTypesNode(l, varTypes)
+		}
+		for _, r := range node.Right {
+			applyVarTypesNode(r, varTypes)
+		}
+	case *InfixExpressionNode:
+		applyVarTypesNode(node.Left, varTypes)
+		applyVarTypesNode(node.Right, varTypes)
+	case *Condition:
+		applyVarTypesNode(node.Condition, varTypes)
+		for _, s := range node.True {
+			applyVarTypesNode(s, varTypes)
+		}
+		if node.False != nil {
+			if stmts, ok := node.False.(Statements); ok {
+				applyVarTypes(stmts, varTypes)
+			} else {
+				applyVarTypesNode(node.False, varTypes)
+			}
+		}
+	case *WhileNode:
+		applyVarTypesNode(node.Condition, varTypes)
+		for _, s := range node.Body {
+			applyVarTypesNode(s, varTypes)
+		}
+	case *ReturnNode:
+		for _, v := range node.Val {
+			applyVarTypesNode(v, varTypes)
+		}
+	case Statements:
+		applyVarTypes(node, varTypes)
+	case *BracketAccessNode:
+		applyVarTypesNode(node.Composite, varTypes)
+		for _, arg := range node.Args {
+			applyVarTypesNode(arg, varTypes)
+		}
+	case *NotExpressionNode:
+		applyVarTypesNode(node.Arg, varTypes)
+	}
 }
 
 // unifyReturnTypes reconciles two differing return types. If one is NilType

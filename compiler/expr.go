@@ -629,6 +629,14 @@ func (g *GoProgram) TransformInfixExpressionNode(node *parser.InfixExpressionNod
 	}
 	leftExpr := g.CompileExpr(node.Left)
 	leftType := node.Left.Type()
+	// Optional in boolean context: k && expr → k != nil && expr
+	// Only for && — Ruby's || with Optional is used for nil-coalescing (x || default)
+	if node.Operator == "&&" {
+		if _, ok := leftType.(types.Optional); ok {
+			leftExpr = bst.Binary(leftExpr, token.NEQ, g.it.Get("nil"))
+			leftType = types.BoolType
+		}
+	}
 	// Auto-dereference Optional operands in arithmetic/comparison operators.
 	derefOp := node.Operator == "+" || node.Operator == "-" || node.Operator == "*" || node.Operator == "/" ||
 		node.Operator == "%" || node.Operator == "<<" || node.Operator == ">>" ||
