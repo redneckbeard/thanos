@@ -73,6 +73,15 @@ func promoteTupleToSynthStruct(arrayVarName string, tuple *types.Tuple, scope Sc
 	}
 	ss.Fields = fields
 
+	// Track which module this SynthStruct belongs to so the compiler
+	// emits it in the correct package.
+	for i := len(scope) - 1; i >= 0; i-- {
+		if mod, ok := scope[i].(*Module); ok {
+			ss.ModuleName = mod.QualifiedName()
+			break
+		}
+	}
+
 	SynthStructs = append(SynthStructs, ss)
 	return ss
 }

@@ -161,8 +161,8 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 		decls = append(decls, g.compileDuckInterface(iface)...)
 	}
 
-	// Emit synthesized struct declarations (from Tuple promotion)
-	decls = append(decls, g.compileSynthStructs()...)
+	// Emit synthesized struct declarations (from Tuple promotion) — main package only
+	decls = append(decls, g.compileSynthStructs("")...)
 
 	// Emit package-level vars for global variables ($var)
 	for name, t := range parser.GlobalVars() {
@@ -440,6 +440,9 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 				modDecls = append(modDecls, modG.CompileClassMethod(m, nil)...)
 			}
 		}
+
+		// Emit synthesized struct declarations belonging to this module
+		modDecls = append(modDecls, modG.compileSynthStructs(mod.QualifiedName())...)
 
 		if len(modDecls) > 0 {
 			modFile := &ast.File{

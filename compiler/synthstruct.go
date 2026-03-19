@@ -168,11 +168,14 @@ func bstAssign(lhs, rhs ast.Expr) *ast.AssignStmt {
 	}
 }
 
-// compileSynthStructs emits all synthesized struct declarations.
-func (g *GoProgram) compileSynthStructs() []ast.Decl {
+// compileSynthStructs emits synthesized struct declarations for the given module.
+// Pass "" for the main package.
+func (g *GoProgram) compileSynthStructs(moduleName string) []ast.Decl {
 	var decls []ast.Decl
 	for _, ss := range parser.SynthStructs {
-		decls = append(decls, g.compileSynthStruct(ss)...)
+		if ss.ModuleName == moduleName {
+			decls = append(decls, g.compileSynthStruct(ss)...)
+		}
 	}
 	return decls
 }

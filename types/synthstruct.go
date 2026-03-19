@@ -19,8 +19,9 @@ type SynthField struct {
 // heterogeneous array literals (Tuples) as elements of a homogeneous array.
 // For example, `links[k] = [prev, i, j]` produces a struct with three fields.
 type SynthStruct struct {
-	Name   string       // "LinksEntry"
-	Fields []SynthField
+	Name       string       // "LinksEntry"
+	Fields     []SynthField
+	ModuleName string       // qualified module name (e.g., "Diff::LCS::Internals"), empty = main package
 }
 
 func NewSynthStruct(name string, fields []SynthField) *SynthStruct {
