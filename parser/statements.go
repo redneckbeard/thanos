@@ -177,6 +177,7 @@ type Body struct {
 	ReturnType      types.Type
 	ExplicitReturns []*ReturnNode
 	tolerantInfer   bool // true if ReturnType was set via tolerant (error-skipping) mode
+	frozen          bool // true if ReturnType is concrete and should not be overwritten
 }
 
 // clearCachedTypes resets cached type information on all statements in the body
@@ -537,6 +538,9 @@ func refineCompositeAnyIdents(n Node, scope ScopeChain) bool {
 }
 
 func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
+	if b.frozen {
+		return nil
+	}
 	// To guess the right return type of a method, we have to:
 
 	//	1) track all return statements in the method body;

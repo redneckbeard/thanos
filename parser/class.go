@@ -374,6 +374,17 @@ func generateClassMethodSpec(m *Method, funcName string, ownerClass *types.Class
 					}
 				}
 			}
+			// Re-analyze when the return type contains AnyType and we now
+			// have concrete arg types that could refine it.
+			if !needsAnalysis && len(args) > 0 && types.ContainsAnyType(cm.Body.ReturnType) {
+				for _, a := range args {
+					if a != nil && a != types.AnyType {
+						needsAnalysis = true
+						cm.resetForReanalysis()
+						break
+					}
+				}
+			}
 			if needsAnalysis {
 				if fromGem {
 					func() {

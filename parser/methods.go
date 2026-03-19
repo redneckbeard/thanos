@@ -394,6 +394,7 @@ func (m *Method) Analyze(ms *MethodSet) error {
 func (m *Method) resetForReanalysis() {
 	m.Body.ReturnType = nil
 	m.Body.tolerantInfer = false
+	m.Body.frozen = false
 	m.Body.clearCachedTypes()
 	m.analyzed = false
 	m.uncallable = false
@@ -1127,6 +1128,12 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 			return nil, err
 		} else {
 			method.analyzing = false
+			// Freeze the return type once we have a concrete result so that
+			// subsequent calls (which may have stale cached AST node types)
+			// cannot overwrite it with a degraded AnyType result.
+			if method.Body.ReturnType != nil && !types.ContainsAnyType(method.Body.ReturnType) {
+				method.Body.frozen = true
+			}
 			if method.Name == "initialize" {
 				if cls, ok := receiverType.(*types.Class); ok {
 					return cls.Instance.(types.Type), nil
