@@ -124,6 +124,18 @@ func init() {
 		},
 	})
 
+	ArrayClass.Instance.Def("dup", MethodSpec{
+		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
+			return r, nil
+		},
+		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
+			return Transform{
+				Expr:    bst.Call("slices", "Clone", rcvr.Expr),
+				Imports: []string{"slices"},
+			}
+		},
+	})
+
 	ArrayClass.Instance.Def("<<", MethodSpec{
 		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
 			arrayType := r.(Array)
