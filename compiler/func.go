@@ -84,6 +84,11 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) []ast.Decl {
 		Name: g.it.Get(m.GoName()),
 	}
 
+	// Add type parameters for generic methods
+	if len(m.GenericParams) > 0 {
+		decl.Type.TypeParams = g.buildTypeParams(m)
+	}
+
 	if c != nil {
 		className := g.it.Get(c.Type().GoType())
 		decl.Recv = &ast.FieldList{
@@ -195,6 +200,10 @@ func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix
 		Name: g.it.Get(funcName),
 	}
 
+	if len(m.GenericParams) > 0 {
+		decl.Type.TypeParams = g.buildTypeParams(m)
+	}
+
 	decls = append(decls, decl)
 	return decls
 }
@@ -270,6 +279,23 @@ func augmentReturns(stmts []ast.Stmt, extra []ast.Expr) {
 			augmentReturns(s.List, extra)
 		}
 	}
+}
+
+// buildTypeParams creates the Go type parameter list for a generic method.
+func (g *GoProgram) buildTypeParams(m *parser.Method) *ast.FieldList {
+	seen := map[string]bool{}
+	fields := []*ast.Field{}
+	for _, gp := range m.GenericParams {
+		if seen[gp.Name] {
+			continue
+		}
+		seen[gp.Name] = true
+		fields = append(fields, &ast.Field{
+			Names: []*ast.Ident{g.it.Get(gp.Name)},
+			Type:  g.it.Get(gp.Constraint),
+		})
+	}
+	return &ast.FieldList{List: fields}
 }
 
 func (g *GoProgram) GetReturnType(t types.Type) []*ast.Field {

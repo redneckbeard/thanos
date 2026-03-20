@@ -196,7 +196,8 @@ type Method struct {
 	analyzed       bool
 	analyzing      bool
 	uncallable     bool
-	MutatedSliceParams []int // indices of params that are slices mutated via append
+	MutatedSliceParams []int              // indices of params that are slices mutated via append
+	GenericParams      map[int]types.GenericParam // param index → generic type param
 }
 
 func NewMethod(name string, r *Root) *Method {
@@ -842,8 +843,45 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 					// the keyword argument 'foo' is valid when a double splat parameter is also named 'foo', so we have to carve out an exception for that here
 					return nil
 				} else {
-					// Try duck-type interface inference before erroring
-					if iface := tryBuildDuckInterface(method, param, param.Type(), t); iface != nil {
+					// Try generic type param when composite types differ only in element type
+					if gp, genArr := tryMakeGeneric(method, param, param.Type(), t, i); gp != nil {
+						// Only apply if not already generic for this param
+						alreadyGeneric := false
+						if method.GenericParams != nil {
+							if _, ok := method.GenericParams[i]; ok {
+								alreadyGeneric = true
+							}
+						}
+						if !alreadyGeneric {
+							// Generify the return type if it uses the same element type
+							oldElem := param.Type().(types.Array).Element
+							if method.Body != nil && method.Body.ReturnType != nil {
+								method.Body.ReturnType = generifyType(method.Body.ReturnType, oldElem, *gp)
+							}
+							param._type = genArr
+							method.Scope.Set(param.Name, &RubyLocal{_type: genArr})
+							if method.GenericParams == nil {
+								method.GenericParams = map[int]types.GenericParam{}
+							}
+							method.GenericParams[i] = *gp
+							// Re-analyze body with the generic param types so
+							// expressions and locals pick up the generified types.
+							if method.Body != nil {
+								method.Body.frozen = false
+								method.Body.clearCachedTypes()
+								// Reset locals to just params so the body
+								// re-declares local variables with :=
+								newLocals := NewScope(method.Locals.Name())
+								for _, p := range method.Params {
+									if p.Type() != nil {
+										newLocals.Set(p.Name, &RubyLocal{_type: p.Type()})
+									}
+								}
+								method.Locals = newLocals
+								method.Scope = method.Scope[:len(method.Scope)-1].Extend(newLocals)
+							}
+						}
+					} else if iface := tryBuildDuckInterface(method, param, param.Type(), t); iface != nil {
 						param._type = iface
 						method.Scope.Set(param.Name, &RubyLocal{_type: iface})
 						// Register the interface globally for the compiler
@@ -865,6 +903,70 @@ func (method *Method) AnalyzeArguments(class *Class, c *MethodCall, scope ScopeC
 		}
 	}
 	return nil
+}
+
+// tryMakeGeneric checks if two composite types differ only in element type
+// and both elements are comparable. Returns a GenericParam and the generified
+// composite type (e.g., Array(GenericParam{T})), or nil if not applicable.
+func tryMakeGeneric(method *Method, param *Param, existingType, newType types.Type, paramIdx int) (*types.GenericParam, types.Type) {
+	// Already generic — check if the new type is also a compatible array
+	if arr, ok := existingType.(types.Array); ok {
+		if _, isGen := arr.Element.(types.GenericParam); isGen {
+			if _, ok := newType.(types.Array); ok {
+				return &types.GenericParam{Name: "T", Constraint: "comparable"}, existingType
+			}
+		}
+	}
+	// Both must be arrays
+	arr1, ok1 := existingType.(types.Array)
+	arr2, ok2 := newType.(types.Array)
+	if !ok1 || !ok2 {
+		return nil, nil
+	}
+	// Elements must both be comparable Go types
+	if !isComparableElement(arr1.Element) || !isComparableElement(arr2.Element) {
+		return nil, nil
+	}
+	gp := types.GenericParam{Name: "T", Constraint: "comparable"}
+	return &gp, types.NewArray(gp)
+}
+
+// generifyType replaces occurrences of oldElem in a type with the generic param.
+func generifyType(t types.Type, oldElem types.Type, gp types.GenericParam) types.Type {
+	if t == nil {
+		return nil
+	}
+	if t.Equals(oldElem) {
+		return gp
+	}
+	if arr, ok := t.(types.Array); ok {
+		if arr.Element.Equals(oldElem) {
+			return types.NewArray(gp)
+		}
+		if opt, ok := arr.Element.(types.Optional); ok && opt.Element.Equals(oldElem) {
+			return types.NewArray(types.NewOptional(gp))
+		}
+	}
+	if opt, ok := t.(types.Optional); ok {
+		if opt.Element.Equals(oldElem) {
+			return types.NewOptional(gp)
+		}
+	}
+	return t
+}
+
+func isComparableElement(t types.Type) bool {
+	switch t.(type) {
+	case types.Int, types.String, types.Bool, types.Float, types.Symbol:
+		return true
+	case types.GenericParam:
+		return true
+	}
+	// AnyType from empty arrays — allow, will be inferred at call site
+	if t == types.AnyType {
+		return true
+	}
+	return false
 }
 
 type Block struct {
