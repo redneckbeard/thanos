@@ -1404,6 +1404,13 @@ func (r *Root) Analyze() error {
 			GetType(c, r.ScopeChain, r.MethodSetStack.Peek().Class)
 		}
 	}
+
+	// Propagate type widenings backwards through function calls.
+	// When consumer code implies a wider type (e.g., .nil? check on array
+	// elements), widen the producing function's return type to match.
+	Tracer.SetPhase("type-widening-propagation")
+	r.propagateTypeWidenings()
+
 	return nil
 }
 

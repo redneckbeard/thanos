@@ -186,8 +186,14 @@ func (n *BracketAssignmentNode) TargetType(locals ScopeChain, class *Class) (typ
 	if err != nil {
 		return nil, err
 	}
+	// Ensure all bracket args are typed (needed by compiler for expressions like arr[link[1]])
+	for _, arg := range n.Args {
+		if _, err := GetType(arg, locals, class); err != nil {
+			return nil, err
+		}
+	}
 	if h, ok := t.(types.Hash); ok && h.HasDefault && h.Key == types.AnyType {
-		if keyType, err := GetType(n.Args[0], locals, class); err == nil && keyType != types.AnyType {
+		if keyType := n.Args[0].Type(); keyType != nil && keyType != types.AnyType {
 			refined := types.NewDefaultHash(keyType, h.Value)
 			if ident, ok := n.Composite.(*IdentNode); ok {
 				locals.RefineVariableType(ident.Val, refined)

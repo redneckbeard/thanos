@@ -4,6 +4,9 @@ func Build_entries(names []string) []*EntriesEntry {
 	entries := []*EntriesEntry{}
 	i := 0
 	for i < len(names) {
+		if i >= len(entries) {
+			entries = append(entries, make([]*EntriesEntry, i-len(entries)+1)...)
+		}
 		entries[i] = &EntriesEntry{Field0: names[i], Field1: i}
 		i++
 	}
@@ -18,6 +21,9 @@ func Build_links(n int) []*LinksEntry {
 			cond = links[i-1]
 		} else {
 			cond = nil
+		}
+		if i >= len(links) {
+			links = append(links, make([]*LinksEntry, i-len(links)+1)...)
 		}
 		links[i] = &LinksEntry{Field0: cond, Field1: i, Field2: i + 1}
 		i++

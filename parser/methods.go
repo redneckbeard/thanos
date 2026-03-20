@@ -847,6 +847,36 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 	// Extract &variable block pass from args
 	c.extractBlockPass()
 	receiverType := c.ReceiverType(scope, class)
+	// When .nil? is called on arr[i] and the array has non-Optional elements,
+	// promote the array's element type to Optional. Ruby arrays can always
+	// contain nil; if the code checks .nil?, the sparse entries matter.
+	if c.MethodName == "nil?" {
+		if ba, ok := c.Receiver.(*BracketAccessNode); ok {
+			// arr[i].nil? → promote array element type to Optional
+			if arr, ok := ba.Composite.Type().(types.Array); ok {
+				if _, alreadyOpt := arr.Element.(types.Optional); !alreadyOpt {
+					promoted := types.NewArray(types.NewOptional(arr.Element))
+					if ident, ok := ba.Composite.(*IdentNode); ok {
+						scope.RefineVariableType(ident.Val, promoted)
+						ident.SetType(promoted)
+					}
+					receiverType = types.NewOptional(arr.Element)
+				}
+			}
+		} else if ident, ok := c.Receiver.(*IdentNode); ok {
+			// k.nil? where k is a non-Optional concrete type → promote to Optional.
+			// The code checks .nil?, so k must be nillable. This happens when
+			// k was nil-init then conditionally assigned a concrete value.
+			if rcvr := receiverType; rcvr != nil {
+				if _, alreadyOpt := rcvr.(types.Optional); !alreadyOpt && rcvr != types.AnyType && rcvr != types.NilType {
+					promoted := types.NewOptional(rcvr)
+					scope.RefineVariableType(ident.Val, promoted)
+					ident.SetType(promoted)
+					receiverType = promoted
+				}
+			}
+		}
+	}
 	switch t := receiverType.(type) {
 	case *types.Class:
 		if c.MethodName == "new" && t.UserDefined {

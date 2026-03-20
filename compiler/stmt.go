@@ -394,6 +394,74 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 			return
 		}
 	}
+	// Array bracket assignment with auto-grow: arr[i] = val where arr is a slice
+	// Ruby arrays auto-extend on index assignment; Go slices panic on out-of-bounds.
+	// Emit: if i >= len(arr) { arr = append(arr, make([]T, i-len(arr)+1)...) }; arr[i] = val
+	if ba, ok := node.Left[0].(*parser.BracketAssignmentNode); ok {
+		if arrType, isArray := ba.Composite.Type().(types.Array); isArray {
+			rcvr := g.CompileExpr(ba.Composite)
+			idx := g.CompileExpr(ba.Args[0])
+			// Dereference Optional indices: check both direct type and scope-resolved type
+			isOpt := false
+			if _, ok := ba.Args[0].Type().(types.Optional); ok {
+				isOpt = true
+			} else if ident, ok := ba.Args[0].(*parser.IdentNode); ok {
+				if local := g.ScopeChain.ResolveVar(ident.Val); local != nil && local != parser.BadLocal {
+					if _, ok := local.Type().(types.Optional); ok {
+						isOpt = true
+					}
+				}
+			}
+			if isOpt {
+				idx = &ast.StarExpr{X: idx}
+			}
+			idx = g.negativeIndex(rcvr, ba.Args[0], idx)
+			rhs := g.CompileExpr(node.Right[0])
+			// Determine element type; if the array element is still AnyType,
+			// fall back to the RHS type for a correct make() call.
+			elemType := arrType.Element
+			if elemType == types.AnyType || elemType == nil {
+				if rhsType := node.Right[0].Type(); rhsType != nil && rhsType != types.AnyType {
+					elemType = rhsType
+				}
+			}
+			elemGoType := elemType.GoType()
+			// if idx >= len(arr) { arr = append(arr, make([]T, idx-len(arr)+1)...) }
+			growCall := &ast.CallExpr{
+				Fun: g.it.Get("append"),
+				Args: []ast.Expr{
+					rcvr,
+					&ast.CallExpr{
+						Fun: g.it.Get("make"),
+						Args: []ast.Expr{
+							&ast.ArrayType{Elt: g.it.Get(elemGoType)},
+							bst.Binary(bst.Binary(idx, token.SUB, bst.Call(nil, "len", rcvr)), token.ADD, bst.Int(1)),
+						},
+					},
+				},
+				Ellipsis: 1,
+			}
+			growStmt := &ast.IfStmt{
+				Cond: bst.Binary(idx, token.GEQ, bst.Call(nil, "len", rcvr)),
+				Body: &ast.BlockStmt{
+					List: []ast.Stmt{
+						bst.Assign(rcvr, growCall),
+					},
+				},
+			}
+			g.appendToCurrentBlock(growStmt)
+			// When array has Optional elements (e.g., sparse array returned
+			// from function where consumer checks .nil?), wrap RHS with &
+			if _, isOpt := elemType.(types.Optional); isOpt {
+				rhs = &ast.UnaryExpr{Op: token.AND, X: rhs}
+			}
+			g.appendToCurrentBlock(bst.Assign(
+				&ast.IndexExpr{X: rcvr, Index: idx},
+				rhs,
+			))
+			return
+		}
+	}
 	var assignFunc bst.AssignFunc
 	if node.OpAssignment {
 		// operator-assignment can only have singular left and right hand sides ever
