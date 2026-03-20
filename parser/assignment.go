@@ -252,14 +252,26 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				}
 			}
 			local := scope.ResolveVar(localName)
-			// Treat placeholder locals from outer scopes (created by
-			// Root.AddCall during parsing) as undeclared. These have nil
-			// type and exist only to track method calls on undeclared
-			// receivers.
+			// In Ruby, method bodies can't see local variables from the
+			// calling scope. If a RubyLocal is found only in the outermost
+			// (top-level) scope but not in the method's own scope chain,
+			// treat it as undeclared. This prevents the top-level scope
+			// from leaking into method bodies via Root.AddCall placeholders
+			// or top-level variable assignments.
 			if local != BadLocal {
-				if rl, ok := local.(*RubyLocal); ok && rl.Type() == nil {
-					if _, inCurrent := scope.Get(localName); !inCurrent {
-						local = BadLocal
+				if _, ok := local.(*RubyLocal); ok {
+					if _, inCurrent := scope.Get(localName); !inCurrent && len(scope) > 1 {
+						// Check if the local exists in any scope other than the first (top-level)
+						foundInMethodScope := false
+						for i := len(scope) - 1; i >= 1; i-- {
+							if _, found := scope[i].Get(localName); found {
+								foundInMethodScope = true
+								break
+							}
+						}
+						if !foundInMethodScope {
+							local = BadLocal
+						}
 					}
 				}
 			}
