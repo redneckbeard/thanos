@@ -565,6 +565,11 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 
 	lastReturnedType, err := GetType(b.Statements, scope, class)
 
+	// Resolve type constraints collected during analysis. This must run
+	// before clearAnyTypeNode so the scope has correct types (e.g.,
+	// Optional(IntType) instead of IntType) before the second pass.
+	resolveTypeConstraints(b.Statements, scope)
+
 	// After the first pass, variables declared with nil (AnyType) have been
 	// refined by subsequent assignments. Re-resolve any nodes that still have
 	// AnyType so they pick up the refined types from the scope.
@@ -584,6 +589,7 @@ func (b *Body) InferReturnType(scope ScopeChain, class *Class) error {
 	if anyCleared {
 		lastReturnedType, err = GetType(b.Statements, scope, class)
 	}
+
 	if err != nil {
 		return err
 	}

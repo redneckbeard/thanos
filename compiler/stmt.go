@@ -644,7 +644,10 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 			}
 		}
 		// When reassigning a concrete value to an Optional variable, wrap in stdlib.Ptr[T]()
-		// Skip wrapping if the RHS is already Optional (e.g., method returning *int).
+		// Skip wrapping if:
+		//   - RHS is already Optional (e.g., method returning *int)
+		//   - RHS type is already a pointer type (e.g., SynthStruct with GoType "*Foo")
+		//   - LHS was dereferenced (nil-default param refined to concrete type)
 		if node.Reassignment {
 			for i, left := range node.Left {
 				if ident, ok := left.(*parser.IdentNode); ok && i < len(rhs) {
@@ -652,9 +655,23 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 						if opt, ok := local.Type().(types.Optional); ok {
 							if _, isNil := node.Right[i].(*parser.NilNode); !isNil {
 								rhsType := node.Right[i].Type()
-								if _, rhsOpt := rhsType.(types.Optional); !rhsOpt {
-									rhs[i] = g.wrapPtr(rhs[i], opt.Element)
+								// Skip if RHS is already Optional
+								if _, rhsOpt := rhsType.(types.Optional); rhsOpt {
+									continue
 								}
+								// Skip if RHS type already compiles to a pointer
+								// (e.g., SynthStruct whose GoType is "*Foo")
+								if rhsType != nil && strings.HasPrefix(rhsType.GoType(), "*") {
+									continue
+								}
+								// Skip if LHS was dereferenced — the compiled LHS
+								// is *ident, so RHS must be the inner type, not a pointer.
+								if i < len(lhs) {
+									if _, isStar := lhs[i].(*ast.StarExpr); isStar {
+										continue
+									}
+								}
+								rhs[i] = g.wrapPtr(rhs[i], opt.Element)
 							}
 						}
 					}
@@ -1056,9 +1073,15 @@ func (g *GoProgram) wrapOptionalReturn(exprs []ast.Expr, nodes []parser.Node) []
 		if ident, ok := expr.(*ast.Ident); ok && ident.Name == "nil" {
 			continue
 		}
-		// Don't wrap if the node is already Optional-typed
 		if i < len(nodes) {
-			if _, nodeOpt := nodes[i].Type().(types.Optional); nodeOpt {
+			nodeType := nodes[i].Type()
+			// Don't wrap if the node is already Optional-typed
+			if _, nodeOpt := nodeType.(types.Optional); nodeOpt {
+				continue
+			}
+			// Don't wrap if the node's type already compiles to a pointer
+			// (e.g., SynthStruct with GoType "*Foo")
+			if nodeType != nil && strings.HasPrefix(nodeType.GoType(), "*") {
 				continue
 			}
 		}

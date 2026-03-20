@@ -252,6 +252,17 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 				}
 			}
 			local := scope.ResolveVar(localName)
+			// Treat placeholder locals from outer scopes (created by
+			// Root.AddCall during parsing) as undeclared. These have nil
+			// type and exist only to track method calls on undeclared
+			// receivers.
+			if local != BadLocal {
+				if rl, ok := local.(*RubyLocal); ok && rl.Type() == nil {
+					if _, inCurrent := scope.Get(localName); !inCurrent {
+						local = BadLocal
+					}
+				}
+			}
 			if _, ok := local.(*IVar); ok || local == BadLocal || isMethodCallLocal(local) {
 				localType := assignedType
 				// When a variable's first assignment is nil (e.g. `k = nil`),
@@ -264,6 +275,16 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 					}
 				}
 				newLocal := &RubyLocal{_type: localType}
+				// Collect type constraints for later resolution.
+				if i < len(n.Right) {
+					if _, isNil := n.Right[i].(*NilNode); isNil && assignedType == types.NilType {
+						newLocal.AddConstraint(TypeConstraint{Kind: AssignedNil})
+					} else if assignedType != nil && assignedType != types.AnyType {
+						newLocal.AddConstraint(TypeConstraint{Kind: AssignedType, Type: assignedType})
+					}
+				} else if assignedType != nil && assignedType != types.AnyType {
+					newLocal.AddConstraint(TypeConstraint{Kind: AssignedType, Type: assignedType})
+				}
 				// Mark empty arrays and default hashes as refinable for type inference
 				if arrayType, ok := assignedType.(types.Array); ok && arrayType.Element == types.AnyType {
 					newLocal.MarkAsRefinable()
@@ -285,8 +306,17 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 					if hashType, ok := assignedType.(types.Hash); ok && hashType.HasDefault && hashType.Key == types.AnyType {
 						loc.MarkAsRefinable()
 					}
+					if assignedType != nil && assignedType != types.AnyType {
+						loc.AddConstraint(TypeConstraint{Kind: AssignedType, Type: assignedType})
+					}
 				} else {
-					n.Reassignment = true
+					// Don't mark as reassignment when assigning nil to an
+					// Optional variable that was nil-initialized — this IS
+					// the original declaration, just re-evaluated after
+					// constraint resolution set the type to Optional(T).
+					if _, isOpt := local.Type().(types.Optional); !(isOpt && assignedType == types.NilType) {
+						n.Reassignment = true
+					}
 				}
 				if local.Type() != assignedType {
 					if rl, ok := local.(*RubyLocal); ok && rl.IsRefinable() && local.Type() == types.AnyType {
@@ -294,10 +324,16 @@ func (n *AssignmentNode) TargetType(scope ScopeChain, class *Class) (types.Type,
 						// Keep Optional wrapping — the variable can hold nil, and Go
 						// needs a pointer type (*T) to represent that.
 						rl.SetType(assignedType)
+						if assignedType != nil && assignedType != types.AnyType {
+							rl.AddConstraint(TypeConstraint{Kind: AssignedType, Type: assignedType})
+						}
 					} else if arr, ok := local.Type().(types.Array); ok {
 						if arr.Element != assignedType {
 							return nil, NewParseError(n, "Attempted to assign %s member to %s", assignedType, arr)
 						}
+					} else if _, ok := local.Type().(types.Optional); ok && assignedType == types.NilType {
+						// Allow assigning nil to Optional(T) variable — it's the whole point of Optional.
+						// Variable keeps its Optional type.
 					} else if opt, ok := local.Type().(types.Optional); ok && opt.Element.Equals(assignedType) {
 						// Allow assigning inner type T to Optional(T) variable (e.g., x ||= default)
 						// Variable keeps its Optional type

@@ -859,20 +859,49 @@ func (c *MethodCall) TargetType(scope ScopeChain, class *Class) (types.Type, err
 					if ident, ok := ba.Composite.(*IdentNode); ok {
 						scope.RefineVariableType(ident.Val, promoted)
 						ident.SetType(promoted)
+						// Collect ElementNilChecked constraint
+						if local := scope.ResolveVar(ident.Val); local != BadLocal {
+							if rl, ok := local.(*RubyLocal); ok {
+								rl.AddConstraint(TypeConstraint{Kind: ElementNilChecked})
+							}
+						}
 					}
 					receiverType = types.NewOptional(arr.Element)
 				}
 			}
 		} else if ident, ok := c.Receiver.(*IdentNode); ok {
-			// k.nil? where k is a non-Optional concrete type → promote to Optional.
-			// The code checks .nil?, so k must be nillable. This happens when
-			// k was nil-init then conditionally assigned a concrete value.
+			// k.nil? where k is a non-Optional concrete type → promote to Optional
+			// only if the variable could actually be nil (was nil-init or has an
+			// AssignedNil constraint). Without this guard, `.nil?` on a value type
+			// like `x = "hello"; x.nil?` would wrongly promote to Optional.
 			if rcvr := receiverType; rcvr != nil {
 				if _, alreadyOpt := rcvr.(types.Optional); !alreadyOpt && rcvr != types.AnyType && rcvr != types.NilType {
-					promoted := types.NewOptional(rcvr)
-					scope.RefineVariableType(ident.Val, promoted)
-					ident.SetType(promoted)
-					receiverType = promoted
+					canBeNil := false
+					if local := scope.ResolveVar(ident.Val); local != BadLocal {
+						if rl, ok := local.(*RubyLocal); ok {
+							if rl.IsRefinable() {
+								canBeNil = true
+							}
+							for _, ct := range rl.Constraints {
+								if ct.Kind == AssignedNil {
+									canBeNil = true
+									break
+								}
+							}
+						}
+					}
+					if canBeNil {
+						promoted := types.NewOptional(rcvr)
+						scope.RefineVariableType(ident.Val, promoted)
+						ident.SetType(promoted)
+						receiverType = promoted
+					}
+				}
+			}
+			// Collect NilChecked constraint
+			if local := scope.ResolveVar(ident.Val); local != BadLocal {
+				if rl, ok := local.(*RubyLocal); ok {
+					rl.AddConstraint(TypeConstraint{Kind: NilChecked})
 				}
 			}
 		}

@@ -15,6 +15,7 @@ func (loc *local) Type() types.Type {
 type RubyLocal struct {
 	_type       types.Type
 	Calls       []*MethodCall
+	Constraints []TypeConstraint
 	isRefinable bool // true if this variable's type can be refined (e.g., empty arrays)
 }
 
@@ -23,6 +24,10 @@ func (rl *RubyLocal) Type() types.Type     { return rl._type }
 func (rl *RubyLocal) SetType(t types.Type) { rl._type = t }
 func (rl *RubyLocal) AddCall(c *MethodCall) {
 	rl.Calls = append(rl.Calls, c)
+}
+
+func (rl *RubyLocal) AddConstraint(c TypeConstraint) {
+	rl.Constraints = append(rl.Constraints, c)
 }
 
 // MarkAsRefinable marks this variable as having a type that can be refined

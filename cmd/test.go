@@ -5,8 +5,11 @@ Copyright © 2022 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/fatih/color"
@@ -16,6 +19,46 @@ import (
 )
 
 var TestDir, TestFile, TestCase string
+var OnlyFailures bool
+
+const failuresFile = ".failures"
+
+func loadFailures() map[string]bool {
+	f, err := os.Open(failuresFile)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	failures := map[string]bool{}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			failures[line] = true
+		}
+	}
+	return failures
+}
+
+func writeFailures(failures map[string]bool) {
+	if len(failures) == 0 {
+		os.Remove(failuresFile)
+		return
+	}
+	names := make([]string, 0, len(failures))
+	for name := range failures {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	f, err := os.Create(failuresFile)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	for _, name := range names {
+		fmt.Fprintln(f, name)
+	}
+}
 
 func runTest(script, name string) bool {
 	fmt.Printf("Running test '%s': ", name)
@@ -84,15 +127,45 @@ var testCmd = &cobra.Command{
 				fmt.Println("Could not find test:", TestCase)
 			}
 		} else {
-			var passes, fails int
+			previousFailures := loadFailures()
+			currentFailures := map[string]bool{}
+			var passes, fails, skipped int
 			for name, script := range tests {
+				if OnlyFailures && previousFailures != nil && !previousFailures[name] {
+					skipped++
+					continue
+				}
 				if runTest(script, name) {
 					passes++
 				} else {
 					fails++
+					currentFailures[name] = true
 				}
 			}
-			summary := fmt.Sprintf("\n%d passing tests, %d failures\n", passes, fails)
+			// Merge: keep previous failures that weren't re-run,
+			// add new failures, remove tests that now pass.
+			merged := map[string]bool{}
+			if previousFailures != nil {
+				for name := range previousFailures {
+					if _, ran := tests[name]; !ran {
+						// Test wasn't loaded (e.g. file filter) — preserve
+						merged[name] = true
+					}
+					if OnlyFailures && !previousFailures[name] {
+						// Wasn't in --only-failures run — preserve
+						merged[name] = true
+					}
+				}
+			}
+			for name := range currentFailures {
+				merged[name] = true
+			}
+			writeFailures(merged)
+			summary := fmt.Sprintf("\n%d passing, %d failures", passes, fails)
+			if skipped > 0 {
+				summary += fmt.Sprintf(", %d skipped", skipped)
+			}
+			summary += "\n"
 			if fails > 0 {
 				color.Red(summary)
 			} else {
@@ -107,4 +180,5 @@ func init() {
 	testCmd.Flags().StringVarP(&TestDir, "dir", "d", "tests", "Directory where gauntlet tests are located")
 	testCmd.Flags().StringVarP(&TestFile, "file", "f", "", "Single file relative to test directory from which tests are loaded (default loads all files)")
 	testCmd.Flags().StringVarP(&TestCase, "gauntlet", "g", "", "Runs only the gauntlet test with the given name")
+	testCmd.Flags().BoolVar(&OnlyFailures, "only-failures", false, "Run only tests that failed in the previous run")
 }

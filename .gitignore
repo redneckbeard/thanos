@@ -3,3 +3,4 @@ thanos
 
 dist/
 scratch/
+.failures

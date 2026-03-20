@@ -48,6 +48,7 @@ func (r *Root) propagateTypeWidenings() {
 	for _, w := range widenings {
 		r.applyWidening(w)
 	}
+
 }
 
 func (r *Root) collectModuleWidenings(mod *Module, widenings *[]typeWidening) {
@@ -242,6 +243,7 @@ func (r *Root) applyWidening(w typeWidening) {
 
 	// Find the variable in the method body that is returned and promote it.
 	r.promoteReturnedVariable(method, w.widerType)
+
 }
 
 // resolveMethodFromCall finds the Method node that a MethodCall invokes.
