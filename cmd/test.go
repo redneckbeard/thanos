@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var TestDir, TestFile, TestCase string
+var TestDir, TestFile, TestCase, CommFlags string
 var OnlyFailures bool
 
 const failuresFile = ".failures"
@@ -94,6 +94,9 @@ var testCmd = &cobra.Command{
 	tests if no name is given), executes it using system Ruby, transpiles and
 	executes it using system Go, and then compares the resulting stdout.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if CommFlags != "" {
+			compiler.CommFlags = CommFlags
+		}
 		tests := map[string]string{}
 		testFiles, err := filepath.Glob(filepath.Join(TestDir, "*"))
 		if err != nil {
@@ -181,4 +184,5 @@ func init() {
 	testCmd.Flags().StringVarP(&TestFile, "file", "f", "", "Single file relative to test directory from which tests are loaded (default loads all files)")
 	testCmd.Flags().StringVarP(&TestCase, "gauntlet", "g", "", "Runs only the gauntlet test with the given name")
 	testCmd.Flags().BoolVar(&OnlyFailures, "only-failures", false, "Run only tests that failed in the previous run")
+	testCmd.Flags().StringVar(&CommFlags, "comm", "", "comm(1) flags for output comparison (default -23; try -12, -3, etc.)")
 }

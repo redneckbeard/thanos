@@ -367,6 +367,29 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 			}
 		}
 	}
+	// Methods that mutate slice params return them alongside the normal
+	// return value. Expand `x = foo(arr, ...)` to `x, arr = foo(arr, ...)`.
+	if len(node.Right) == 1 {
+		if call, ok := node.Right[0].(*parser.MethodCall); ok && call.Method != nil && len(call.Method.MutatedSliceParams) > 0 {
+			lhs := []ast.Expr{}
+			for _, left := range node.Left {
+				lhs = append(lhs, g.CompileExpr(left))
+			}
+			// Append the mutated slice args to the LHS
+			for _, paramIdx := range call.Method.MutatedSliceParams {
+				argNode := call.Args[paramIdx]
+				lhs = append(lhs, g.CompileExpr(argNode))
+			}
+			rhs := g.CompileExpr(call)
+			assignFn := bst.Define
+			if node.Reassignment {
+				assignFn = bst.Assign
+			}
+			g.appendToCurrentBlock(assignFn(lhs, []ast.Expr{rhs}))
+			return
+		}
+	}
+
 	// Hash/DefaultHash bracket assignment → h.Set(key, val) or h[key] = val for native maps
 	if ba, ok := node.Left[0].(*parser.BracketAssignmentNode); ok {
 		if h, isHash := ba.Composite.Type().(types.Hash); isHash {
@@ -451,9 +474,13 @@ func (g *GoProgram) CompileAssignmentNode(node *parser.AssignmentNode) {
 			}
 			g.appendToCurrentBlock(growStmt)
 			// When array has Optional elements (e.g., sparse array returned
-			// from function where consumer checks .nil?), wrap RHS with &
+			// from function where consumer checks .nil?), wrap RHS with &.
+			// Capture the value in a temp to avoid aliasing a loop variable
+			// (all entries would share the same pointer as it mutates).
 			if _, isOpt := elemType.(types.Optional); isOpt {
-				rhs = &ast.UnaryExpr{Op: token.AND, X: rhs}
+				tmp := g.it.New("v")
+				g.appendToCurrentBlock(bst.Define(tmp, rhs))
+				rhs = &ast.UnaryExpr{Op: token.AND, X: tmp}
 			}
 			g.appendToCurrentBlock(bst.Assign(
 				&ast.IndexExpr{X: rcvr, Index: idx},

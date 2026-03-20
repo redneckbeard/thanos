@@ -11,6 +11,25 @@ import (
 	"github.com/redneckbeard/thanos/parser"
 )
 
+// compareOutputs runs comm or diff on two output files and returns the diff string.
+func compareOutputs(rubyPath, goPath string) (string, error) {
+	var cmd *exec.Cmd
+	if CommFlags == "diff" {
+		cmd = exec.Command("diff", "-u", "--label", "ruby", "--label", "go", rubyPath, goPath)
+	} else {
+		cmd = exec.Command("comm", CommFlags, rubyPath, goPath)
+	}
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	// diff returns exit code 1 when files differ — that's not an error for us
+	if err != nil && CommFlags != "diff" {
+		return "", fmt.Errorf("%s: %s", err, errBuf.String())
+	}
+	return strings.TrimSpace(out.String()), nil
+}
+
 func rubyPath() string {
 	// THANOS_RUBY env var takes priority
 	if p := os.Getenv("THANOS_RUBY"); p != "" {
@@ -25,6 +44,11 @@ func rubyPath() string {
 	// Fall back to PATH
 	return "ruby"
 }
+
+// CommFlags controls the comm(1) flags used to compare Ruby and Go output.
+// Default is "-23" (lines only in Ruby). Set via the --comm CLI flag.
+// Special value "diff" uses diff(1) instead of comm.
+var CommFlags = "-23"
 
 func CompareThanosToMRI(program, label string) (string, string, error) {
 	cmd := exec.Command(rubyPath())
@@ -80,16 +104,11 @@ Go compilation of translated source failed for '%s'. Translation:
 	defer os.Remove(goOutTmp.Name())
 	goOutTmp.Write(out.Bytes())
 
-	comm := exec.Command("comm", "-23", rubyTmp.Name(), goOutTmp.Name())
-	out.Reset()
-	errBuf.Reset()
-	comm.Stdout = &out
-	comm.Stderr = &errBuf
-	err = comm.Run()
+	diff, err := compareOutputs(rubyTmp.Name(), goOutTmp.Name())
 	if err != nil {
-		return "", mainSrc, fmt.Errorf("%s: %s", err, errBuf.String())
+		return "", mainSrc, err
 	}
-	return strings.TrimSpace(out.String()), mainSrc, nil
+	return diff, mainSrc, nil
 }
 
 func compareThanosMultiFile(result *CompileResult, rubyResultsPath, label string) (string, string, error) {
@@ -161,14 +180,9 @@ Go compilation of translated source failed for '%s'. Translation:
 	defer os.Remove(goOutTmp.Name())
 	goOutTmp.Write(out.Bytes())
 
-	comm := exec.Command("comm", "-23", rubyResultsPath, goOutTmp.Name())
-	out.Reset()
-	errBuf.Reset()
-	comm.Stdout = &out
-	comm.Stderr = &errBuf
-	err = comm.Run()
+	diff, err := compareOutputs(rubyResultsPath, goOutTmp.Name())
 	if err != nil {
-		return "", allSrc, fmt.Errorf("%s: %s", err, errBuf.String())
+		return "", allSrc, err
 	}
-	return strings.TrimSpace(out.String()), allSrc, nil
+	return diff, allSrc, nil
 }

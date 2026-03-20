@@ -54,18 +54,33 @@ func (g *GoProgram) CompileFunc(m *parser.Method, c *parser.Class) []ast.Decl {
 		})
 	}
 
+	retFields := g.GetReturnType(m.ReturnType())
+	// For methods that mutate slice params, append those params to the
+	// return type so callers can reassign (Go slices are pass-by-value).
+	for _, paramIdx := range m.MutatedSliceParams {
+		p := m.Params[paramIdx]
+		retFields = append(retFields, g.retTypeField(p.Type()))
+	}
+
 	signature := &ast.FuncType{
 		Params: &ast.FieldList{
 			List: params,
 		},
 		Results: &ast.FieldList{
-			List: g.GetReturnType(m.ReturnType()),
+			List: retFields,
 		},
+	}
+
+	body := g.CompileBlockStmt(m.Body.Statements)
+
+	// Augment return statements to include mutated slice params
+	if len(m.MutatedSliceParams) > 0 {
+		g.augmentReturnsWithSliceParams(body, m)
 	}
 
 	decl := &ast.FuncDecl{
 		Type: signature,
-		Body: g.CompileBlockStmt(m.Body.Statements),
+		Body: body,
 		Name: g.it.Get(m.GoName()),
 	}
 
@@ -146,12 +161,18 @@ func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix
 		})
 	}
 
+	retFields := g.GetReturnType(m.ReturnType())
+	for _, paramIdx := range m.MutatedSliceParams {
+		p := m.Params[paramIdx]
+		retFields = append(retFields, g.retTypeField(p.Type()))
+	}
+
 	signature := &ast.FuncType{
 		Params: &ast.FieldList{
 			List: params,
 		},
 		Results: &ast.FieldList{
-			List: g.GetReturnType(m.ReturnType()),
+			List: retFields,
 		},
 	}
 
@@ -162,9 +183,15 @@ func (g *GoProgram) CompileClassMethod(m *parser.Method, c *parser.Class, prefix
 		owner = c.Name()
 	}
 	funcName := owner + parser.GoName(m.Name)
+
+	body := g.CompileBlockStmt(m.Body.Statements)
+	if len(m.MutatedSliceParams) > 0 {
+		g.augmentReturnsWithSliceParams(body, m)
+	}
+
 	decl := &ast.FuncDecl{
 		Type: signature,
-		Body: g.CompileBlockStmt(m.Body.Statements),
+		Body: body,
 		Name: g.it.Get(funcName),
 	}
 
@@ -209,6 +236,40 @@ func (g *GoProgram) GetFuncParams(rubyParams []*parser.Param) []*ast.Field {
 		})
 	}
 	return params
+}
+
+// augmentReturnsWithSliceParams walks a function body and appends the
+// mutated slice param identifiers to every return statement.
+func (g *GoProgram) augmentReturnsWithSliceParams(body *ast.BlockStmt, m *parser.Method) {
+	var paramIdents []ast.Expr
+	for _, idx := range m.MutatedSliceParams {
+		paramIdents = append(paramIdents, g.it.Get(m.Params[idx].Name))
+	}
+	augmentReturns(body.List, paramIdents)
+}
+
+func augmentReturns(stmts []ast.Stmt, extra []ast.Expr) {
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
+		case *ast.ReturnStmt:
+			s.Results = append(s.Results, extra...)
+		case *ast.IfStmt:
+			augmentReturns(s.Body.List, extra)
+			if s.Else != nil {
+				if block, ok := s.Else.(*ast.BlockStmt); ok {
+					augmentReturns(block.List, extra)
+				} else if ifStmt, ok := s.Else.(*ast.IfStmt); ok {
+					augmentReturns([]ast.Stmt{ifStmt}, extra)
+				}
+			}
+		case *ast.ForStmt:
+			augmentReturns(s.Body.List, extra)
+		case *ast.RangeStmt:
+			augmentReturns(s.Body.List, extra)
+		case *ast.BlockStmt:
+			augmentReturns(s.List, extra)
+		}
+	}
 }
 
 func (g *GoProgram) GetReturnType(t types.Type) []*ast.Field {

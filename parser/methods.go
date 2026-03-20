@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/redneckbeard/thanos/types"
@@ -189,12 +190,13 @@ type Method struct {
 	Root      *Root
 	Block     *BlockParam
 	Pos
-	Private     bool
-	ClassMethod bool
-	FromGem     bool
-	analyzed    bool
-	analyzing   bool
-	uncallable  bool
+	Private        bool
+	ClassMethod    bool
+	FromGem        bool
+	analyzed       bool
+	analyzing      bool
+	uncallable     bool
+	MutatedSliceParams []int // indices of params that are slices mutated via append
 }
 
 func NewMethod(name string, r *Root) *Method {
@@ -544,7 +546,97 @@ func (m *Method) analyzeMethodBody(class *Class, args []types.Type, blockReturnT
 	if m.Block != nil && len(m.Block.Params) == 0 {
 		m.extractYieldArgTypes()
 	}
+	m.detectMutatedSliceParams()
 	return nil
+}
+
+// detectMutatedSliceParams identifies parameters that are slices and are
+// mutated in the method body via <<, push, concat, or similar operations
+// that compile to append(). These params must be returned alongside the
+// normal return value so callers can reassign them (Go slices are pass-by-value).
+func (m *Method) detectMutatedSliceParams() {
+	sliceParams := map[string]int{} // param name → param index
+	for i, p := range m.Params {
+		if _, isArr := p.Type().(types.Array); isArr {
+			sliceParams[p.Name] = i
+		}
+	}
+	if len(sliceParams) == 0 {
+		return
+	}
+	mutated := map[int]bool{}
+	m.walkForSliceMutation(m.Body.Statements, sliceParams, mutated)
+	if len(mutated) > 0 {
+		for idx := range mutated {
+			m.MutatedSliceParams = append(m.MutatedSliceParams, idx)
+		}
+		// Sort for deterministic output
+		sort.Ints(m.MutatedSliceParams)
+	}
+}
+
+var sliceMutatingMethods = map[string]bool{
+	"<<": true, "push": true, "concat": true,
+	"unshift": true, "prepend": true,
+	"delete": true, "delete_at": true,
+	"compact!": true, "reject!": true, "select!": true, "uniq!": true,
+}
+
+func (m *Method) walkForSliceMutation(stmts Statements, sliceParams map[string]int, mutated map[int]bool) {
+	for _, stmt := range stmts {
+		m.walkNodeForSliceMutation(stmt, sliceParams, mutated)
+	}
+}
+
+func (m *Method) walkNodeForSliceMutation(node Node, sliceParams map[string]int, mutated map[int]bool) {
+	if node == nil {
+		return
+	}
+	switch n := node.(type) {
+	case *MethodCall:
+		// Check for param.<<(val), param.push(val), etc.
+		if n.Receiver != nil {
+			if ident, ok := n.Receiver.(*IdentNode); ok {
+				if idx, ok := sliceParams[ident.Val]; ok && sliceMutatingMethods[n.MethodName] {
+					mutated[idx] = true
+				}
+			}
+		}
+		for _, arg := range n.Args {
+			m.walkNodeForSliceMutation(arg, sliceParams, mutated)
+		}
+		if n.Block != nil && n.Block.Body != nil {
+			m.walkForSliceMutation(n.Block.Body.Statements, sliceParams, mutated)
+		}
+	case *AssignmentNode:
+		for _, r := range n.Right {
+			m.walkNodeForSliceMutation(r, sliceParams, mutated)
+		}
+		// Check for bracket assignment: param[idx] = val (auto-grow)
+		for _, l := range n.Left {
+			if ba, ok := l.(*BracketAssignmentNode); ok {
+				if ident, ok := ba.Composite.(*IdentNode); ok {
+					if idx, ok := sliceParams[ident.Val]; ok {
+						mutated[idx] = true
+					}
+				}
+			}
+		}
+	case *Condition:
+		m.walkNodeForSliceMutation(n.Condition, sliceParams, mutated)
+		m.walkForSliceMutation(n.True, sliceParams, mutated)
+		if n.False != nil {
+			if stmts, ok := n.False.(Statements); ok {
+				m.walkForSliceMutation(stmts, sliceParams, mutated)
+			} else {
+				m.walkNodeForSliceMutation(n.False, sliceParams, mutated)
+			}
+		}
+	case *WhileNode:
+		m.walkForSliceMutation(n.Body, sliceParams, mutated)
+	case Statements:
+		m.walkForSliceMutation(n, sliceParams, mutated)
+	}
 }
 
 // extractYieldArgTypes walks the method body to find blk.call() patterns
