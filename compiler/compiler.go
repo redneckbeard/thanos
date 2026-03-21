@@ -303,7 +303,7 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						fmt.Fprintf(os.Stderr, "warning: skipping gem module %s compilation: %s\n", mod.Name(), truncateMsg(r))
+						parser.Warn(1, "warning: skipping gem module %s compilation: %s\n", mod.Name(), truncateMsg(r))
 					}
 				}()
 				g.compileModulePackages(mod, "", p.ScopeChain, result)
@@ -316,7 +316,7 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 	}
 
 	for _, w := range g.Warnings {
-		fmt.Fprintln(os.Stderr, w)
+		parser.Warn(1, "%s\n", w)
 	}
 
 	return result, nil
@@ -367,7 +367,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 			if r := recover(); r != nil {
 				var buf [4096]byte
 				n := runtime.Stack(buf[:], false)
-				fmt.Fprintf(os.Stderr, "warning: gem module %s compilation panic: %v\n%s\n", mod.Name(), r, buf[:n])
+				parser.Warn(1, "warning: gem module %s compilation panic: %v\n%s\n", mod.Name(), r, buf[:n])
 				retErr = nil // don't propagate
 			}
 		}()
@@ -395,7 +395,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "warning: skipping gem class %s compilation: %s\n", cls.Name(), truncateMsg(r))
+							parser.Warn(1, "warning: skipping gem class %s compilation: %s\n", cls.Name(), truncateMsg(r))
 						}
 					}()
 					decls := modG.CompileClass(cls)
@@ -403,7 +403,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 						if validateDecl(d) {
 							modDecls = append(modDecls, d)
 						} else {
-							fmt.Fprintf(os.Stderr, "warning: skipping gem class %s decl (invalid Go AST)\n", cls.Name())
+							parser.Warn(1, "warning: skipping gem class %s decl (invalid Go AST)\n", cls.Name())
 						}
 					}
 				}()
@@ -420,7 +420,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "warning: skipping gem method %s.%s (compile panic): %s\n", mod.Name(), m.Name, truncateMsg(r))
+							parser.Warn(1, "warning: skipping gem method %s.%s (compile panic): %s\n", mod.Name(), m.Name, truncateMsg(r))
 						}
 					}()
 					decls := modG.CompileClassMethod(m, nil)
@@ -429,7 +429,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 						if validateDecl(d) {
 							modDecls = append(modDecls, d)
 						} else {
-							fmt.Fprintf(os.Stderr, "warning: skipping gem method %s.%s (invalid Go AST)\n", mod.Name(), m.Name)
+							parser.Warn(1, "warning: skipping gem method %s.%s (invalid Go AST)\n", mod.Name(), m.Name)
 						}
 					}
 				}()
@@ -481,7 +481,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 			}
 			if fmtErr != nil {
 				if mod.IsFromGem() {
-					fmt.Fprintf(os.Stderr, "warning: gem module %s format error: %v\n", mod.Name(), fmtErr)
+					parser.Warn(1, "warning: gem module %s format error: %v\n", mod.Name(), fmtErr)
 				} else {
 					return fmt.Errorf("error compiling module %s: %w", mod.Name(), fmtErr)
 				}
@@ -499,7 +499,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "warning: skipping gem sub-module %s compilation: %s\n", sub.Name(), truncateMsg(r))
+							parser.Warn(1, "warning: skipping gem sub-module %s compilation: %s\n", sub.Name(), truncateMsg(r))
 						}
 					}()
 					g.compileModulePackages(sub, dirPath, scope, result)

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"os"
 	"strings"
 
 	"github.com/redneckbeard/thanos/bst"
@@ -729,7 +728,7 @@ func (r *Root) analyzeModule(mod *Module, parentScope ScopeChain) error {
 		if len(stmts) > 0 {
 			if _, err := GetType(stmts, modScope, nil); err != nil {
 				if mod.fromGem {
-					fmt.Fprintf(os.Stderr, "warning: module %s: %v (continuing)\n", mod.Name(), err)
+					Warn(1, "warning: module %s: %v (continuing)\n", mod.Name(), err)
 				} else {
 					return err
 				}
@@ -1350,7 +1349,7 @@ func (r *Root) Analyze() error {
 		Tracer.Record("analyze-module", mod.name)
 		if err := r.analyzeModule(mod, r.ScopeChain); err != nil {
 			if mod.fromGem {
-				fmt.Fprintf(os.Stderr, "warning: module %s: %v (continuing)\n", mod.name, err)
+				Warn(1, "warning: module %s: %v (continuing)\n", mod.name, err)
 			} else {
 				return err
 			}

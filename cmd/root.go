@@ -41,4 +41,5 @@ func init() {
 	// when this action is called directly.
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	rootCmd.PersistentFlags().BoolVar(&parser.NoGems, "no-gems", false, "Disable gem source resolution (facades still work)")
+	rootCmd.PersistentFlags().IntVarP(&parser.Verbosity, "verbosity", "v", 1, "Verbosity level (0=quiet, 1=warnings, 2=notes)")
 }

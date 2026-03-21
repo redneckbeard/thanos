@@ -18,6 +18,22 @@ import (
 // NoGems disables gem source resolution via system Ruby. Facades still work.
 var NoGems bool
 
+// Verbosity controls the level of warning output. Default is 1 (show warnings).
+// Set to 0 to suppress all warnings and notes.
+var Verbosity int = 1
+
+// Warn prints a warning to stderr if verbosity is >= the given level.
+func Warn(level int, format string, args ...interface{}) {
+	if Verbosity >= level {
+		fmt.Fprintf(os.Stderr, format, args...)
+	}
+}
+
+// Note prints a note to stderr if verbosity is >= 2.
+func Note(format string, args ...interface{}) {
+	Warn(2, format, args...)
+}
+
 // builtinRequires lists require names that thanos handles natively via its
 // type system. These are silently stripped without needing a facade or gem source.
 var builtinRequires = map[string]bool{
@@ -356,7 +372,7 @@ func loadFile(absPath string, root *Root, loaded map[string]bool) error {
 							if lib, hasBind := root.facades[name]; hasBind {
 								// Warn if the facade is marked incomplete
 								if lib.Coverage != "" {
-									fmt.Fprintf(os.Stderr, "warning: require '%s': facade coverage is %s — some methods may not be available\n", name, lib.Coverage)
+									Warn(1, "warning: require '%s': facade coverage is %s — some methods may not be available\n", name, lib.Coverage)
 								}
 								// Inject scope entries for this require (e.g., CSV::Row, CSV::Table)
 								if inject, ok := requireScopeInjectors[name]; ok {
@@ -372,10 +388,10 @@ func loadFile(absPath string, root *Root, loaded map[string]bool) error {
 						// No facade — try resolving via Ruby load paths
 						if gemPath := resolveGemRequire(name, root.loadPaths); gemPath != "" {
 							if !loaded[gemPath] {
-								fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
+								Warn(1, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
 								savedErrors := append([]error{}, root.Errors...)
 								if err := safeLoadFile(gemPath, root, loaded); err != nil {
-									fmt.Fprintf(os.Stderr, "warning: require '%s' (%s): load failed:\n%v\n", name, gemPath, err)
+									Warn(1, "warning: require '%s' (%s): load failed:\n%v\n", name, gemPath, err)
 								}
 								root.Errors = savedErrors
 							}
@@ -465,10 +481,10 @@ func stripRequires(root *Root, allFacades types.FacadeConfig) {
 							loaded = make(map[string]bool)
 						}
 						if !loaded[gemPath] {
-							fmt.Fprintf(os.Stderr, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
+							Warn(1, "warning: require '%s': resolved from gem source at %s — compilation may be incomplete\n", name, gemPath)
 							savedErrors := append([]error{}, root.Errors...)
 							if err := safeLoadFile(gemPath, root, loaded); err != nil {
-								fmt.Fprintf(os.Stderr, "warning: require '%s' (%s): load failed:\n%v\n", name, gemPath, err)
+								Warn(1, "warning: require '%s' (%s): load failed:\n%v\n", name, gemPath, err)
 							}
 							// Always restore errors — gem parsing may add terminal errors
 							// via AddCall that shouldn't block user code analysis.

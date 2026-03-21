@@ -1,9 +1,6 @@
 package parser
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/redneckbeard/thanos/types"
 )
 
@@ -234,7 +231,7 @@ func (r *Root) applyWidening(w typeWidening) {
 
 	// Emit warning when user code widens gem/library code
 	if method.FromGem {
-		fmt.Fprintf(os.Stderr, "note: widening return type of %s from %s to %s (consumer checks .nil? on elements)\n",
+		Note("note: widening return type of %s from %s to %s (consumer checks .nil? on elements)\n",
 			method.Name, method.Body.ReturnType, w.widerType)
 	}
 
