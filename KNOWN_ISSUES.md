@@ -1,48 +1,39 @@
 # Known Issues
 
-## Module method returning module-scoped class instance
+## parser/
 
-A `def self.x` method inside a module that returns an instance of a class defined in the same module generates the wrong Go type name. The class gets a qualified Go name (e.g., `AnimalsDog`) but the method's return type resolves to the unqualified name (`Dog`).
+### Method param type conflict between nil and concrete type
 
-```ruby
-module Animals
-  class Dog
-    def initialize(name)
-      @name = name
-    end
-    def speak
-      "#{@name} says woof"
-    end
-  end
-
-  def self.create_dog(name)
-    Dog.new(name)  # return type resolves to *Dog, should be *AnimalsDog
-  end
-end
-
-dog = Animals.create_dog("Rex")
-puts dog.speak
-```
-
-**Root cause**: `GoType()` on the class Instance returns the unqualified name when referenced from within the module scope. The compiler qualifies it during `CompileClass` but the type system doesn't propagate the qualified name back.
-
-## Module methods cannot call other module methods
-
-When a `def self.x` method inside a module calls another `def self.y` method on the same module without an explicit receiver, the call isn't routed to the module's own method specs. The param types on the callee don't get inferred.
+Calling the same method with `nil` and a concrete type for the same parameter causes a parse error rather than inferring `Optional(T)`.
 
 ```ruby
-module Converter
-  def self.fahrenheit_to_celsius(f)
-    (f - 32) * 5 / 9
-  end
-
-  def self.format_temp(f)
-    c = fahrenheit_to_celsius(f)  # unresolved — no implicit self for modules
-    "#{f}F = #{c}C"
-  end
+def test(x)
+  x ||= 10
+  puts x
 end
+test(nil)   # first call: NilType
+test(3)     # second call: IntType — conflict
 ```
 
-**Root cause**: Module class methods are stored in `Module.ClassMethods`, not in the module's `MethodSet`. When `fahrenheit_to_celsius(f)` is parsed without a receiver, `AddCall` routes it to the module's MethodSet (or global), where no matching method exists. Class methods on classes have the same limitation but it's less noticeable because class methods rarely call each other without `self.`.
+**Root cause**: `AnalyzeArguments` treats `NilType` vs `IntType` as a type conflict. It should recognize this as `Optional(IntType)` = `*int`.
 
-**Workaround**: Use explicit receiver: `Converter.fahrenheit_to_celsius(f)`.
+## compiler/
+
+### Gem compilation error messages are opaque
+
+When a gem method references an unimplemented method (e.g., `a.dup()`), the error surfaces as `Method not set on MethodCall (a.dup())` rather than a clear message like "unresolved method 'dup' on Array(IntType)". The original analysis error is swallowed by tolerant mode; the compiler hits a nil Method field and panics. Visible in diff-lcs output for `DiffCallbacks`, `Internals.intuit_diff_direction`, etc.
+
+## Future improvements
+
+### `stdlib.Ptr[T](expr)` lowering to `&v` locals
+
+`stdlib.Ptr[T](expr)` is emitted when wrapping a concrete value for an `*T` context. A post-compilation lowering pass could replace this with a local variable and address-of operator, eliminating the stdlib dependency for pointer wrapping:
+
+```go
+// Before:
+stdlib.Ptr[int](len(enum) - 1)
+
+// After:
+v := len(enum) - 1
+&v
+```
