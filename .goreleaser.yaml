@@ -4,7 +4,6 @@ before:
   hooks:
     - python3 scripts/validate-readme-links.py
     - go mod tidy
-    - go generate ./...
 
 builds:
   - env:
