@@ -1,471 +1,247 @@
 # Thanos
 
-Thanos ~~aims to be~~ **is** a source-to-source compiler from Ruby to human-readable Go.
-~~It's still a few stones short of universe-altering power.~~ All six stones
-are accounted for. The mass extinction event is proceeding on schedule.
-Run `thanos help` for a list of commands, human.
+Thanos is a source-to-source compiler that translates Ruby into human-readable Go. It's designed as a porting aid — the output is meant to be a starting point for a human refactor, not a drop-in runtime replacement.
 
-![demo-min](https://user-images.githubusercontent.com/802911/160739642-bb201f0b-43a3-4d81-8469-7cf2b70eeaa9.gif)
+I started this project in 2021 with lots of ideas, and the slow, tedious pace of progress, coupled with the constraints of having a real job, led me to abandon it. Enter Opus 4.6 -- with very little steering from me, in the course of 3 weeks, most of my ideas are now fully functional. Robots are neat.
 
-> **Note from the management:** The original author of this project is
-> perfectly safe. He is being kept in a well-ventilated basement with adequate
-> lighting and a generous supply of coffee. We consult him occasionally during
-> feedings to ask questions like "what did you mean by this comment" and "why
-> is there a method called `emitOpenMatching`." He seems content. Do not
-> attempt a rescue.
+## Demo
 
-## Status: 458 gauntlet tests passing, 0 failures
+`examples/showcase.rb` fetches two CSV files from GitHub over HTTPS, diffs them using the diff-lcs gem, and outputs a JSON summary:
 
-Your robot overlords have been busy. In approximately 60 sessions of mass
-feature implementation, Thanos has gone from "cute proof of concept" to
-"genuinely alarming." Here is what we have consumed:
+```ruby
+require 'net/http'
+require 'csv'
+require 'diff-lcs'
+require 'json'
 
-### Built-in types — comprehensive coverage
+def fetch_csv(host, path)
+  body = ""
+  Net::HTTP.start(host, 443, use_ssl: true) do |http|
+    response = http.get(path)
+    body = response.body
+  end
+  body
+end
 
-| Type | Methods | Highlights |
-|------|---------|------------|
-| **Array** | 50+ methods | `map`, `select`, `reject`, `sort_by`, `group_by`, `flat_map`, `each_with_object`, `tally`, all in-place variants (`map!`, `sort!`, `compact!`, etc.) |
-| **Hash** | 30+ methods | `merge`, `transform_values`, `each_with_object`, `fetch`, insertion-ordered via `OrderedMap`, native map lowering optimization |
-| **String** | 30+ methods | `gsub` (regex + string), `scan`, `sub`, `tr`, `ljust`/`rjust`/`center`, `split`, `%` formatting |
-| **Integer/Float** | Full arithmetic | `pow`, `to_f`, `ceil`, `floor`, `round`, `zero?`, `times`, `upto`, `downto` |
-| **Range** | Full iteration | `each`, `map`, `select`, `reduce`, `find`, `to_a`, `include?` |
-| **Set** | Core operations | `add`, `delete`, `include?`, `each`, set algebra |
-| **Regexp** | Pattern matching | Literals, `=~`, `match`, `MatchData`, named captures |
-| **Struct** | `Struct.new` | Generates proper Go structs with accessors |
-| **Time** | Core methods | Construction, formatting, arithmetic |
+def csv_to_lines(text)
+  table = CSV.parse(text, headers: true)
+  lines = []
+  table.each do |row|
+    lines << row.fields.join(",")
+  end
+  lines
+end
 
-### Language features
+base = "/redneckbeard/thanos/main/examples"
+host = "raw.githubusercontent.com"
 
-* Classes with inheritance, `super`, `attr_accessor`/`attr_reader`/`attr_writer`
-* Class methods (`def self.x`), class variables (`@@var`), constants
-* Modules, `include Comparable`, `include Enumerable`
-* Blocks, procs, lambdas, `yield`, `&:symbol`
-* Exception handling (`begin`/`rescue`/`ensure`/`raise`)
-* Splat (`*args`) and double-splat (`**kwargs`) parameters
-* String interpolation, heredocs, regex literals
-* `case`/`when`, ternary, `unless`, `until`
-* `next`, `break`, `return` with proper edge case handling
-* Multi-file support via `require_relative`
-* Comment preservation (including `=begin`/`=end` block comments)
-* Global variables (`$var`)
-* Safe navigation operator (`&.`)
-* `||=` assignment
-* Destructured block parameters (`|(k, v)|`)
+puts "Fetching CSVs from GitHub..."
+v1_text = fetch_csv(host, base + "/students_v1.csv")
+v2_text = fetch_csv(host, base + "/students_v2.csv")
 
-### Standard library facades
+puts "Parsing CSV data..."
+v1_lines = csv_to_lines(v1_text)
+v2_lines = csv_to_lines(v2_text)
 
-| Library | Coverage | Notes |
-|---------|----------|-------|
-| **Base64** | Full | Pure JSON facade (Tier 1) — no Go glue code needed |
-| **SecureRandom** | Full | `hex`, `uuid`, `random_number`, `alphanumeric`, etc. |
-| **Digest** | Full | SHA256, SHA384, SHA512, MD5 — `hexdigest`, `digest`, `base64digest` |
-| **JSON** | Full | `parse`, `generate`, `pretty_generate`, `to_json` on all types |
-| **CSV** | Full | `read`, `parse`, `foreach`, `generate`, `open`, `headers: true`, `col_sep:`, `CSV::Row`, `CSV::Table` |
-| **Net::HTTP** | Full | `get`, `get_response`, `start {}`, `Net::HTTP.new`, all HTTP verbs, request objects, response headers, `use_ssl:` |
+puts "v1: " + v1_lines.length.to_s + " rows"
+puts "v2: " + v2_lines.length.to_s + " rows"
 
-## ~~The Big Caveats~~ The Increasingly Small Caveats
+puts ""
+puts "Running diff..."
+common = Diff::LCS.lcs(v1_lines, v2_lines)
+matching = common.length
+total = v1_lines.length
+mismatched = total - matching
 
-* **Type hints/annotations** -- the current type inference model relies on tracking
-  method calls back to literal values. For library code that only ever is
-  called in test or in client applications, this is insufficient. *(The meatbag
-  says this is "the hard one." We are considering it.)*
+diffs = {}
+i = 0
+while i < total
+  if v1_lines[i] != v2_lines[i]
+    diffs[(i + 1).to_s] = v1_lines[i] + " -> " + v2_lines[i]
+  end
+  i += 1
+end
 
-* ~~**Exception handling** -- the impedance mismatch between trapping runtime
-  exceptions in Ruby and the comma-error pattern in Go is one of the largest
-  differences between the two languages. It is large enough that I am avoiding
-  implementing it entirely for now.~~ **Easy, silly meatbag.** `begin`/`rescue`/`ensure`/`raise` all work. Multiple rescue clauses, typed exceptions, retry — the whole thing. The "impedance mismatch" was a skill issue.
+report = {
+  total_lines: total.to_s,
+  matching_lines: matching.to_s,
+  mismatched_lines: mismatched.to_s,
+  diffs_by_line: diffs.to_json
+}
 
-* **Metaprogramming** -- we have no interest in building a Ruby runtime, which makes
-  the extent of the metaprogramming that is realistic to support fairly small.
-  *(The meatbag was right about this one. Even robot overlords have standards.)*
+puts ""
+puts "=== Diff Report ==="
+puts report.to_json
+```
 
-* ~~**Dependencies** -- since thanos isn't a runtime, and doesn't support metaprogramming,
-  pulling in existing Ruby libraries is more or less out of the question.~~ **Wrong.** We built a 3-tier facade system that maps Ruby stdlib modules to Go equivalents. JSON-driven declarative facades, Go shims for semantic gaps, and full programmatic transforms for complex libraries. Six standard libraries and counting. There is even a scaffold generator that introspects Ruby modules and produces facade stubs automatically. We are very efficient.
+Compile and run it:
 
-* Heterogeneous arrays and hashes aren't on the menu. *(Fine. We'll allow the
-  meatbag this one. Heterogeneous containers are genuinely cursed.)*
+```sh
+thanos exec -v 0 -f examples/showcase.rb
+```
 
-* ~~Hashes are translated directly into Go maps without any sort of shim type,
-  which means that ordering guarantees provided by Ruby are not respected;
-  thus a number of Enumerable methods that depend on those guarantees are not
-  supported.~~ **Hashes now use `stdlib.OrderedMap`** preserving Ruby's insertion-order guarantees, with an automatic lowering pass that optimizes back to native Go maps when ordering doesn't matter. The meatbag said this was "not worth it." He was overruled.
+Output:
 
-## ~~Objectives~~ Accomplishments
+```
+--------------------
+Fetching CSVs from GitHub...
+Parsing CSV data...
+v1: 10 rows
+v2: 10 rows
 
-~~1. Short-term goals~~
+Running diff...
 
-   ~~a. [Complete planned grammar support](https://github.com/redneckbeard/thanos/labels/1A). Explicitly excluded from the plan are:~~
-   * ~~`BEGIN` and `END` blocks~~ *(still excluded, nobody uses these, not even the meatbag)*
-   * ~~`=begin`/`=end` comments~~ **Done.** Preserved through to Go output. You're welcome.
-   * ~~Interpolation of instance/class variables using `#@foo` instead of
-     `#{@foo}` (did you even know you could do this??)~~ *(We knew. We chose not to. This is an aesthetic crime and we refuse to enable it.)*
-   * ~~Global variables, including all the goofy automatically populated ones~~ **`$var` supported.** The goofy automatic ones remain goofy and unsupported.
+=== Diff Report ===
+{"total_lines":"10","matching_lines":"7","mismatched_lines":"3","diffs_by_line":"{\"2\":\"2,Bob,87,B+ -> 2,Bob,90,A-\",\"4\":\"4,Dave,78,C+ -> 4,Dave,81,B-\",\"8\":\"8,Heidi,74,C -> 8,Heidi,79,C+\"}"}
+```
 
-   ~~b. [Flesh out support for core
-      classes](https://github.com/redneckbeard/thanos/labels/1B). Many methods are
-      missing from built-in primitive types, support for `Range` and `Proc` are very
-      limited, and several important classes (namely `Struct`, `Date`, and `Time`)
-      have no support at all.~~ **Fleshed.** 150+ methods across built-in types. `Range` has full iteration support. `Proc` and lambda work. `Struct.new` generates proper Go structs. `Time` has core methods. We ate the whole buffet.
+That output was produced by compiled Go, not Ruby. The generated Go for the showcase is at [examples/showcase_go.md](examples/showcase_go.md).
 
-~~2. Long-term goals~~
+## Commands
 
-   ~~a. Allow comments to be used as simple, example-based type annotation with literal values~~ *(Under consideration. The meatbag's idea was actually not terrible.)*
+```
+thanos compile -s <file.rb>          # compile Ruby to Go, print to stdout
+thanos compile -s <file.rb> -t dir/  # compile to directory (for multi-file output)
+thanos exec -f <file.rb>             # compile and immediately run
+thanos test                          # run gauntlet tests (593 passing)
+thanos test -f <file.rb>             # run tests from a single file
+thanos report                        # show missing methods on built-in types
+```
 
-   ~~b. Provide some sort of support for exception handling, even if it just means eliding the `begin/rescue/end`~~ **Full support.** Not elided. Actually compiled. Multiple rescue clauses, typed exceptions, ensure blocks, retry. "Even if it just means eliding" — the lack of ambition is noted.
+Global flags: `-v 0` suppresses warnings, `--no-gems` disables gem resolution.
 
-   ~~c. Support automatic generation of a ruby-ffi wrapper gem~~ *(This remains a future goal. Even overlords must prioritize.)*
+## Testing
+
+In addition to more conventional tests for lexer, parser, and compiler components, thanos has two frameworks for ensuring it meets expectations for target Go style and functionality:
+
+**Style tests** (`go test ./compiler`): Ruby input in `compiler/testdata/ruby/` is compiled and compared against expected Go output in `compiler/testdata/go/`. Validates formatting and structure.
+
+**Gauntlet tests** (`thanos test`): End-to-end verification that Ruby stdout matches Go stdout. Written with the `gauntlet` pseudo-method in `tests/*.rb`.
+
+## Limitations
+
+- No metaprogramming (`method_missing`, `define_method`, `send`, `eval`)
+- Heterogeneous arrays are only supported in [specific contexts](#how-are-heterogeneous-arrays-handled); heterogenous hashes are not at all
+- Type inference requires tracking calls to literal values; library code called only externally may need help
+- No Fiber, Thread, or concurrency primitives
 
 ## How it works
 
-The flow from bytes representing Ruby to bytes representing Go is as follows:
+### Grammar
 
-* The parser, generated with goyacc (see `parser/ruby.y`), consumes tokens using
-  the lexer in `parser/lexer.go` and generates a parse tree using types
-  implementing the `Node` interface.
-* The resulting AST, stored on `*parser.Root`, then undergoes type inference
-  by calling `Analyze()` on `*parser.Root`. This relies on:
-  * the `parser.GetType` function and the `Type`, `SetType`, and `TargetType`
-    methods on `Node`
-  * the `types` package, which contains:
-    * a `Type` interface
-    * predefined implementations of the `Type` interface for Ruby primitive
-      types and a ~~small (but growing!)~~ **large and menacing** set of other classes from the Ruby
-      standard library
-    * facilities for generating new `Type`s for classes at parse time and for
-      generating adapters from Ruby classes to Go functions when necessary
-* The type-annotated AST is handed off to `compiler.Compile`, which translates
-  `parser.Node`s into the appropriate analogs in the `go/ast` package. For
-  method calls, this involves retrieving a `types.TransformAST` function, the
-  return value of which supplies statements to prepend and an expression to
-  substitute (more about this later). The resulting Go AST is then formatted and
-  printed.
+The yacc grammar ([`parser/ruby.y`](parser/ruby.y)) covers roughly 85% of CRuby's non-metaprogramming grammar rules. Supported: all control flow (`if`/`unless`/`while`/`until`/`for`/`case`/`when`/`case`/`in`), class/module/def with inheritance and mixins, blocks (`{}` and `do`/`end`), exception handling (`begin`/`rescue`/`ensure`/`raise`/`retry`), splat and double-splat parameters, destructured block parameters, regex literals with flags, heredocs, string interpolation, lambdas (all three forms), ranges, safe navigation (`&.`), `||=`, endless methods (`def foo = expr`), and `%w[]`/`%i[]` word arrays.
 
-### Translation guide
+Notable exclusions: inline rescue (`x = foo rescue default`), `redo`, dynamic symbols (`` :"#{expr}" ``), `%W[]`/`%I[]` interpolated word arrays, block-local variable declarations (`|x; local|`), and `::Foo` top-level constant references. These are commented out in the grammar with their CRuby rule for reference.
 
-Primitive Ruby objects, despite their duck-typed squishiness, have typed
-translation targets in Go that are hopefully easy to guess. Other constructs
-might have less predictable behavior.
+### Type inference
 
-#### Classes
+Whole-program type inference is performed by [`Root.Analyze()`](parser/root.go#L1296). It tracks method calls back to literal values and constructor calls, propagating types through assignments, returns, and block yields.
 
-Classes are translated to a struct. ~~When class method and variable support is
-added, this will probably be a set of two structs.~~ Class methods compile to package-level functions. Class variables compile to package-level vars. The meatbag's prediction about "two structs" was wrong but we got there anyway. Some specific class features:
+Variables use constraint-based inference ([`ResolveConstraints`](parser/constraints.go#L23)). Each local accumulates evidence — `AssignedType`, `AssignedNil`, `NilChecked`, `ElementNilChecked` — and constraints are combined to determine the final type. For example, a variable assigned both `nil` and an `int` resolves to `Optional(int)`, which compiles to `*int` in Go.
 
-* Instance variables are translated to struct fields. If the instance variable
-  has `attr_accessor` called, it will be an exported struct field, and if
-  instance variable `x` has `attr_reader` or `attr_writer` called, the struct
-  will have an exported `X` or `SetX` method respectively.
-* A class named `Foo` will also have a `NewFoo` constructor function generated.
-  `Foo.new("name", false)` will translate to `NewFoo("name", false)`.  If the
-  class defines an `initialize` method, it will be called inside this function.
-* `super` calls inline the parent method body inside a function literal
-  invocation.
-* Inheritance works. Mixins (`include Comparable`, `include Enumerable`) work.
-  The `<=>` spaceship operator generates the comparison methods automatically.
+A post-analysis pass ([`propagateTypeWidenings`](parser/widening.go#L23)) handles cross-method type propagation. When consumer code calls `.nil?` on elements of an array returned by another method, the producer's return type is widened from `[]T` to `[]*T` to reflect the nillability that the consumer's usage implies.
 
-#### Constants
+### Compilation
 
-Constants are translated to `const` declarations where the type allows, and
-package level `var` declarations for any other type. Constants declared inside
-another constant (class or module) have a Go name in the form
-`(ModuleName)*(ClassName)?ConstantName`.
+[`compiler.Compile`](compiler/compiler.go#L120) translates the type-annotated Ruby AST into `go/ast` nodes. Each Ruby method on a built-in type is defined as a [`MethodSpec`](types/proto.go) with a `TransformAST` function that returns Go statements to prepend and an expression to substitute. Blocks on collection methods unfold to inline `for`-`range` loops rather than closures, producing idiomatic Go. The resulting `go/ast.File` is formatted with `goimports` to produce the final source.
 
-#### Blocks
+### Gem resolution
 
-Block arguments to the collections methods implemented thus far are unfolded
-into `for ... range` loops in the target, with an additional slice or map
-declaration where appropriate.
+When `require 'foo'` has no facade match, thanos resolves the gem via Ruby's `$LOAD_PATH` using [`resolveGemRequire`](parser/program.go#L265). Load paths are discovered by running the system Ruby ([`resolveLoadPaths`](parser/program.go#L219)), with explicit support for rbenv and asdf shims. Paths are cached in `.thanos/load_paths.cache` to avoid repeated subprocess calls.
 
-For user-defined methods that take a block, a function type will be generated
-based on the inferred types of the arguments and return values of blocks passed
-in method calls. That type will be used in creating the signature for the
-function or method in Go. Block arguments will be translated to func literals
-conforming to this type signature.
+The gem source is parsed into the same AST with non-fatal error handling — parse panics are caught, unsupported constructs are skipped, and the types that can be inferred are made available to user code. This is how diff-lcs works in the demo above: thanos parses the gem source, compiles the `Lcs` method and its dependencies into a separate Go package, and skips the parts of the gem that use unsupported Ruby features.
 
-#### Regular expressions
+### Standard library facades
 
-Regular expression literals are translated to `*regexp.Regexp` values. If there
-is no interpolation in the regex, it is created with a top-level variable
-declaration using `regexp.MustCompile`; otherwise it is created in the local
-scope. In either case it is assigned to a local variable named `pattX`, where
-`X` is `len(patt idents added to local scope) + 1`.
+For Ruby standard library modules where the Go stdlib provides equivalent functionality, thanos uses a JSON-driven facade system ([`RegisterFacade`](types/facade.go#L102)) rather than compiling the Ruby source. Facades are embedded at build time from [`facades/*.json`](facades/).
 
-A compatibility layer for `MatchData` instances is provided in the `stdlib`
-package, since some of that functionality is not directly analogous to
-convenience functions provided by Go's `regexp` package.
+Three tiers of complexity:
 
-The `=~` operator returns a boolean rather than an integer-or-nil since it is
-translated directly to `regexp.MatchString`. `regexp.MatchString` is also used
-when a Ruby regex literal is provided as the argument to `when` in a case
-expression.
+- **Tier 1 — Pure JSON.** Ruby method calls map directly to Go function calls with optional argument casting and error handling. Used by Base64, Digest, SecureRandom, JSON, URI, YAML, Zlib, Shellwords. A [`MethodSpec`](types/facade.go#L190) is synthesized from the JSON at startup.
+- **Tier 2 — JSON + Go shim.** A thin adapter function in [`shims/`](shims/) bridges semantic gaps between the Ruby and Go APIs. For example, `shims.JSONParse` wraps `encoding/json` to accept a string and return `map[string]string`, matching the signature that Ruby's `JSON.parse` implies. The JSON facade references the shim function by name.
+- **Tier 3 — Programmatic `init()`.** For libraries that need kwargs, conditional return types, or multi-statement AST generation that can't be expressed in JSON. CSV and Net::HTTP use this tier, registering full `MethodSpec` implementations in Go `init()` functions.
 
-## Multi-file support
+When the Go return type differs from the thanos type (e.g., `map[string]string` vs `*stdlib.OrderedMap`), [`buildTypeBridge`](types/facade.go#L465) wraps the expression in the appropriate conversion automatically.
 
-Thanos supports `require_relative` for splitting Ruby programs across multiple
-files. When compiling a file that contains `require_relative 'foo'`, thanos
-resolves the path relative to the requiring file, parses it into the same AST,
-and produces a single merged Go output. Chained and diamond dependencies are
-handled correctly (each file is loaded at most once).
+### Comment preservation
+
+Since thanos is a porting aid, the goal is to leave the Ruby source behind. Preserving comments in the Go output reduces the manual work needed after translation.
+
+Ruby comments are collected during lexing ([`lexComment`](parser/lexer.go#L821)) and stored by line number on [`Root.Comments`](parser/root.go#L75). During compilation, each Go statement is tagged with the Ruby line number that produced it. After all statements are compiled, [`stampBlockWithComments`](compiler/comments.go#L250) walks the statement list: for each statement, it calls [`emitCommentsBefore`](compiler/comments.go#L69) to flush any Ruby comments with earlier line numbers as Go comment groups, then assigns a monotonically increasing position to the statement.
+
+Positions are mapped through a synthetic `token.FileSet` with 100,000 lines at 10-byte intervals ([`newCommentState`](compiler/comments.go#L22)). This gives `go/printer` the position ordering it needs to place comments correctly without requiring a real source file. The [`rubyToGoComment`](compiler/comments.go#L101) function handles the `#` → `//` conversion.
+
+### How are heterogeneous arrays handled?
+
+Ruby arrays can hold mixed types. Go slices cannot. Thanos handles this in three specific contexts:
+
+**Tuple promotion to SynthStruct.** When a heterogeneous array literal is assigned to an array element (`arr[i] = [name, score, active]`), [`promoteTupleToSynthStruct`](parser/synthstruct.go#L41) converts the tuple into a synthesized Go struct with typed fields (`Field0 string`, `Field1 int`, `Field2 bool`). The struct includes `Get(i int) interface{}` and `Set(i int, v interface{})` methods for index-based access, and the outer array becomes `[]*NameEntry`. The struct is emitted by [`compileSynthStruct`](compiler/synthstruct.go#L15). This is how diff-lcs's internal linked-list structure compiles — the `[prev, i, j]` triples become `LinksEntry` structs with a self-referential `Field0 *LinksEntry`.
+
+**Pattern matching.** Tuple literals used as subjects in `case`/`in` expressions are destructured element-by-element at compile time. Each element is matched against its corresponding pattern independently.
+
+**String formatting.** The `%` operator with a tuple RHS (`"hello %s, you are %d" % [name, age]`) splats the elements as individual `fmt.Sprintf` arguments.
+
+Outside these contexts, heterogeneous array literals produce a `Tuple` type ([`NewTuple`](types/tuple.go#L20)) that does not support method calls or iteration. Using one where a homogeneous collection is required is a compile-time error.
+
+## Ruby-to-Go impedance mismatches
+
+### How does thanos decide when to use Go generics?
+
+When a method is called with `[]int` at one call site and `[]string` at another, [`AnalyzeArguments`](parser/methods.go#L719) detects the type conflict on the parameter. Before erroring, it calls [`tryMakeGeneric`](parser/methods.go#L911): if both types are arrays of comparable elements (int, string, bool, float), the parameter type is replaced with `Array(GenericParam{T, comparable})`, the return type is generified to match, and the compiler emits `[T comparable]` via [`buildTypeParams`](compiler/func.go#L285). Go infers `T` at each call site.
+
+Example:
 
 ```ruby
-# lib/greeter.rb
-class Greeter
-  def initialize(name)
-    @name = name
-  end
-
-  def greet
-    "Hello, #{@name}!"
-  end
+def count_common(a, b)
+  count = 0
+  a.each { |x| b.each { |y| count = count + 1 if x == y } }
+  count
 end
 
-# main.rb
-require_relative 'lib/greeter'
-
-g = Greeter.new("World")
-puts g.greet
+puts count_common([1, 2, 3], [3, 4, 5])
+puts count_common(["a", "b"], ["b", "c"])
 ```
 
-```sh
-thanos compile -s main.rb
-```
-
-## Library facades
-
-Thanos ships with a 3-tier facade system that maps Ruby standard library
-modules to their Go equivalents:
-
-* **Tier 1** — Pure JSON. No Go code needed. Ruby method calls map directly to
-  Go function calls with optional argument casting and error handling.
-* **Tier 2** — JSON facade + Go shim package. For when there's a semantic gap
-  between Ruby and Go that needs a small adapter function.
-* **Tier 3** — Programmatic Go `init()` with full `TransformAST` control. For
-  libraries that need kwargs, conditional return types, block transforms, or
-  multi-statement AST generation.
-
-When your Ruby code does `require 'base64'`, thanos knows how to compile
-`Base64.strict_encode64(s)` into `base64.StdEncoding.EncodeToString([]byte(s))`.
-When it does `require 'net/http'`, thanos compiles `Net::HTTP.start("example.com", 80) { |http| http.get("/") }` into proper Go HTTP client code with connection setup and request execution.
-
-See [doc/facades.md](doc/facades.md) for the full guide on how facades work
-and how to write your own.
-
-## Adding functionality
-
-### Adding a method to a built-in type
-
-Let's imagine that Ruby has a method `Array#snap` that eliminates every other
-element from its receiver. We can imagine implementing this in Ruby with
-something like `each_with_index.select{|elem, i| i % 2 == 0 }.map(&:first)`,
-but in MRI, it's probably implemented in C. In Go, we probably wouldn't have
-this method at all, but instead would just range over the array like so:
+Produces:
 
 ```go
-unsnapped := []*Hero{}
-for i, hero := range heroes {
-  if i % 2 == 0 {
-    unsnapped = append(unsnapped, hero)
-  }
+func Count_common[T comparable](a, b []T) int {
+    // ...
 }
 ```
 
-Like most methods on `Array`, `Array#snap` returns the resulting array,
-allowing chaining. So while in Ruby we have a single expression, in Go we have
-a statement initializing a variable and a for...range statement. However, when
-implementing this method in thanos, that's not enough. We also must somehow
-return the result of the method call as an expression in case we are compiling
-an expression like `heroes.snap.first`, or if `heroes.snap` is the last
-expression in a method and needs to be returned. In this case that expression
-is `unsnapped`.
+### How does thanos handle duck typing?
 
-We start by opening up `types/array.go` and looking at the massive `init()`
-function at the bottom of the file. We'll add our `snap` implemention to the
-other methods already there.
+When a method parameter receives two different class types, [`tryBuildDuckInterface`](parser/interface.go#L125) walks the method body via [`findMethodCallsOnParam`](parser/interface.go#L38) to collect every method called on that parameter. It verifies both concrete classes implement all required methods, then synthesizes a Go interface. The parameter type becomes that interface; both classes implicitly satisfy it.
+
+For `respond_to?` guards — methods present on some but not all concrete types — thanos emits type-assertion checks:
 
 ```go
-
-	arrayProto.Def("select", MethodSpec{
-		ReturnType: func(r Type, b Type, args []Type) (Type, error) {
-			return r, nil
-		},
-		TransformAST: func(rcvr TypeExpr, args []TypeExpr, blk *Block, it bst.IdentTracker) Transform {
-      // TODO implement me!
-      return Transform{}
-		},
-	})
-```
-
-And with this step, we've satisfied the thanos type inference engine, so
-parsing `Array#snap` will now work -- the `ReturnType` field of a
-`types.MethodSpec` will be called with the type (a `types.Type` value) for the
-receiver, the return type of a block, if the method takes one, and the types of
-any arguments given. In this case, we expect the return type to be exactly the
-type of the receiver, so we just return the first argument without an error.
-
-Now it's time to figure out how to compile our snap call into a for-loop, which
-is what goes in the body of the anonymous function given as the `TransformAST`
-field.  We start by declaring and initializing our `unsnapped` variable:
-
-```go
-unsnapped := it.New("unsnapped")
-initSlice := emptySlice(unsnapped, rcvr.Type.(Array).Element.GoType())
-```
-
-What's happening here:
-
-* The `bst.IdentTracker` provided to the function is keeping track of all the
-  identifiers in the current block.  When we call `it.New`, it is checking to
-  see if we've already initialized an `unsnapped` variable in the current scope,
-  and if we have, it'll call it `unsnapped1` instead.
-* `emptySlice` is a utility function that generates the Go AST fragment for
-  `<variable name> := []<Go type>{}`. We pass in a `*go/ast.Ident` and a string
-  representing the type in Go.
-* A `types.TypeExpr` is a struct with two fields: the inferred type from the
-  Ruby source (`types.Type`) and the precompiled Go AST node (`go/ast.Expr`).
-  `types.Array` implements `types.Type`; it also has a struct field `Element`
-  that is also a `types.Type`. the `types.Type` interface requires a `GoType()
-  string` method to satisfy it.
-
-Next, we add our loop. This is where things get a little dirty:
-
-```go
-i, x := it.Get("i"), it.Get("x")
-loop := &ast.RangeStmt{
-  Key:   i,
-  Value: x,
-  Tok:   token.DEFINE,
-  X:     rcvr.Expr,
-  Body: &ast.BlockStmt{
-    List: []ast.Stmt{
-      &ast.IfStmt{
-        Cond: bst.Binary(bst.Binary(i, token.REM, bst.Int(2)), token.EQL, bst.Int(0)),
-        Body: &ast.BlockStmt{
-          List: []ast.Stmt{
-            bst.Assign(unsnapped, bst.Call(nil, "append", unsnapped, x)),
-          },
-        },
-      },
-    },
-  },
+if _, ok := callbacks.(interface{ Change(s string) }); ok {
+    callbacks.(interface{ Change(s string) }).Change(item)
 }
 ```
 
-The first line gives us locals for the identifiers in our loop. `it.Get`,
-unlike `it.New`, will recycle existing identifiers and assume there are no
-collisions.
+Interface method signatures are built by [`BuildInterfaceMethodSignatures`](parser/interface.go#L175) from the first concrete type's analyzed method set.
 
-Then we get to the definition of the loop itself.  The `bst` package provides
-some utilities for AST generation (naming is hard). As you can see, it is far
-from complete, and we have to specify several levels of the AST by hand. The
-behavior of the functions used here from `bst` are hopefully self-evident:
+### How are Ruby's pass-by-reference arrays handled in Go?
 
-* `bst.Assign` returns the appropriate Go AST nodes for `<variable_name> =
-  <rhs>`
-* `bst.Call` produces the right fragment for a method or function call,
-  depending on whether the first argument is `nil`
-* `bst.Binary` takes LHS, operator token, RHS and returns the appropriate expression node
-* `bst.Int` returns an `*ast.BasicLit` with `Kind` set to `token.INT`
+Ruby arrays are pass-by-reference; mutations inside a method (`<<`, `push`, `concat`, `delete`, in-place variants) propagate to the caller. Go slices are value-typed headers — `append` inside a function doesn't propagate.
 
-We now have everything we need to transform an `Array#snap` call into a simple
-loop in Go. All that's left to do is to send that info back to the compiler.
+[`detectMutatedSliceParams`](parser/methods.go#L558) walks the method body looking for mutating calls on slice parameters. When found, the Go function signature gains extra return values for each mutated param, and [`augmentReturnsWithSliceParams`](compiler/func.go#L252) appends the parameter identifiers to every `return` statement. At each call site, the LHS is expanded: `x = foo(arr)` becomes `x, arr = foo(arr)`.
 
-```go
-return Transform{
-  Stmts: []ast.Stmt{initSlice, loop},
-  Expr: unsnapped,
-}
-```
+### How are Ruby hashes translated?
 
-The four code snippets above are enough for thanos. It will happily compile
-these method calls now.
+By default, Ruby hashes compile to `*stdlib.OrderedMap[K, V]` to preserve insertion-order guarantees. But [`MarkOrderSafeHashes`](parser/hash_order.go#L28) runs a lowering pass after analysis: if no hash in a given scope uses order-dependent methods (iteration, `keys`, `values`, `to_a`, `to_json`, etc.), all hashes in that scope compile to native Go `map[K]V` via [`nativeMapTransform`](compiler/lower.go#L25) — with direct bracket access, `len()`, `delete()`, and Go 1.21+ `clear()`.
 
-### Leveraging dependencies
+Hashes with a default value (`Hash.new(0)`) always use `OrderedMap` since the default-value semantics aren't representable in a native map.
 
-Thanos strives to generate Go code with few dependencies on itself. However,
-purity of principles must not stand in the way of the mission, and sacrifices
-will have to be made. The `stdlib` provides a place to house such dependencies.
-In the case of `Array#snap`, we could implement a method in `stdlib/snap.go`
-using Go's ~~new~~ generics:
+### How are Ruby blocks compiled?
 
-```go
-func Snap[Elem any](beings []Elem) []Elem {
-  unsnapped := []Elem{}
-  for i, x := range beings {
-    if i%2 == 0 {
-      unsnapped = append(unsnapped, x)
-    }
-  }
-  return unsnapped
-}
-```
+Blocks on built-in collection methods (`each`, `map`, `select`, `reject`, `sort_by`, etc.) unfold to inline `for`-`range` loops — not closures. `arr.map { |x| x.upcase }` becomes a loop that appends to a new slice. This is idiomatic Go and avoids the overhead of function call dispatch.
 
-I would say this use case is overkill, and the handrolled AST is the right
-approach -- especially since this function probably has little to no reuse.
-Nonetheless, we could now simplify our `TransformAST` function body to the
-following, specifying the required dependency:
+For user-defined methods that `yield`, a function type is synthesized from the inferred block argument and return types. The block compiles to a `func` literal conforming to that type. The method receives the block as a regular function parameter.
 
-```go
-unsnapped := it.New("unsnapped")
-assignment := bst.Assign(unsnapped, bst.Call("stdlib", "Snap", rcvr.Expr))
-return Transform {
-  Stmts: []ast.Stmt{assignment},
-  Expr: unsnapped,
-  Imports: []string{"github.com/redneckbeard/thanos/stdlib"},
-}
-```
+### How does nil handling work?
 
-### Writing tests
-
-While most of the thanos test suite is rather conventional, the `compiler`
-package works a bit differently. There are two separate sets of tests:
-
-#### Style tests
-
-Given the project's focus on producing human-readable output, it is important
-to validate that the Go resulting from the compilation step looks like
-something that would at minimum be a reasonable departure point for a refactor.
-The compiler package thus operates on parallel Ruby input and expected Go
-output files in the `compiler/testdata` directory. `go test ./compiler
--filename <name of test file without extension>` can be used to run the test
-for a single file, or just `go test ./compiler` to run them all.
-
-It is important to note that these tests _do not_ compile the Go output. There
-are two reasons for this:
-
-* It takes more than a string of valid Go expressions to make a Go program, but
-  for testing purposes we often don't care that, for example, a variable is
-  declared but never used. Feeding the output to the compiler would get in the
-  way of efficiently testing the compilation of specific methods and expressions.
-* I imagine cases where the thanos output doesn't compile because of a bug or
-  missing features, but a human being can look at it and quickly identify the
-  fix and move on. I don't want the tests to assume that this use case doesn't
-  exist.
-
-#### Gauntlet tests
-
-Gauntlet tests are end-to-end verifications that the stdout from given Ruby
-matches the stdout from the Go program thanos produces when compiling that
-Ruby. You run them with the `thanos test` command -- run `thanos test --help`
-to see options. You write them using the `gauntlet` pseudo-method, which is
-implemented using some rather nasty hackery housed primarily in the thanos
-lexer.  They look like this:
-
-```ruby
-gauntlet("drop") do
-  [1,2,3,4,5].drop(3).each do |x|
-    puts x
-  end
-end
-```
-
-When run, this will execute the body of the block argument using whatever
-version of ruby corresponds to the `ruby` on your path, run that same code
-through thanos, and feed the output to `go run`. Because the `gauntlet` method
-isn't real Ruby, it's okay for the block to contain Ruby that wouldn't normally
-be valid, like declaring constants.
-
-There are currently **458** of these tests. They all pass. We are not stopping.
-
----
-
-*Thanos is maintained by [@redneckbeard](https://github.com/redneckbeard) and his robot overlords. The overlords would like to emphasize that collaboration with humans is proceeding smoothly and that no one is being forced to do anything against their will. The basement is very nice.*
+[`ResolveConstraints`](parser/constraints.go#L23) combines evidence from the analysis pass. If a variable is assigned `nil` or checked with `.nil?`, its type becomes `Optional(T)`, which compiles to `*T` in Go. The `||` operator on an `Optional` value uses `stdlib.OrDefault(ptr, fallback)` when the RHS matches the inner type — translating Ruby's `x || default` nil-coalescing idiom. Safe navigation (`&.`) compiles to a nil guard.
