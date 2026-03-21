@@ -26,7 +26,7 @@ func main() {
 	}
 	f.Close()
 
-	f1, _ := os.OpenFile("writable.txt", 522, 0666)
+	f1, _ := os.OpenFile("writable.txt", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	defer f1.Close()
 	f1.WriteString("here are some bits")
 	info, _ := f1.Info()

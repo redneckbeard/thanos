@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/redneckbeard/thanos/bst"
-	"github.com/redneckbeard/thanos/stdlib"
 )
 
 // panicOnErr generates: if errVar != nil { panic(errVar) }
@@ -88,11 +87,11 @@ func init() {
 				call = bst.Call("os", "OpenFile", args[0].Expr)
 				if lit, ok := args[1].Expr.(*ast.BasicLit); ok {
 					mode := strings.Trim(lit.Value, `"`)
-					flag, ok := stdlib.OpenModes[mode]
+					flagExpr, ok := openFlagExpr(mode)
 					if !ok {
 						panic("Invalid mode: " + mode)
 					}
-					call.Args = append(call.Args, bst.Int(flag))
+					call.Args = append(call.Args, flagExpr)
 				} else {
 					call.Args = append(call.Args, &ast.IndexExpr{
 						X:     bst.Dot("stdlib", "OpenMode"),
@@ -393,4 +392,30 @@ func init() {
 			}
 		},
 	})
+}
+
+// openFlagExpr returns a Go AST expression for the os.O_* flags corresponding
+// to a Ruby file mode string. Uses symbolic constants (os.O_WRONLY, etc.)
+// instead of numeric literals so the output is platform-independent.
+func openFlagExpr(mode string) (ast.Expr, bool) {
+	type flagDef struct {
+		names []string
+	}
+	modes := map[string]flagDef{
+		"r":  {[]string{"O_RDONLY"}},
+		"r+": {[]string{"O_RDWR"}},
+		"w":  {[]string{"O_WRONLY", "O_CREATE"}},
+		"w+": {[]string{"O_RDWR", "O_CREATE", "O_TRUNC"}},
+		"a":  {[]string{"O_WRONLY", "O_CREATE", "O_APPEND"}},
+		"a+": {[]string{"O_RDWR", "O_CREATE", "O_APPEND"}},
+	}
+	def, ok := modes[mode]
+	if !ok {
+		return nil, false
+	}
+	var expr ast.Expr = bst.Dot("os", def.names[0])
+	for _, name := range def.names[1:] {
+		expr = bst.Binary(expr, token.OR, bst.Dot("os", name))
+	}
+	return expr, true
 }
