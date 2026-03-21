@@ -16,6 +16,9 @@ jobs:
         with:
           go-version: '1.23'
 
+      - name: Install goimports
+        run: go install golang.org/x/tools/cmd/goimports@latest
+
       - name: Build
         run: go build ./...
 
@@ -25,9 +28,13 @@ jobs:
       - name: Style tests
         run: go test ./compiler
 
-      - name: Gauntlet tests
+      - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.2'
-      - run: gem install diff-lcs
-      - run: go run main.go test
+
+      - name: Install gems
+        run: gem install diff-lcs
+
+      - name: Gauntlet tests
+        run: go run main.go test
