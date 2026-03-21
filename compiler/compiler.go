@@ -303,7 +303,7 @@ func Compile(p *parser.Root) (*CompileResult, error) {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						fmt.Fprintf(os.Stderr, "warning: skipping gem module %s compilation: %v\n", mod.Name(), r)
+						fmt.Fprintf(os.Stderr, "warning: skipping gem module %s compilation: %s\n", mod.Name(), truncateMsg(r))
 					}
 				}()
 				g.compileModulePackages(mod, "", p.ScopeChain, result)
@@ -395,7 +395,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "warning: skipping gem class %s compilation: %v\n", cls.Name(), r)
+							fmt.Fprintf(os.Stderr, "warning: skipping gem class %s compilation: %s\n", cls.Name(), truncateMsg(r))
 						}
 					}()
 					decls := modG.CompileClass(cls)
@@ -420,7 +420,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "warning: skipping gem method %s.%s (compile panic): %v\n", mod.Name(), m.Name, r)
+							fmt.Fprintf(os.Stderr, "warning: skipping gem method %s.%s (compile panic): %s\n", mod.Name(), m.Name, truncateMsg(r))
 						}
 					}()
 					decls := modG.CompileClassMethod(m, nil)
@@ -499,7 +499,7 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							fmt.Fprintf(os.Stderr, "warning: skipping gem sub-module %s compilation: %v\n", sub.Name(), r)
+							fmt.Fprintf(os.Stderr, "warning: skipping gem sub-module %s compilation: %s\n", sub.Name(), truncateMsg(r))
 						}
 					}()
 					g.compileModulePackages(sub, dirPath, scope, result)
@@ -513,6 +513,15 @@ func (g *GoProgram) compileModulePackages(mod *parser.Module, parentPath string,
 	}
 
 	return nil
+}
+
+// truncateMsg formats a recovered panic value, truncating long messages.
+func truncateMsg(r interface{}) string {
+	msg := fmt.Sprintf("%v", r)
+	if len(msg) > 80 {
+		msg = msg[:80] + "..."
+	}
+	return msg
 }
 
 // validateDecl checks whether a Go AST declaration can be formatted without
