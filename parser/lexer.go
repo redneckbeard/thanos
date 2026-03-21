@@ -824,20 +824,22 @@ func (l *Lexer) lexComment() error {
 	// compiler but not emitted as tokens, since the grammar only accepts
 	// COMMENT where a term (newline/semicolon) is valid.
 	inline := l.lastToken != 0 && l.lastToken != NEWLINE && l.lastToken != COMMENT
-	_, next, err := l.Advance()
+	chr, next, err := l.Advance()
 	for {
 		var lastLoop bool
 		if err == io.EOF {
 			lastLoop = true
 		}
-		if next == '\n' {
-			l.Advance()
+		if chr == '\n' || next == '\n' {
+			if next == '\n' {
+				l.Advance()
+			}
 			break
 		}
 		if lastLoop {
 			break
 		}
-		_, next, err = l.Advance()
+		chr, next, err = l.Advance()
 	}
 	if inline {
 		// Save the comment for the compiler but don't emit a COMMENT token.

@@ -66,6 +66,8 @@ type MethodFacade struct {
 	Args []ArgFacade `json:"args"`
 	// Returns is the thanos type name of the return value ("string", "int", "bool", "float", "nil").
 	Returns string `json:"returns"`
+	// ReturnsGo is the actual Go return type when it differs from the thanos type.
+	ReturnsGo string `json:"returns_go"`
 	// IgnoreError means the first call returns (T, error) and we use val, _ := ...
 	IgnoreError bool `json:"ignore_error"`
 }
@@ -187,6 +189,7 @@ func facadeReturnType(name string) Type {
 // buildFacadeMethodSpec creates a MethodSpec from a MethodFacade config.
 func buildFacadeMethodSpec(goImports []string, mb *MethodFacade) MethodSpec {
 	returnsName := mb.Returns
+	returnsGo := mb.ReturnsGo
 	pipeline := mb.Call
 	ignoreError := mb.IgnoreError
 	argFacades := mb.Args
@@ -239,6 +242,15 @@ func buildFacadeMethodSpec(goImports []string, mb *MethodFacade) MethodSpec {
 				currentExpr = &ast.CallExpr{
 					Fun:  buildCallExpr(step, it),
 					Args: []ast.Expr{currentExpr},
+				}
+			}
+
+			// Bridge Go return type to thanos type if needed
+			if returnsGo != "" {
+				retType := resolveTypeName(returnsName)
+				if bridgeExpr, bridgeImports := buildTypeBridge(currentExpr, returnsGo, retType); bridgeExpr != nil {
+					currentExpr = bridgeExpr
+					imports = append(imports, bridgeImports...)
 				}
 			}
 

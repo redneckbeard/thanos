@@ -26,3 +26,10 @@ gauntlet("nested Hash#to_json") do
   h = { greeting: "hello", target: "world" }
   puts h.to_json
 end
+
+gauntlet("JSON.parse") do
+  require 'json'
+  h = JSON.parse("{\"name\":\"Alice\",\"age\":\"30\"}")
+  puts h["name"]
+  puts h["age"]
+end

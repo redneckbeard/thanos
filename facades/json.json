@@ -15,6 +15,11 @@
           "dump": {
             "call": ["shims.JSONGenerate"],
             "returns": "string"
+          },
+          "parse": {
+            "call": ["shims.JSONParse"],
+            "returns": "{string: string}",
+            "returns_go": "map[string]string"
           }
         }
       }

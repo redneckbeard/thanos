@@ -154,19 +154,48 @@ func setExprLeadingPos(expr ast.Expr, p token.Pos) ast.Expr {
 		e.Fun = setExprLeadingPos(e.Fun, p)
 		e.Lparen = p
 		e.Rparen = p
+		for i, arg := range e.Args {
+			e.Args[i] = setExprLeadingPos(arg, p)
+		}
 	case *ast.SelectorExpr:
 		e.X = setExprLeadingPos(e.X, p)
+		e.Sel = &ast.Ident{Name: e.Sel.Name, NamePos: p}
 	case *ast.Ident:
 		return &ast.Ident{Name: e.Name, NamePos: p}
 	case *ast.BasicLit:
 		return &ast.BasicLit{Kind: e.Kind, Value: e.Value, ValuePos: p}
 	case *ast.UnaryExpr:
 		e.OpPos = p
+		e.X = setExprLeadingPos(e.X, p)
 	case *ast.ParenExpr:
 		e.Lparen = p
+		e.Rparen = p
+		e.X = setExprLeadingPos(e.X, p)
 	case *ast.CompositeLit:
 		e.Lbrace = p
 		e.Rbrace = p
+	case *ast.BinaryExpr:
+		e.X = setExprLeadingPos(e.X, p)
+		e.OpPos = p
+		e.Y = setExprLeadingPos(e.Y, p)
+	case *ast.IndexExpr:
+		e.X = setExprLeadingPos(e.X, p)
+		e.Lbrack = p
+		e.Rbrack = p
+	case *ast.SliceExpr:
+		e.X = setExprLeadingPos(e.X, p)
+		e.Lbrack = p
+		e.Rbrack = p
+	case *ast.TypeAssertExpr:
+		e.X = setExprLeadingPos(e.X, p)
+		e.Lparen = p
+	case *ast.StarExpr:
+		e.Star = p
+		e.X = setExprLeadingPos(e.X, p)
+	case *ast.KeyValueExpr:
+		e.Key = setExprLeadingPos(e.Key, p)
+		e.Colon = p
+		e.Value = setExprLeadingPos(e.Value, p)
 	}
 	return expr
 }
